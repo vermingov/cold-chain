@@ -180,8 +180,9 @@ export class Weapons {
             if (e.code === 'KeyR') this._reload();
         };
         const wheel = (e) => this.select((this.current + (e.deltaY > 0 ? 1 : -1) + ARMS.length) % ARMS.length);
-        canvas.addEventListener('mousedown', down);
-        window.addEventListener('mouseup', up);
+        // Pointer events, not mouse ones: Babylon cancels pointerdown, and a cancelled pointerdown has no mousedown after it.
+        canvas.addEventListener('pointerdown', down);
+        window.addEventListener('pointerup', up);
         window.addEventListener('keydown', key);
         canvas.addEventListener('wheel', wheel, { passive: true });
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
