@@ -123,6 +123,7 @@ export class Game {
     async _evening(flat, night) {
         const { things } = flat, screen = this.screen, noises = this.noises;
         let heard = false, called = false;
+        flat.todo = () => (!heard ? 'Play the messages on the answering machine' : !called ? 'Answer the phone' : 'Go out to the cemetery');
         const machine = things.add({
             at: flat.devices.machineAt, reach: 1.6,
             verb: () => (heard ? null : 'Press E to play the messages'),
@@ -159,6 +160,8 @@ export class Game {
     async _morning(flat, night) {
         const paid = this.job.paid;
         this.run.paid(paid);
+        let played = !night.morning.length;
+        flat.todo = () => (played ? 'Get some sleep on the sofa' : 'Play the messages on the answering machine');
         if (night.morning.length) {
             flat.devices.blinking = true;
             await new Promise<void>((heard) => flat.things.add({
@@ -168,6 +171,7 @@ export class Game {
                     flat.devices.blinking = false;
                     this.noises.shot('beep');
                     await this.screen.say(night.morning, VOICES);
+                    played = true;
                     heard();
                 },
             }));
