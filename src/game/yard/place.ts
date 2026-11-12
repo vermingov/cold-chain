@@ -83,7 +83,7 @@ export async function openYard(engine, canvas, game) {
     // --- the kit ---------------------------------------------------------------
     things.add({
         at: () => kit[0].position.add(new V3(0, 0.6, 0)),
-        verb: () => (job.has('tools') ? null : 'Take the spade and the bar'),
+        verb: () => (job.has('tools') ? null : 'Press E to take the spade and crowbar'),
         use: () => {
             for (const mesh of kit) mesh.setEnabled(false);
             job.tick('tools');
@@ -91,27 +91,27 @@ export async function openYard(engine, canvas, game) {
     });
     things.add({
         at: () => bier.handle, reach: 2.2,
-        verb: () => (bier.pusher ? null : 'Push the bier'),
+        verb: () => (bier.pusher ? null : 'Press E to push the bier'),
         use: () => {
             bier.take(player);
             job.tick('bier');
         },
     });
-    things.otherwise = { verb: () => (bier.pusher ? 'Let go of the bier' : null), use: () => bier.letGo() };
+    things.otherwise = { verb: () => (bier.pusher ? 'Press E to let go of the bier' : null), use: () => bier.letGo() };
 
     // --- the grave ---------------------------------------------------------------
     things.add({
         at: () => grave.middle, reach: NEAR.grave + 0.8, wide: 2.5,
         verb: () => {
             if (!job.has('tools') || grave.down) return null;
-            return grave.dug ? 'Dig (hold the button)' : 'Cut the turf and dig (hold the button)';
+            return grave.dug ? 'Hold the left mouse button to dig' : 'Hold the left mouse button to cut the turf and dig';
         },
         use: () => {},
         work: 'spade',
     });
     things.add({
         at: () => grave.at('lid'), reach: 4.2, wide: 2.5,
-        verb: () => (grave.down && !grave.open ? 'Break the lid (hold the button)' : null),
+        verb: () => (grave.down && !grave.open ? 'Hold the left mouse button to break the lid with the crowbar' : null),
         use: () => {},
         work: 'bar',
     });
@@ -133,8 +133,8 @@ export async function openYard(engine, canvas, game) {
         at: () => grave.middle.add(new V3(0, -0.5, 0)), reach: 3.8, wide: 2.5,
         verb: () => {
             if (!grave.open || job.has('lifted')) return null;
-            if (!job.has('checked')) return 'Check him against the order first (Tab)';
-            return V3.Distance(bier.position, grave.middle) > NEAR.bier ? 'Bring the bier up to the grave first' : 'Lift him out onto the bier';
+            if (!job.has('checked')) return 'Check the body against the order first (Tab shows it)';
+            return V3.Distance(bier.position, grave.middle) > NEAR.bier ? 'Bring the bier over to the grave first' : 'Press E to lift him out onto the bier';
         },
         use: async () => {
             if (!job.has('checked') || V3.Distance(bier.position, grave.middle) > NEAR.bier) return;
@@ -144,7 +144,7 @@ export async function openYard(engine, canvas, game) {
                 bier.carry(grave.body.root);
                 grave.body.setEnabled(true);
                 job.tick('lifted');
-            }, { card: ['Twenty minutes.', 'A rope under his arms, and everything you have.'], hold: 2.6 });
+            }, { card: ['Twenty minutes later.', 'A rope under his arms, and every bit of strength you have.'], hold: 2.6 });
         },
     });
 
@@ -154,7 +154,7 @@ export async function openYard(engine, canvas, game) {
         at: door, reach: NEAR.door, wide: 2,
         verb: () => {
             if (!job.has('lifted') || job.has('inside')) return null;
-            return bier.load && V3.Distance(bier.position, door) < NEAR.door ? 'Wheel him in' : null;
+            return bier.load && V3.Distance(bier.position, door) < NEAR.door ? 'Press E to wheel him in' : null;
         },
         use: async () => {
             bier.letGo();
@@ -163,29 +163,29 @@ export async function openYard(engine, canvas, game) {
             bier.load.setEnabled(false);
             bier.load = null;
             gate.arrive();
-            await screen.note(`${night.order.handover.place}, ${night.order.handover.time}. There are headlights on the track already.`);
+            await screen.note(`${night.order.handover.place}, ${night.order.handover.time}. There are already headlights on the track.`);
         },
     });
 
     // --- the gate, and home ---------------------------------------------------------------
     things.add({
         at: () => gate.bars, reach: 2.8, wide: 2,
-        verb: () => (gate.waiting && !job.has('handed') ? 'Hand the cooler through' : null),
+        verb: () => (gate.waiting && !job.has('handed') ? 'Press E to pass the cooler through the bars' : null),
         use: async () => {
             const { handover } = night;
             await screen.say(handover.meet, VOICES);
             const worst = job.taken.length ? ['reject', 'marginal', 'sound'].find((g) => job.taken.some((t) => t.grade === g)) : 'nothing';
             await screen.say([handover.judge[worst]], VOICES);
             job.paid = job.taken.reduce((sum, t) => sum + price(t), 0);
-            if (job.paid) await screen.note(`He counts it out through the bars. £${job.paid.toLocaleString('en-GB')}.`);
+            if (job.paid) await screen.note(`The buyer counts out £${job.paid.toLocaleString('en-GB')} and passes it through the bars.`);
             await screen.say(handover.leave, VOICES);
             job.tick('handed');
-            await screen.through(async () => gate.leave(), { card: ['The van goes.'], hold: 1.2 });
+            await screen.through(async () => gate.leave(), { card: ['The van drives off.'], hold: 1.2 });
         },
     });
     things.add({
         at: MAIN_GATE, reach: 4.5, wide: 3,
-        verb: () => (job.has('handed') ? 'Go home' : null),
+        verb: () => (job.has('handed') ? 'Press E to go home' : null),
         use: () => {
             job.tick('home');
             finished();

@@ -27,7 +27,7 @@ const CHROMIUM = process.env.CHROMIUM || '/usr/bin/chromium';
 // the real one, for measuring frame times rather than looking at frames.
 function gpuFlags() {
     if (process.env.RIG_GPU) {
-        return ['--use-angle=vulkan', '--enable-features=Vulkan', '--ignore-gpu-blocklist',
+        return ['--use-angle=vulkan', '--enable-features=Vulkan', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu',
             ...(process.env.RIG_UNCAP ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : [])];
     }
     return ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];

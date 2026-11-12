@@ -23,8 +23,8 @@ const OVER = 0.3;           // metres from the cooler's middle, across the floor
 // How many marks of a blade an organ can have and still be sound, or still be worth anything.
 const NICKS = { sound: 0, marginal: 2 };
 // How the tools work, under what is to be done.
-const HOW = '1 scalpel: hold the left button and draw. 2 hand: hold to grab, mouse wheel to lift. 3 retractor. V: other side. E: leave.';
-const SAYS = { sound: 'Whole and clean.', marginal: 'There is a mark of the blade on it.', reject: 'It is torn. Nobody will pay for that.' };
+const HOW = 'Keys 1, 2, 3: scalpel, hand, retractor. Hold the left mouse button to use one. Mouse wheel lifts what the hand holds. V walks round the table. E steps back.';
+const SAYS = { sound: 'Whole and clean.', marginal: 'There\'s a knife mark on it.', reject: 'It\'s torn. Nobody will pay for that.' };
 
 export async function openTable(engine, canvas, game) {
     const scene = new BABYLON.Scene(engine);
@@ -59,11 +59,11 @@ export async function openTable(engine, canvas, game) {
     };
     window.addEventListener('keydown', keys);
     screen.say([
-        { who: '', says: 'His suit is cut off him and bagged for the furnace.' },
-        { who: '', says: '1 is the scalpel, 2 the bare hand, 3 a retractor. V goes round to the other side of the table. E steps back from it.' },
-        { who: '', says: 'Draw the scalpel slowly down the middle of the belly, and again, and again, until it is through.' },
-        { who: '', says: 'Hook each lip with a retractor and draw it out. Move the bowel off the kidney with the hand, and the colon, and whatever lies over it.' },
-        { who: '', says: 'Cut across its artery, its vein and its ureter, close to it. Lift it out with the wheel, carry it over the cooler and let go.' },
+        { who: '', says: 'You cut his suit off and bag it for the furnace.' },
+        { who: '', says: 'Press 1 for the scalpel, 2 for your free hand, 3 for a retractor. Press V to walk round to the other side of the table. Press E to step away from the table when you\'ve finished.' },
+        { who: '', says: 'With the scalpel, hold the left mouse button and drag down the middle of the belly. Slower strokes cut deeper. Go over the same line until it opens.' },
+        { who: '', says: 'With a retractor, hold the left mouse button on one edge of the cut, drag it back and let go. It stays there. Do the same on the other edge. Then, with your hand, drag the bowel and the colon off the kidney.' },
+        { who: '', says: 'Cut through the artery, the vein and the ureter, close to the kidney. Grab it with your hand, roll the mouse wheel forward to lift it out, carry it over the cooler and let go.' },
     ], {});
 
     const over = (organ) => {
@@ -80,7 +80,7 @@ export async function openTable(engine, canvas, game) {
         const grade = inside.torn.includes(organ.name) ? 'reject'
             : organ.nicks.length <= NICKS.sound ? 'sound' : organ.nicks.length <= NICKS.marginal ? 'marginal' : 'reject';
         job.keep(organ.name, grade);
-        screen.note(`The ${organ.name}, into the ice. ${SAYS[grade]}`);
+        screen.note(`You put the ${organ.name} on the ice. ${SAYS[grade]}`);
         return true;
     };
 
@@ -89,10 +89,10 @@ export async function openTable(engine, canvas, game) {
         const organ = table.hand.held && table.hand.held.organ;
         cooler.lit(!!organ && inside.out(organ) && over(organ));
         if (!organ) return null;
-        if (inside.strained(organ)) return 'Still held by its vessels: cut them first, or it tears';
+        if (inside.strained(organ)) return 'Still attached. Cut its vessels first or it will tear';
         if (!inside.free(organ)) return null;
-        if (!inside.out(organ)) return 'Lift it out: the wheel';
-        return over(organ) ? 'Let go: into the cooler' : 'Over the cooler, and let go';
+        if (!inside.out(organ)) return 'Roll the mouse wheel forward to lift it out';
+        return over(organ) ? 'Let go of the mouse button to drop it in the cooler' : 'Carry it over the cooler and let go';
     };
 
     // What is to be done here, and how, for the corner of the screen.

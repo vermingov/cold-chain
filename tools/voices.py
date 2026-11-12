@@ -11,6 +11,7 @@ as story.js has it, to its file: the game plays the file when it shows the line.
 
 import json
 import os
+import subprocess
 import urllib.request
 
 OUT = os.path.join(os.path.dirname(__file__), '..', 'assets', 'voices')
@@ -25,47 +26,51 @@ VOICES = {
     'buyer': 'e0e2468ce2d746c1b20a4414435f6f48',        # Phat phap: British, deep, calm
 }
 
-# Night one: the text as story.js has it, and the Fish task it was generated in.
+# Night one: the text as story.ts has it, the Fish task it was generated in, and its file. A line whose words
+# were rewritten was generated again into a new file (-v2), so the old one is never overwritten by mistake.
 LINES = [
-    ('You have two new messages. First new message.', '46e72d90a7994506ad3d71d6e2a39350'),
-    ('Hiya. It\'s me. They had me on for four hours again because the line kept alarming.', '363f720c777d4c268f406c2122655083'),
-    ('The arm\'s gone a funny colour round the fistula. The nurse says it\'s fine. She said it like it isn\'t.', '6fa5fcb1bd3e4a9b8c1f6cdf21b8d973'),
-    ('Don\'t ring back tonight, I\'m knackered. Love you. Eat something.', '2fd8c9bea59c4f3b8a51cc52aac0e530'),
-    ('Next new message.', '005657aee83d4ba8bcc309b5e75991cf'),
-    ('This is Joanne from Holbeck Clinic for Dr Anand. We still haven\'t received the deposit for Miss Elin\'s assessment.', '6a2e15cc8f41416c9bffd0f377fa2a90'),
-    ('The slot is held until the nineteenth. After that it goes to the next family. Please do call us.', 'f4889db480be4165a42f31025ff69b25'),
-    ('End of messages.', 'c56b1cbec8224ec8af6f2a40db4639ff'),
-    ('You\'re in. Good. Have you something to write with.', 'b39608fd7039474a95b9681d86d73eb7'),
-    ('St Dymphna\'s. Vicarage Road. The public ground at the top, past the chapel. Section E, row seven, number ten.', '3ed8458b10a14fefa99dd595248b3d9e'),
-    ('Harold Thorp. Seventy-eight. Council funeral on Tuesday, nobody came. No embalming, they don\'t pay for it.', '9859a61dec1d451a9df8390b337ac35b'),
-    ('Both kidneys. Lift them whole, with as much of the tubes as you can. A nick in one and it is worth half.', '234eb94b2ef3415ebb441516e8c3f672'),
-    ('Check him before you lift him. The plate, the scar on his belly, the ring. The ground up there gets reused.', '385aa04450c746fcad06ca300b96f78f'),
-    ('The tools are in the store behind the chapel. The cold room is the east door of the chapel. It is not locked tonight.', '75b63e993a2d465cad8cb92446bdc0d6'),
-    ('Leave him on the table when you are done. That is seen to in the morning.', 'fb5b1173ba81467e92714377766f56d1'),
-    ('Half three, the service gate on the east wall. Somebody will be there with the money. Don\'t make them wait.', 'b1036d133b4f44e5b41166860e4fa328'),
-    ('And the man in the lodge by the gate goes to bed at eleven. He sleeps lightly.', 'b264dc342e464f1ba8ad19319b22dca0'),
-    ('Evening. You\'ll be the new one.', 'cc4ffb5d340e4e4d8db0e048873f6b7f'),
-    ('Through the bars is fine. Let\'s have a look at him.', '2cda9b02e2e349cb83a1d00b929143d8'),
-    ('Nice. Clean. You\'ve done this before.', '2be2f617e49a4ae08075533770133aa1'),
-    ('Somebody\'s been careless. I\'ll pay for what I can use.', '6cb2e2bfc4e444de9124537b6ca7a82f'),
-    ('This is meat. I don\'t pay for meat.', '254fe9d0be4b4b88b655d571887c675c'),
-    ('Then why am I stood here.', 'f80861fb1f2b42b98030ba780fe785a4'),
-    ('Same again next week, he says. Go home, get warm.', '53c3e616a61c4f68a956c28c16bb90c2'),
-    ('And whoever that is in the lodge window, he\'s been watching you since one.', '3a032c25cdab4d688972a9fb6cf00354'),
-    ('You have one new message.', '9bea6209ed2a4317a32704b169bd85ec'),
-    ('They\'ve moved me to Saturdays as well. Four nights a week now. I\'m fine. I\'m fine, it\'s just more.', 'bcdc9485e9d74593b219cc37c9e1f5e1'),
-    ('Were you out last night? I rang at two. Don\'t be doing anything daft.', '5ce79160aacf49af8f68887793b1714d'),
+    ('You have two new messages. First new message.', '46e72d90a7994506ad3d71d6e2a39350', 'n1-01.mp3'),
+    ('Hiya. It\'s me. They had me on for four hours again because the line kept alarming.', '363f720c777d4c268f406c2122655083', 'n1-02.mp3'),
+    ('The arm\'s gone a funny colour round the fistula. The nurse says it\'s fine. She said it like it isn\'t.', '6fa5fcb1bd3e4a9b8c1f6cdf21b8d973', 'n1-03.mp3'),
+    ('Don\'t ring back tonight, I\'m knackered. Love you. Eat something.', '2fd8c9bea59c4f3b8a51cc52aac0e530', 'n1-04.mp3'),
+    ('Next new message.', '005657aee83d4ba8bcc309b5e75991cf', 'n1-05.mp3'),
+    ("Hello, it's Joanne at Holbeck Clinic, calling for Dr Anand. We still haven't had the deposit for your sister's assessment.", '683f735ab74b44bca9133c29a1aa585c', 'n1-06-v2.mp3'),
+    ('We can hold her slot until the nineteenth, but after that it has to go to the next family. Could you give us a ring back?', 'a0c026e1b1694f7ca557cf7109ae8b63', 'n1-07-v2.mp3'),
+    ('End of messages.', 'c56b1cbec8224ec8af6f2a40db4639ff', 'n1-08.mp3'),
+    ("Good, you're in. Have you got something to write with?", '2244bd78a9dd433199c42a93f4db7070', 'n1-09-v2.mp3'),
+    ("St Dymphna's, on Vicarage Road. The public ground's at the top, past the chapel. Section E, row seven, number ten.", 'fd96f578b4e14ea197152226e3c94d21', 'n1-10-v2.mp3'),
+    ("Harold Thorp, seventy-eight. Council funeral on Tuesday, and nobody came. He won't be embalmed, the council don't pay for that.", '465edd3b60e04d088d7d4b54e7e55e79', 'n1-11-v2.mp3'),
+    ("I want both kidneys. Take them out whole, with as much of the tubes as you can get. Nick one and it's worth half.", '1c82c8fb301b45cba2d00384c420e609', 'n1-12-v2.mp3'),
+    ("Make sure it's him before you lift him out. The name plate, the scar on his belly, his ring. They reuse the ground up there.", 'f7ff35f52e3b431cbdd3e10dbb75f19f', 'n1-13-v2.mp3'),
+    ("The tools are in the shed behind the chapel. The cold room's through the chapel's east door. I've left it unlocked.", '150d149ffa3b4752bf4f78f2dbf6e796', 'n1-14-v2.mp3'),
+    ("Leave him on the table when you've finished. Someone will see to him in the morning.", 'd1b0ab644a9448d7be648213cfe76f45', 'n1-15-v2.mp3'),
+    ("Half three, at the service gate on the east wall. Someone will be there with your money. Don't keep them waiting.", '6bb49f7a13704010b747272b8ac5cd8d', 'n1-16-v2.mp3'),
+    ("One more thing. The man in the lodge by the gate goes to bed at eleven, but he's a light sleeper.", 'd0653041b58d457bafba6aa52860e528', 'n1-17-v2.mp3'),
+    ('Evening. You\'ll be the new one.', 'cc4ffb5d340e4e4d8db0e048873f6b7f', 'n1-18.mp3'),
+    ("Pass it through the bars, that's fine. Let's have a look.", '2d4efa0826474234b8f334c935309b96', 'n1-19-v2.mp3'),
+    ("Nice and clean. You've done this before.", 'f3b02c0e74754965a6a3d3027edb1532', 'n1-20-v2.mp3'),
+    ("You've been careless. I'll pay for what I can use.", '45f02b430c994a38804bfebca4816104', 'n1-21-v2.mp3'),
+    ('This is meat. I don\'t pay for meat.', '254fe9d0be4b4b88b655d571887c675c', 'n1-22.mp3'),
+    ('Nothing? Then what am I stood here for?', '47b1bee1384440af9c7d484fa0869279', 'n1-23-v2.mp3'),
+    ('Your man on the phone says same again next week. Go home and get warm.', '4cf6d2c824e146cbb717f66c34b258b7', 'n1-24-v2.mp3'),
+    ("And the old boy in the lodge window has been watching you since one o'clock.", 'c2856281908a4cc7b5dd7cd429f7bb5c', 'n1-25-v2.mp3'),
+    ('You have one new message.', '9bea6209ed2a4317a32704b169bd85ec', 'n1-26.mp3'),
+    ('They\'ve moved me to Saturdays as well. Four nights a week now. I\'m fine. I\'m fine, it\'s just more.', 'bcdc9485e9d74593b219cc37c9e1f5e1', 'n1-27.mp3'),
+    ('Were you out last night? I rang at two. Don\'t be doing anything daft.', '5ce79160aacf49af8f68887793b1714d', 'n1-28.mp3'),
 ]
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
     manifest = {}
-    for n, (text, task) in enumerate(LINES):
-        file = f'n1-{n + 1:02}.mp3'
-        if not os.path.exists(os.path.join(OUT, file)):
-            urllib.request.urlretrieve(FISH.format(task), os.path.join(OUT, file))
-        manifest[text] = file
+    for text, task, file in LINES:
+        # Fish gives mp3; the game plays Ogg Vorbis, like every other sound in it.
+        kept = os.path.splitext(file)[0] + '.ogg'
+        if not os.path.exists(os.path.join(OUT, kept)):
+            if not os.path.exists(os.path.join(OUT, file)):
+                urllib.request.urlretrieve(FISH.format(task), os.path.join(OUT, file))
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', os.path.join(OUT, file), '-c:a', 'libvorbis', '-q:a', '5', os.path.join(OUT, kept)], check=True)
+        manifest[text] = kept
     with open(os.path.join(OUT, 'manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=1, ensure_ascii=False)
     print(len(manifest), 'lines')

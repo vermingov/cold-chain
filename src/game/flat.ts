@@ -347,7 +347,7 @@ export async function openFlat(engine, canvas, { screen, noises, morning = false
 
     let clock = 0, opening = null;
     return {
-        scene, player, clipboard, things, devices, bake: { meshes: baked, lights: lamps },
+        scene, player, clipboard, things, devices, bake: { meshes: baked, lights: lamps }, room: 'flat',
         door: new V3(DOOR.x, 1.1, -d),
         sofa: new V3(-w + 0.45, 0.45, 0.2),
         // Swing the door open, over `seconds`.

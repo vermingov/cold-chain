@@ -5,8 +5,12 @@ order. This file is where the work stands.
 
 ## Where things are
 
-- Tree: `~/cold-chain`. Engine: Babylon.js 9.27.1 vendored, plain ES
-  modules, no build step, `node server.js` (PORT, HOST).
+- Tree: `~/cold-chain`, under git (local only). TypeScript 7.0.2 built with
+  Vite 8.3.5; Babylon.js 9.27.1 and Havok from npm (`npm install`). Develop
+  with `npx vite` (127.0.0.1:8669); `npm run build` type-checks and writes
+  `dist/`; `node server.js` (PORT, HOST) serves `dist/` first and the assets
+  from the tree. `npx tsc --noEmit` must stay clean. The version in
+  `package.json` is shown top left: bump it with every update.
 - Sources fetched to `~/.cache/cold-chain/` and not in the tree:
   `makehuman/` (sparse clone of makehumancommunity/makehuman: base mesh,
   rig, targets, the eyeballs), `base/` (mirror of
@@ -577,14 +581,45 @@ MPFB for people, Poly Haven, glTF/WebP/OGG.
 - The man on the table has the coffin's face (eyes shut, jaw 4). He is
   undressed there and a line says the suit was cut off.
 
+## TypeScript, physics, the screen, sound, 2026-11-12 late night
+
+- The move to TypeScript: every class field is declared with the type
+  TypeScript inferred from the old JavaScript (a TS 5 API script did it,
+  ~/.cache/cold-chain/ts5). The type check found `Field` had two `lift()`
+  methods; the scalpel's "stroke ended" called the piece-taking one. Now
+  `lift()` and `liftBlade()`.
+- Rig scripts run against Vite (8669) and reach `BABYLON` on the page
+  (play.html exposes it in dev, the dev pages always).
+- The screen: version top left, the next step of the night under it (a
+  place can say better: `todo()`, `how`), a breath bar while breath is
+  spent, a word over a point (`screen.mark`, the cooler).
+- Breath: about 15 s of running; out of breath, no running until 30% is
+  back (it flickered on and off at the limit and shook the camera).
+  Working with the spade or bar no longer freezes looking.
+- Physics (Havok, table only): an organ out of the body and let go off it
+  falls, lands, knocks into the others (convex hull, unparented while
+  loose, `Inside.fall` / `Inside.hold`). Table, floor, trolley and cooler
+  are solid. Organs inside the body are still moved by shifts, not physics.
+- The hand stays on what it took hold of when that cannot follow (it drew
+  its pinch at the mouse before: "grabbed nothing"); what cannot move at all
+  is not taken hold of.
+- tools/organs.py presses organs in from the flanks too (the pelvis crest
+  came through his side).
+- Flesh after many cuts: lip smoothing on arrays, partial GPU uploads, cut
+  faces only where a lip moved, skin-over-skin asked every 4th frame.
+  `~/.cache/cold-chain/cutperf.mjs` measures. The tissue solve is most of
+  what is left.
+- Sound: HRTF for sounds with a place, a convolver ring per room (flat,
+  yard, cold), a limiter; sounds are OGG.
+- WebGPU: `?gpu=webgpu`. It starts, but not every time in the headless rig;
+  WebGL 2 stays the default until it has been seen right everywhere.
+
 ## Known and not fixed
 
 - Hands at rest are claws; the old man's hair proxy looked like a wig so he
   is bald; teeth are a little bright; the buyer is in a T-shirt with
   MakeHuman's logo on it (the wardrobe is thirteen outfits, pick better).
 - Dead skin is only a tint so far. No lividity, no sheet.
-- The pelvis from the organ set is wider than the old man: its crest pokes
-  out through his left flank just above the table (seen from `view=work`).
 
 ## Next
 

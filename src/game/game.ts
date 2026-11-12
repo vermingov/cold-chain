@@ -17,6 +17,7 @@ const pad = (n) => String(n).padStart(2, '0');
 
 export class Game {
     declare engine: any;
+    declare heardIn: string;            // the room the sound is in
     declare canvas: any;
     declare screen: any;
     declare run: Run;
@@ -44,6 +45,11 @@ export class Game {
                 // Never more than a twentieth of a second at once: a stalled frame must not carry anybody through a wall.
                 this.place.update(Math.min(0.05, engine.getDeltaTime() / 1000));
                 this.place.scene.render();
+                // Heard where the eyes are, in the room they are in.
+                if (this.noises && this.place.scene.activeCamera) {
+                    if (this.place.room !== this.heardIn) this.noises.room(this.heardIn = this.place.room);
+                    this.noises.sound.listen(this.place.scene.activeCamera);
+                }
                 this.noises?.update();
                 // A place may say more exactly what is to be done in it than the night's list does.
                 screen.task(this.place.todo?.() ?? this.job?.todo ?? null, this.place.how ?? null);
@@ -126,7 +132,7 @@ export class Game {
                 await screen.say(night.machine, VOICES);
                 noises.shot('beep');
                 heard = true;
-                noises.ring(true);
+                noises.ring(true, flat.devices.phoneAt.asArray());
                 await screen.note('The phone rings.');
             },
         });
