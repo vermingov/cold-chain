@@ -7,14 +7,14 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<script src="../vendor/babylon.js"></script>
 <script type="module">
+import * as BABYLON from '@babylonjs/core';
 // A body on the table and a scalpel in the hand.
 //   ?view=work | far | close | low | top | near    where the eye is
 //   ?skin=0                                    without the skin, to see what is inside and where
 // 1 is the scalpel: move the mouse over the trunk, hold the button and draw to cut. Slow is deep.
 // 2 is the bare hand: draw the lip of a wound that goes through to pull it open; take hold of what is inside.
-import { buildTable } from '../src/table/room.js';
+import { buildTable } from '../src/table/room.ts';
 
 const query = new URLSearchParams(location.search);
 const canvas = document.getElementById('view');

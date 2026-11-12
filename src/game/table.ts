@@ -1,0 +1,148 @@
+// The cold room: the table, worked on for what the order wants.
+//
+// The cooler is on a trolley across the table from whoever is working (it
+// goes round with them when they go round, V), where they can see it. A
+// thing cut free and lifted out of the body is put in it by carrying it
+// over the cooler and letting go: the cooler's rim shows when it is over
+// it. It goes into the ice, stays there to be seen, and is graded as it
+// goes in: sound, marginal (the blade has been on it), or reject (torn out,
+// or cut about). Under the middle of the picture a word says what the hand
+// can do with what it has. E steps back from the table, whether or not
+// everything is in the cooler.
+
+import * as BABYLON from '@babylonjs/core';
+import { buildTable } from '../table/room.ts';
+import { Clipboard } from './clipboard.ts';
+
+const V3 = BABYLON.Vector3;
+// The trolley: how far out from the table's middle it stands (on the far side from the eye), how far along toward
+// the feet, its top; the cooler on it: across, high, along.
+const TROLLEY = { out: 0.64, along: -0.05, top: 0.9, size: [0.4, 0.58] };
+const COOLER = { size: [0.34, 0.26, 0.46] };
+const OVER = 0.3;           // metres from the cooler's middle, across the floor, that a thing carried counts as over it
+// How many marks of a blade an organ can have and still be sound, or still be worth anything.
+const NICKS = { sound: 0, marginal: 2 };
+const SAYS = { sound: 'Whole and clean.', marginal: 'There is a mark of the blade on it.', reject: 'It is torn. Nobody will pay for that.' };
+
+export async function openTable(engine, canvas, game) {
+    const scene = new BABYLON.Scene(engine);
+    const table = await buildTable(scene, canvas, { sound: game.noises?.sound });
+    const cooler = trolley(scene, table.shadows);
+    const clipboard = new Clipboard(scene, table.camera, { bright: 0.9 });
+    const { job, screen } = game, inside = table.inside, kept = [];
+    let finished;
+    const done = new Promise((out) => { finished = out; });
+
+    // Which side of the table the eye is on: the cooler stands across from it, where it can be seen.
+    let side = 1;
+    const stand = () => {
+        cooler.root.position.set(-side * TROLLEY.out, 0, table.field.point(0.5, 0.5).z + TROLLEY.along);
+        cooler.root.computeWorldMatrix(true);
+        kept.forEach((organ, i) => inside.putAt(organ, place(i)));
+    };
+    // Where the i-th thing in the cooler lies on the ice.
+    const place = (i) => cooler.root.position.add(new V3(0, TROLLEY.top + COOLER.size[1] * 0.45, (i % 3 - 1) * 0.13));
+    stand();
+
+    const keys = (e) => {
+        if (e.code === 'KeyE') finished();
+        if (e.code === 'KeyV') {
+            side = -side;
+            table.look(side > 0 ? 'work' : 'across');
+            stand();
+        }
+    };
+    window.addEventListener('keydown', keys);
+    screen.say([
+        { who: '', says: 'His suit is cut off him and bagged for the furnace.' },
+        { who: '', says: '1 is the scalpel, 2 the bare hand, 3 a retractor. V goes round to the other side of the table. E steps back from it.' },
+        { who: '', says: 'Draw the scalpel slowly down the middle of the belly, and again, and again, until it is through.' },
+        { who: '', says: 'Hook each lip with a retractor and draw it out. Move the bowel off the kidney with the hand, and the colon, and whatever lies over it.' },
+        { who: '', says: 'Cut across its artery, its vein and its ureter, close to it. Lift it out with the wheel, carry it over the cooler and let go.' },
+    ], {});
+
+    const over = (organ) => {
+        organ.mesh.computeWorldMatrix(true);
+        const c = organ.mesh.getBoundingInfo().boundingBox.centerWorld, at = cooler.root.position;
+        return Math.hypot(c.x - at.x, c.z - at.z) < OVER;
+    };
+    // The hand opens on something: if it is out of the body and over the cooler, it goes in.
+    table.hand.takes = (organ) => {
+        if (!inside.out(organ) || !over(organ)) return false;
+        organ.taken = true;
+        kept.push(organ);
+        inside.putAt(organ, place(kept.length - 1));
+        const grade = inside.torn.includes(organ.name) ? 'reject'
+            : organ.nicks.length <= NICKS.sound ? 'sound' : organ.nicks.length <= NICKS.marginal ? 'marginal' : 'reject';
+        job.keep(organ.name, grade);
+        screen.note(`The ${organ.name}, into the ice. ${SAYS[grade]}`);
+        return true;
+    };
+
+    // What the hand can do with what it has, said under the middle of the picture.
+    const advise = () => {
+        const organ = table.hand.held && table.hand.held.organ;
+        cooler.lit(!!organ && inside.out(organ) && over(organ));
+        if (!organ) return null;
+        if (inside.strained(organ)) return 'Still held by its vessels: cut them first, or it tears';
+        if (!inside.free(organ)) return null;
+        if (!inside.out(organ)) return 'Lift it out: the wheel';
+        return over(organ) ? 'Let go: into the cooler' : 'Over the cooler, and let go';
+    };
+
+    return {
+        scene, clipboard, done, cooler, table,
+        update(dt) {
+            table.update(dt);
+            clipboard.update(dt);
+            screen.hint(advise());
+        },
+        dispose() {
+            screen.hint(null);
+            window.removeEventListener('keydown', keys);
+            table.dispose();
+            scene.dispose();
+        },
+    };
+}
+
+// A steel trolley, and on it a cooler: a white box with ice in it and its lid off. Its rim shows when something
+// carried is over it (`lit`).
+function trolley(scene, shadows) {
+    const plain = (name, colour, rough) => {
+        const m = new BABYLON.PBRMaterial(name, scene);
+        m.albedoColor = BABYLON.Color3.FromArray(colour);
+        m.metallic = 0;
+        m.roughness = rough;
+        m.environmentIntensity = 0;
+        return m;
+    };
+    const steel = plain('trolley', [0.5, 0.52, 0.53], 0.3), white = plain('cooler', [0.78, 0.78, 0.74], 0.5), ice = plain('ice', [0.7, 0.78, 0.82], 0.15);
+    const root = new BABYLON.TransformNode('trolley', scene);
+    const [tw, td] = TROLLEY.size, [w, h, d] = COOLER.size, top = TROLLEY.top, t = 0.02;
+    const box = (name, size, at: [number, number, number], material) => {
+        const mesh = BABYLON.MeshBuilder.CreateBox(name, { width: size[0], height: size[1], depth: size[2] }, scene);
+        mesh.position.set(...at);
+        mesh.material = material;
+        mesh.receiveShadows = true;
+        mesh.parent = root;
+        shadows.addShadowCaster(mesh);
+        return mesh;
+    };
+    box('trolley top', [tw, 0.02, td], [0, top - 0.01, 0], steel);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) box('trolley leg', [0.03, top, 0.03], [sx * (tw / 2 - 0.03), top / 2, sz * (td / 2 - 0.03)], steel);
+    box('cooler floor', [w, t, d], [0, top + t / 2, 0], white);
+    const rim = [
+        box('cooler side', [w, h, t], [0, top + h / 2, -d / 2 + t / 2], white),
+        box('cooler side', [w, h, t], [0, top + h / 2, d / 2 - t / 2], white),
+        box('cooler end', [t, h, d], [-w / 2 + t / 2, top + h / 2, 0], white),
+        box('cooler end', [t, h, d], [w / 2 - t / 2, top + h / 2, 0], white),
+    ];
+    box('ice', [w - 2 * t, 0.012, d - 2 * t], [0, top + h * 0.35, 0], ice);
+    const glow = plain('cooler, ready', [0.78, 0.78, 0.74], 0.5);
+    glow.emissiveColor = new BABYLON.Color3(0.25, 0.3, 0.28);
+    return {
+        root,
+        lit(on) { for (const mesh of rim) mesh.material = on ? glow : white; },
+    };
+}

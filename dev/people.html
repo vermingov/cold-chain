@@ -7,14 +7,14 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<script src="../vendor/babylon.js"></script>
 <script type="module">
+import * as BABYLON from '@babylonjs/core';
 // Everyone the game can show, under the kind of light they will be seen in:
 // one of them on a table under a lamp, the rest standing.
 //   ?view=table | face | line | hands     where the camera is
 //   ?dressed=0                            the one on the table as buried, or not
-import { People } from '../src/person.js';
-import * as P from '../src/poses.js';
+import { People } from '../src/person.ts';
+import * as P from '../src/poses.ts';
 
 const query = new URLSearchParams(location.search);
 const canvas = document.getElementById('view');

@@ -11,8 +11,8 @@ const rig = await open('http://127.0.0.1:' + (process.env.PORT || 8669) + '/play
 try {
     await rig.until('window.__game', 20000);
     const described = await rig.eval(`(async () => {
-        const { describe } = await import('/src/bake.js');
-        const { openFlat } = await import('/src/game/flat.js');
+        const { describe } = await import('/src/bake.ts');
+        const { openFlat } = await import('/src/game/flat.ts');
         if ('${place}' !== 'flat') throw new Error('no such place: ${place}');
         const flat = await openFlat(__game.engine, __game.canvas, { screen: __game.screen, morning: '${time}' === 'morning' });
         return JSON.stringify(await describe(flat.bake.meshes, flat.bake.lights));

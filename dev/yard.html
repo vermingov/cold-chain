@@ -7,21 +7,21 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<script src="../vendor/babylon.js"></script>
 <script type="module">
+import * as BABYLON from '@babylonjs/core';
 // The cemetery, to walk about in with a torch.
 //   ?view=gate | avenue | old | lawn | public | chapel | front | lodge | ...   where the player starts (VIEWS)
 //   ?torch=0                                                             without the torch
 //   ?day=1                                                               a dull afternoon, for judging materials
 // Click to take the mouse; W A S D to walk, Shift to run, Ctrl or C to get down.
-import { Surfaces } from '../src/surfaces.js';
-import { Models } from '../src/models.js';
-import { Player } from '../src/player.js';
-import { gradePicture } from '../src/picture.js';
-import { Night } from '../src/yard/night.js';
-import { Torch } from '../src/yard/torch.js';
-import { buildYard } from '../src/yard/yard.js';
-import { heightAt } from '../src/map/plan.js';
+import { Surfaces } from '../src/surfaces.ts';
+import { Models } from '../src/models.ts';
+import { Player } from '../src/player.ts';
+import { gradePicture } from '../src/picture.ts';
+import { Night } from '../src/yard/night.ts';
+import { Torch } from '../src/yard/torch.ts';
+import { buildYard } from '../src/yard/yard.ts';
+import { heightAt } from '../src/map/plan.ts';
 
 const query = new URLSearchParams(location.search);
 const canvas = document.getElementById('view');

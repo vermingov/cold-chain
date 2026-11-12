@@ -7,7 +7,7 @@
 // window, whether a row can be counted. Ten pixels to the metre.
 
 import { writeFileSync } from 'node:fs';
-import { BOUNDS, BUILDINGS, GATES, GRAVE, PATHS, SECTIONS, plots, trees } from '../src/map/plan.js';
+import { BOUNDS, BUILDINGS, GATES, GRAVE, PATHS, SECTIONS, plots, trees } from '../src/map/plan.ts';
 
 const out = process.argv[2] || 'dev/plan.svg';
 const S = 10, MARGIN = 14;

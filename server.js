@@ -10,13 +10,14 @@
 // own. Images and audio are skipped: they are already compressed and running
 // them through gzip costs CPU to make them very slightly larger.
 
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const zlib = require('zlib');
-const { execFile } = require('child_process');
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { execFile } from 'node:child_process';
 
-const ROOT = __dirname;
+const ROOT = import.meta.dirname;
+const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT || 8666);
 const HOST = process.env.HOST || '127.0.0.1';
 
@@ -35,12 +36,18 @@ const TYPES = {
     '.mp3': 'audio/mpeg',
     '.json': 'application/json; charset=utf-8',
     '.ico': 'image/x-icon',
+    '.webp': 'image/webp',
+    '.glb': 'model/gltf-binary',
+    '.wasm': 'application/wasm',
+    '.woff2': 'font/woff2',
 };
 
 function resolve(urlPath) {
     const clean = decodeURIComponent(urlPath.split('?')[0]);
     const rel = path.normalize(clean === '/' ? '/index.html' : clean).replace(/^(\.\.[/\\])+/, '');
-    const full = path.join(ROOT, rel);
+    // The built pages and their code are in dist/ (npm run build); the assets they load are in the tree.
+    const built = path.join(DIST, rel), full = path.join(ROOT, rel);
+    if (built.startsWith(DIST) && fs.existsSync(built)) return built;
     return full.startsWith(ROOT) ? full : null;
 }
 
