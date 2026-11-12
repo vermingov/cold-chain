@@ -8,15 +8,17 @@
 import * as BABYLON from '@babylonjs/core';
 import * as P from '../../poses.ts';
 import { heightAt } from '../../map/plan.ts';
+import { place } from '../../glb.ts';
 
 const V3 = BABYLON.Vector3;
 const BUYER: [number, number] = [57.2, 96.2];         // just outside the bars
 const VAN = { at: [62.6, 96.2], size: [5.1, 2.05, 1.95] };     // nose to the gate: long (x), high, wide
 const LIGHTS = 70;
+const WHEELS = { front: -1.95, back: 1.6, track: 0.82 };    // the model's axles along its length from its middle, and half its track
 
 export class Gate {
     declare buyer: any;
-    declare van: BABYLON.Mesh[];
+    declare van: BABYLON.TransformNode;
     declare lamps: BABYLON.SpotLight;
     declare clock: number;
     declare waiting: boolean;
@@ -66,53 +68,30 @@ export class Gate {
 
     _show(on) {
         this.buyer.setEnabled(on);
-        for (const mesh of this.van) mesh.setEnabled(on);
+        this.van.setEnabled(on);
         this.lamps.setEnabled(on);
     }
 
     dispose() {
         this.buyer.dispose();
-        for (const mesh of this.van) mesh.dispose();
+        this.van.dispose();
         this.lamps.dispose();
     }
 }
 
-// A dark panel van, seen at night: a body, a windscreen, two lamps burning. Nothing else of it shows.
+// The forged van (tools/forge/models/yard.py), nose to the gate (-x), its lamps lit, sat on the track as it lies
+// under its four wheels.
 function van(scene) {
-    const [x, z] = VAN.at, [l, h, w] = VAN.size, ground = heightAt(x, z), front = x - l / 2;
-    const paint = new BABYLON.PBRMaterial('van', scene);
-    paint.albedoColor = new BABYLON.Color3(0.025, 0.028, 0.03);
-    paint.metallic = 0;
-    paint.roughness = 0.5;
-    paint.environmentIntensity = 0;
-    const glass = new BABYLON.PBRMaterial('van glass', scene);
-    glass.albedoColor = new BABYLON.Color3(0.01, 0.01, 0.012);
-    glass.roughness = 0.05;
-    glass.metallic = 0;
-    glass.environmentIntensity = 0;
-    const lit = new BABYLON.StandardMaterial('van lamp', scene);
-    lit.disableLighting = true;
-    lit.emissiveColor = new BABYLON.Color3(1, 0.95, 0.85).scale(3);
-    const body = BABYLON.MeshBuilder.CreateBox('van', { width: l, height: h - 0.35, depth: w }, scene);
-    body.position.set(x, ground + 0.35 + (h - 0.35) / 2, z);
-    body.material = paint;
-    const screen = BABYLON.MeshBuilder.CreatePlane('windscreen', { width: w - 0.2, height: 0.62 }, scene);
-    screen.position.set(front - 0.01, ground + h - 0.45, z);
-    screen.rotation.y = Math.PI / 2;
-    screen.material = glass;
-    const lamps = [-1, 1].map((side) => {
-        const lamp = BABYLON.MeshBuilder.CreateDisc('van lamp', { radius: 0.09 }, scene);
-        lamp.position.set(front - 0.012, ground + 0.75, z + side * (w / 2 - 0.25));
-        lamp.rotation.y = Math.PI / 2;
-        lamp.material = lit;
-        return lamp;
-    });
-    const wheels = [-1, 1].flatMap((side) => [-1, 1].map((end) => {
-        const wheel = BABYLON.MeshBuilder.CreateCylinder('van wheel', { diameter: 0.66, height: 0.22, tessellation: 18 }, scene);
-        wheel.rotation.x = Math.PI / 2;
-        wheel.position.set(x + end * (l / 2 - 0.8), ground + 0.33, z + side * (w / 2 - 0.1));
-        wheel.material = paint;
-        return wheel;
-    }));
-    return [body, screen, ...lamps, ...wheels];
+    const [x, z] = VAN.at, holder = new BABYLON.TransformNode('van', scene);
+    const ground = (ax, side) => heightAt(x + ax, z + side * WHEELS.track);
+    const front = (ground(WHEELS.front, -1) + ground(WHEELS.front, 1)) / 2, back = (ground(WHEELS.back, -1) + ground(WHEELS.back, 1)) / 2;
+    const left = (ground(WHEELS.front, 1) + ground(WHEELS.back, 1)) / 2, right = (ground(WHEELS.front, -1) + ground(WHEELS.back, -1)) / 2;
+    const length = WHEELS.back - WHEELS.front;
+    holder.position.set(x, front + (back - front) * (-WHEELS.front / length), z);
+    holder.rotation.set(-Math.atan2(left - right, 2 * WHEELS.track), 0, Math.atan2(back - front, length));
+    const fit = new BABYLON.TransformNode('van model', scene);
+    fit.parent = holder;
+    fit.rotation.y = -Math.PI / 2;
+    place(scene, 'props/van').then(({ root }) => { root.parent = fit; });
+    return holder;
 }

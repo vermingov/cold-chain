@@ -12,7 +12,7 @@ has its origin on its pivot.
 
 import json
 import math
-import os
+import struct
 import urllib.request
 from pathlib import Path
 
@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / 'assets' / 'models' / 'props'
 PREVIEWS = Path.home() / '.cache' / 'cold-chain' / 'forge-previews' / 'props'
 DOWNLOADS = Path.home() / '.cache' / 'cold-chain' / 'dl' / 'polyhaven'
+TEXTURES = Path.home() / '.cache' / 'cold-chain' / 'forge-textures' / 'props'
 THREADS = 4             # other forges share the machine
 
 
@@ -128,6 +129,7 @@ def prism(name, outline, z0, z1, material=None, round=0.0, segments=1, grain='Z'
     for i in range(n):
         j = (i + 1) % n
         bm.faces.new((bottom[i], bottom[j], top[j], top[i]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     obj = bevel(from_bmesh(name, bm, material), round, segments)
     return box_uv(obj, grain, tile)
 
@@ -303,26 +305,6 @@ def pivot(obj, point):
     return obj
 
 
-def mirror(obj, axis='X'):
-    """A mirrored copy of a mesh object (the faces turned back the right way out)."""
-    copy = obj.copy()
-    copy.data = obj.data.copy()
-    _link(copy)
-    scale = {'X': (-1, 1, 1), 'Y': (1, -1, 1), 'Z': (1, 1, -1)}[axis]
-    copy.data.transform(Matrix.Diagonal((*scale, 1)))
-    copy.data.flip_normals()
-    return copy
-
-
-def copy(obj, matrix=None):
-    duplicate = obj.copy()
-    duplicate.data = obj.data.copy()
-    _link(duplicate)
-    if matrix is not None:
-        duplicate.data.transform(Matrix(matrix))
-    return duplicate
-
-
 def T(x=0, y=0, z=0):
     return Matrix.Translation((x, y, z))
 
@@ -403,8 +385,8 @@ class Shader:
         self.link(value, node.inputs['Value'])
         return node.outputs['Result']
 
-    def mix(self, a, b, factor, kind='RGBA'):
-        node = self.node('ShaderNodeMix', _data_type=kind)
+    def mix(self, a, b, factor, kind='RGBA', blend='MIX'):
+        node = self.node('ShaderNodeMix', _data_type=kind, _blend_type=blend)
         suffix = {'RGBA': 'Color', 'FLOAT': 'Float'}[kind]
         sockets = {s.identifier: s for s in node.inputs}
         self.link(factor, sockets['Factor_Float'])
@@ -468,7 +450,8 @@ def _grow(rgba, steps):
 
 
 def _emit(highs, channel):
-    """Show `channel` of each fine material as light (None: back to the BSDF), for an EMIT bake."""
+    """Show `channel` of each fine material as light, for an EMIT bake; 'plain' gives them a bare diffuse (an
+    occlusion bake runs the surface's shader wherever its rays land), None puts the BSDF back."""
     for obj in highs:
         for material in obj.data.materials:
             if material is None or material.get('lamp'):
@@ -479,24 +462,49 @@ def _emit(highs, channel):
             if channel is None:
                 tree.links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
                 continue
+            if channel == 'plain':
+                plain = tree.nodes.get('bake plain') or tree.nodes.new('ShaderNodeBsdfDiffuse')
+                plain.name = 'bake plain'
+                tree.links.new(plain.outputs['BSDF'], output.inputs['Surface'])
+                continue
             emission = tree.nodes.get('bake emission') or tree.nodes.new('ShaderNodeEmission')
             emission.name = 'bake emission'
             for link in list(emission.inputs['Color'].links):
                 tree.links.remove(link)
-            source = bsdf.inputs[channel]
-            if source.links:
-                tree.links.new(source.links[0].from_socket, emission.inputs['Color'])
+            if channel == 'Roughness Metallic':
+                # Both in one picture: roughness in red, metalness in green.
+                target = tree.nodes.get('bake pack') or tree.nodes.new('ShaderNodeCombineColor')
+                target.name = 'bake pack'
+                tree.links.new(target.outputs['Color'], emission.inputs['Color'])
+                for socket, into in (('Roughness', 'Red'), ('Metallic', 'Green')):
+                    _carry(tree, bsdf.inputs[socket], target.inputs[into])
             else:
-                value = source.default_value
-                emission.inputs['Color'].default_value = tuple(value) if hasattr(value, '__len__') else (value, value, value, 1)
+                _carry(tree, bsdf.inputs[channel], emission.inputs['Color'])
             tree.links.new(emission.outputs['Emission'], output.inputs['Surface'])
 
 
-def _bake_pass(pairs, highs, kind, size, samples, extrusion, reach):
+def _carry(tree, source, target):
+    """Whatever feeds `source` (a link, or its value) feeds `target` too."""
+    if source.links:
+        tree.links.new(source.links[0].from_socket, target)
+        return
+    value = source.default_value
+    if hasattr(value, '__len__') and not hasattr(target.default_value, '__len__'):
+        value = value[0]
+    elif not hasattr(value, '__len__') and hasattr(target.default_value, '__len__'):
+        value = (value, value, value, 1)
+    target.default_value = value
+
+
+def _bake_pass(pairs, highs, kind, size, samples, extrusion, reach, apart=None):
     scene = bpy.context.scene
     scene.cycles.samples = samples
     total = np.zeros((size, size, 4), np.float32)
     for low, high in pairs:
+        if kind == 'AO' and apart:
+            # Occlusion only from the parts that stay with this one.
+            for other in highs:
+                other.hide_render = apart.get(other, 0) != apart.get(high, 0)
         image = bpy.data.images.new('pass', size, size, alpha=True, float_buffer=True)
         image.colorspace_settings.name = 'Non-Color'
         image.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
@@ -513,6 +521,8 @@ def _bake_pass(pairs, highs, kind, size, samples, extrusion, reach):
         hit = pixels[..., 3] > 0.5
         total[hit] = pixels[hit]
         bpy.data.images.remove(image)
+    for other in highs:
+        other.hide_render = False
     return total
 
 
@@ -522,10 +532,20 @@ def _srgb(linear):
 
 
 def _picture(name, rgb, colour):
+    """The map, also kept as a lossless WebP master in the textures folder, from which `ship` makes what the GLB
+    carries."""
     size = rgb.shape[0]
+    pixels = np.concatenate([np.clip(rgb, 0, 1), np.ones((size, size, 1), np.float32)], axis=2).astype(np.float32).ravel()
+    TEXTURES.mkdir(parents=True, exist_ok=True)
+    file = bpy.data.images.new(name + ' file', size, size, alpha=False)
+    file.colorspace_settings.name = 'sRGB' if colour else 'Non-Color'
+    file.pixels.foreach_set(pixels)
+    file.file_format = 'WEBP'
+    file.save(filepath=str(TEXTURES / f'{name}.webp'), quality=100)
+    bpy.data.images.remove(file)
     image = bpy.data.images.new(name, size, size, alpha=False)
     image.colorspace_settings.name = 'sRGB' if colour else 'Non-Color'
-    image.pixels.foreach_set(np.concatenate([np.clip(rgb, 0, 1), np.ones((size, size, 1), np.float32)], axis=2).astype(np.float32).ravel())
+    image.pixels.foreach_set(pixels)
     image.pack()
     return image
 
@@ -540,12 +560,21 @@ def _gltf_output_group():
     return group
 
 
-def bake(name, parts, highs, size, extrusion=0.004, dirt=0.5, reach_ao=0.1, samples_ao=96):
+def bake(name, parts, highs, size, extrusion=0.004, dirt=0.5, reach_ao=0.1, apart=(), samples_ao=64):
     """Bake the fine `highs` (name -> object) onto the plain `parts` (name -> object; those without a fine twin
     keep their own material) and give the plain ones the result as one material. `dirt` is how much of the
-    occlusion goes into the colour as well: the game's lights are lamps, which an occlusion map alone would not dim."""
+    occlusion goes into the colour as well: the game's lights are lamps, which an occlusion map alone would not dim.
+    `apart` is groups of part names that move away from the rest (a lid, a handset, a wheel): their occlusion is
+    baked from their own group only, and the rest's without them."""
     pairs = [(parts[k], highs[k]) for k in parts if k in highs]
     lows = [low for low, _ in pairs]
+    # Triangles from the start, so the tangents the normals are baked against are the ones that get exported.
+    for low in lows:
+        bm = bmesh.new()
+        bm.from_mesh(low.data)
+        bmesh.ops.triangulate(bm, faces=bm.faces, quad_method='BEAUTY', ngon_method='BEAUTY')
+        bm.to_mesh(low.data)
+        bm.free()
     # One atlas over every plain part, at one texel size.
     for low in lows:
         while low.data.uv_layers:
@@ -583,18 +612,23 @@ def bake(name, parts, highs, size, extrusion=0.004, dirt=0.5, reach_ao=0.1, samp
     scene.world = scene.world or bpy.data.worlds.new('bake')
     scene.world.light_settings.distance = reach_ao
     found = {}
-    for channel, kind, samples in (('Base Color', 'EMIT', 4), ('Roughness', 'EMIT', 4), ('Metallic', 'EMIT', 2), ('normal', 'NORMAL', 4), ('ao', 'AO', samples_ao)):
-        _emit(highs.values(), channel if kind == 'EMIT' else None)
-        print(f'  baking {channel} ({size}px)', flush=True)
-        found[channel] = _bake_pass(pairs, highs.values(), kind, size, samples, extrusion, extrusion * 3)
+    # Occlusion changes slowly across a surface: it is baked at half the size, which is a quarter of the rays.
+    for channel, kind, samples, scale in (('Base Color', 'EMIT', 4, 1), ('Roughness Metallic', 'EMIT', 4, 1),
+                                          ('normal', 'NORMAL', 4, 1), ('ao', 'AO', samples_ao, 2)):
+        _emit(highs.values(), channel if kind == 'EMIT' else 'plain' if kind == 'AO' else None)
+        print(f'  baking {channel} ({size // scale}px)', flush=True)
+        groups = {highs[k]: n + 1 for n, group in enumerate(apart) for k in group if k in highs}
+        found[channel] = _bake_pass(pairs, list(highs.values()), kind, size // scale, samples, extrusion, extrusion * 3, groups)
+        if scale > 1:
+            found[channel] = np.repeat(np.repeat(found[channel], scale, 0), scale, 1)
     _emit(highs.values(), None)
     for obj in others:
         obj.hide_render = False
 
     grow = max(8, size // 64)
     colour, _ = _grow(found['Base Color'], grow)
-    rough, _ = _grow(found['Roughness'], grow)
-    metal, _ = _grow(found['Metallic'], grow)
+    surface, _ = _grow(found['Roughness Metallic'], grow)
+    rough, metal = surface[..., 0:1], surface[..., 1:2]
     normal, _ = _grow(found['normal'], grow)
     ao, _ = _grow(found['ao'], grow)
     ao = ao[..., 0]
@@ -643,7 +677,7 @@ def triangles(obj):
     return sum(len(p.vertices) - 2 for p in obj.data.polygons)
 
 
-def forge(name, build, size, pivots=None, parents=None, extrusion=0.004, dirt=0.5, reach_ao=0.1):
+def forge(name, build, size, pivots=None, parents=None, extrusion=0.004, dirt=0.5, reach_ao=0.1, apart=(), shipped=None):
     """Build `name` fine and plain with `build(fine)` (which returns {part: object}), bake, set the pivots and
     parents, and export assets/models/props/<name>.glb. Returns the GLB's path."""
     reset()
@@ -656,7 +690,7 @@ def forge(name, build, size, pivots=None, parents=None, extrusion=0.004, dirt=0.
     lamps = [obj for obj in parts.values() if any(m and m.get('lamp') for m in obj.data.materials)]
     for key in [k for k in highs if parts.get(k) in lamps]:
         bpy.data.objects.remove(highs.pop(key))
-    bake(name, {k: v for k, v in parts.items() if v not in lamps}, highs, size, extrusion, dirt, reach_ao)
+    bake(name, {k: v for k, v in parts.items() if v not in lamps}, highs, size, extrusion, dirt, reach_ao, apart)
     for obj in highs.values():
         bpy.data.objects.remove(obj)
     for key, point in (pivots or {}).items():
@@ -676,16 +710,59 @@ def forge(name, build, size, pivots=None, parents=None, extrusion=0.004, dirt=0.
                               export_image_format='WEBP', export_image_quality=90, export_tangents=True,
                               export_draco_mesh_compression_enable=False, export_cameras=False, export_lights=False,
                               export_extras=False, export_animations=False)
+    ship(name, shipped or (size, size, size))
+    _embed(path)
     print(f'exported {path} ({path.stat().st_size / 1024:.0f} KiB): ' +
           ', '.join(f'{o.name} {triangles(o)}' for o in parts.values()) + f'; {sum(triangles(o) for o in parts.values())} triangles')
     return path
 
 
+def ship(name, sizes):
+    """The maps that go out with `name`, made from its masters at `sizes` (colour, normal, ORM: each as large as it
+    has to be at the distance the thing is seen from in the game). Colour and ORM are lossy WebP at 80. The normal map
+    is lossless, rounded to six bits a channel first: lossy WebP halves and blurs the colour channels, which in a
+    normal map are its slopes, and every highlight then shows the blocks."""
+    (TEXTURES / 'ship').mkdir(parents=True, exist_ok=True)
+    for kind, size in zip(('color', 'normal', 'orm'), sizes):
+        image = bpy.data.images.load(str(TEXTURES / f'{name}_{kind}.webp'))
+        image.colorspace_settings.name = 'Non-Color'
+        if image.size[0] != size:
+            image.scale(size, size)
+        if kind == 'normal':
+            pixels = np.empty(size * size * 4, np.float32)
+            image.pixels.foreach_get(pixels)
+            image.pixels.foreach_set(np.floor(pixels * 255 / 4) * 4 / 255)
+        image.file_format = 'WEBP'
+        image.save(filepath=str(TEXTURES / 'ship' / f'{name}_{kind}.webp'), quality=100 if kind == 'normal' else 80)
+        bpy.data.images.remove(image)
+
+
+def _embed(path):
+    """Put the shipped maps (`ship`) into the GLB in place of the exporter's own encoding of them, the binary chunk
+    laid out again around them."""
+    data = path.read_bytes()
+    size = struct.unpack('<I', data[12:16])[0]
+    gltf = json.loads(data[20:20 + size])
+    binary = data[20 + size + 8:]
+    swap = {image['bufferView']: (TEXTURES / 'ship' / f"{image['name']}.webp").read_bytes() for image in gltf.get('images', [])}
+    out = bytearray()
+    for n, view in enumerate(gltf['bufferViews']):
+        chunk = swap.get(n, binary[view.get('byteOffset', 0):view.get('byteOffset', 0) + view['byteLength']])
+        view['byteOffset'], view['byteLength'] = len(out), len(chunk)
+        out += chunk + b'\0' * (-len(chunk) % 4)
+    gltf['buffers'][0]['byteLength'] = len(out)
+    text = json.dumps(gltf, separators=(',', ':')).encode()
+    text += b' ' * (-len(text) % 4)
+    body = struct.pack('<II', len(text), 0x4E4F534A) + text + struct.pack('<II', len(out), 0x004E4942) + bytes(out)
+    path.write_bytes(struct.pack('<III', 0x46546C67, 2, 12 + len(body)) + body)
+
+
 # --- looking at it ----------------------------------------------------------------------------------------------------
 
-def look(path, setting, close, poses=None, samples=64):
+def look(path, setting, close, poses=None, samples=32):
     """Load the GLB back, say what is in it, and render a three-quarter view and a close one (and, with `poses`
-    {object: (axis, degrees)}, the moving parts moved) into the previews folder. `setting` is 'room' (a bare warm
+    {object: [(axis, amount)]}, the moving parts moved: X/Y/Z turn by degrees, x/y/z move by metres, in Blender's
+    axes) into the previews folder. `setting` is 'room' (a bare warm
     bulb) or 'yard' (moonlight and a torch); `close` is (x, y, z, distance) to look at closely."""
     reset()
     bpy.ops.import_scene.gltf(filepath=str(path))
@@ -706,7 +783,7 @@ def look(path, setting, close, poses=None, samples=64):
     scene = bpy.context.scene
     scene.cycles.samples = samples
     scene.cycles.use_denoising = True
-    scene.render.resolution_x, scene.render.resolution_y = 1280, 960
+    scene.render.resolution_x, scene.render.resolution_y = 960, 720
     scene.view_settings.view_transform = 'AgX'
     world = bpy.data.worlds.new('dark')
     scene.world = world
@@ -777,8 +854,52 @@ def look(path, setting, close, poses=None, samples=64):
     shoot(f'{stem}-34.png', middle, radius * 2.6)
     shoot(f'{stem}-close.png', close[:3], close[3])
     if poses:
-        for name, (axis, degrees) in poses.items():
+        for name, moves in poses.items():
             obj = bpy.data.objects[name]
             obj.rotation_mode = 'XYZ'
-            obj.rotation_euler['XYZ'.index(axis)] += math.radians(degrees)
+            for axis, amount in moves:
+                if axis in 'XYZ':
+                    obj.rotation_euler['XYZ'.index(axis)] += math.radians(amount)
+                else:
+                    obj.location['xyz'.index(axis)] += amount
         shoot(f'{stem}-moved.png', middle, radius * 2.6)
+
+
+def dry(name, build, close):
+    """Build `name` fine and plain without baking: count the plain one's triangles and draw both, flat-shaded in
+    their materials' rough colours, fast (Workbench), to <name>-dry-*.png: for the shapes, before a bake."""
+    scene = reset()
+    for fine in (True, False):
+        for obj in list(scene.objects):
+            bpy.data.objects.remove(obj)
+        parts = build(fine)
+        bpy.context.view_layer.update()
+        print(f'{name} {"fine" if fine else "plain"}: ' + ', '.join(f'{k} {triangles(o)}' for k, o in parts.items()) +
+              f'; {sum(triangles(o) for o in parts.values())} triangles')
+        lo = Vector((1e9,) * 3)
+        hi = Vector((-1e9,) * 3)
+        for obj in parts.values():
+            for corner in obj.bound_box:
+                world = obj.matrix_world @ Vector(corner)
+                lo, hi = Vector(map(min, lo, world)), Vector(map(max, hi, world))
+        print(f'  bounds {tuple(round(v, 3) for v in lo)} .. {tuple(round(v, 3) for v in hi)}')
+        scene.render.engine = 'BLENDER_WORKBENCH'
+        scene.display.shading.light = 'STUDIO'
+        scene.display.shading.color_type = 'MATERIAL'
+        scene.display.shading.show_cavity = True
+        scene.render.resolution_x, scene.render.resolution_y = 1100, 820
+        for material in bpy.data.materials:
+            if material.node_tree and 'Principled BSDF' in material.node_tree.nodes:
+                socket = material.node_tree.nodes['Principled BSDF'].inputs['Base Color']
+                material.diffuse_color = socket.default_value if not socket.links else (0.5, 0.45, 0.4, 1)
+        camera = _link(bpy.data.objects.new('camera', bpy.data.cameras.new('camera')))
+        camera.data.lens = 40
+        camera.data.clip_start = 0.005
+        scene.camera = camera
+        middle, radius = (lo + hi) / 2, max((hi - lo).length / 2, 0.05)
+        view = Vector((-0.75, -1.0, 0.55)).normalized()
+        for tag, target, distance in (('34', middle, radius * 2.6), ('close', Vector(close[:3]), close[3])):
+            camera.location = target + view * distance
+            camera.rotation_euler = (target - camera.location).to_track_quat('-Z', 'Y').to_euler()
+            scene.render.filepath = str(PREVIEWS / f'{name}-dry-{"fine" if fine else "plain"}-{tag}.png')
+            bpy.ops.render.render(write_still=True)

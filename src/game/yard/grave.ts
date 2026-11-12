@@ -15,17 +15,19 @@ import { Buf } from '../../geometry.ts';
 import { heightAt } from '../../map/plan.ts';
 import { HOLE } from '../../yard/ground.ts';
 import * as P from '../../poses.ts';
+import { place } from '../../glb.ts';
+import { fill } from './bier.ts';
 import { field } from '../../noise.ts';
 import { makeRng } from '../../rng.ts';
 
 const V3 = BABYLON.Vector3;
 // The hole, from the middle of the plot: west to east (the head is west, under the marker) and either side.
-const CUT = { west: -0.82, east: 1.04, half: 0.43 };
+const CUT = { west: -0.87, east: 1.09, half: 0.43 };      // room for the coffin's end handles past the rough of the clay
 const COFFIN = { long: 1.84, wide: 0.56, deep: 0.34, lid: 0.025 };
 const LID = 1.0;                // metres down to the top of the lid
 const SPADEFULS = 18;           // to get down to it (a real one is hours; this is the part worth playing)
 const HEAP = { most: [2.0, 0.9, 1.05], off: 1.05 };     // the spoil, all out: long, high (half of it shows) and wide; and how far north of the middle it is thrown
-const PLATE = { wide: 0.16, high: 0.05 };
+const PLATE = { wide: 0.16, high: 0.05, on: 0.0025 };      // `on`: over the lid's top, on the brass of the forged plate
 const WALL = { step: 0.15, rough: 0.07 };     // the pit's sides: metres between their points, and how far in or out a point may be
 
 export class Grave {
@@ -37,7 +39,6 @@ export class Grave {
     declare dug: number;
     declare open: boolean;
     declare soil: any;
-    declare wood: any;
     declare pit: BABYLON.Mesh;
     declare rough: (x: any, y: any) => number;
     declare heap: BABYLON.Mesh;
@@ -46,9 +47,11 @@ export class Grave {
     declare plate: BABYLON.Mesh;
     declare coffinTop: number;
     declare body: any;
-    declare halves: BABYLON.Mesh[];
+    declare halves: BABYLON.TransformNode[];
+    declare spares: BABYLON.TransformNode[];
+    declare model: BABYLON.TransformNode;
 
-    // `plot` is the plan's, `burial` story.ts's, `surfaces` has soil and coffin. `people` has the body's person loaded.
+    // `plot` is the plan's, `burial` story.ts's, `surfaces` has soil. `people` has the body's person loaded.
     constructor(scene, plot, burial, { surfaces, people, flatten }) {
         this.scene = scene;
         this.plot = plot;
@@ -58,7 +61,6 @@ export class Grave {
         this.dug = 0;                   // spadefuls out
         this.open = false;              // the lid broken
         this.soil = surfaces.material('soil', { mottle: 0.3 });
-        this.wood = surfaces.material('coffin', { tint: [0.5, 0.42, 0.36] });
         this.pit = null;
 
         this.rough = field(makeRng(Math.round(plot.x * 97 + plot.z * 31)), 8);
@@ -70,17 +72,18 @@ export class Grave {
 
         // The coffin, its lid and the plate on the lid, at the bottom of where the hole will go.
         const top = this.surface - LID, x = plot.x + (CUT.west + CUT.east) / 2, z = plot.z;
-        const box = new Buf();
-        const half = [COFFIN.long / 2, COFFIN.wide / 2];
-        box.box([x - half[0], top - COFFIN.deep, z - half[1]], [x + half[0], top - COFFIN.lid, z + half[1]], 1.2, { skip: ['py'] });
-        lining(box, [x - half[0] + 0.02, top - COFFIN.deep + 0.02, z - half[1] + 0.02], [x + half[0] - 0.02, top - COFFIN.lid, z + half[1] - 0.02]);
-        this.coffin = box.toMesh('coffin', scene, this.wood);
-        const lid = new Buf();
-        lid.box([x - half[0], top - COFFIN.lid, z - half[1]], [x + half[0], top, z + half[1]], 1.2);
-        this.lid = lid.toMesh('lid', scene, this.wood);
-        this.plate = plate(scene, burial.plate, new V3(x - 0.45, top + 0.002, z));
-        this.plate.parent = this.lid;
+        // The forged coffin (tools/forge/models/yard.py), head to the west. Its body and lid are here at once, for the
+        // shadows; what they look like comes when the model has loaded, and with it two more lids, split, for when the
+        // bar has been at it. The name is the game's own plate, laid on the forged one.
+        this.coffin = new BABYLON.Mesh('coffin', scene);
+        this.lid = new BABYLON.Mesh('lid', scene);
+        this.plate = plate(scene, burial.plate, new V3(x - 0.45, top + PLATE.on, z));
+        this.plate.setEnabled(false);
         this.coffinTop = top;
+        this.model = new BABYLON.TransformNode('coffin model', scene);
+        this.model.position.set(x, top - COFFIN.deep, z);
+        this.model.rotation.y = -Math.PI / 2;
+        this._dress(scene);
         for (const mesh of [this.coffin, this.lid]) mesh.setEnabled(false);
 
         // Him, on his back, head to the west, hands at his sides, in what the council buried him in.
@@ -142,17 +145,72 @@ export class Grave {
     breakLid() {
         this.open = true;
         this.lid.setEnabled(false);
-        const halves = [0, 1].map((i) => {
-            const half = BABYLON.MeshBuilder.CreateBox('lid half', { width: COFFIN.long, height: COFFIN.lid, depth: COFFIN.wide / 2 }, this.scene);
-            half.material = this.wood;
-            half.position.set(this.plot.x + 0.1 + i * 0.12, this.surface + 0.3 + i * 0.05, this.plot.z + HEAP.off - 0.15 + i * 0.3);
-            half.rotation.set(0.25 - i * 0.4, 0.08 * i, 0.1);
-            half.receiveShadows = true;
-            return half;
+        if (!this.spares) return;
+        const halves = this.spares;
+        halves.forEach((half, i) => {
+            this._rest(half, this.plot.x + 0.1 + i * 0.12, this.plot.z + HEAP.off - 0.15 + i * 0.3, 0.08 * i, 0.25 - i * 0.4);
+            half.setEnabled(true);
         });
         this.plate.parent = halves[0];
-        this.plate.position.set(-0.45, COFFIN.lid / 2 + 0.002, 0);
+        this.plate.position.set(-0.45, COFFIN.lid / 2 + 0.001, 0);
+        this.plate.rotationQuaternion = null;
+        this.plate.rotation.set(Math.PI / 2, 0, 0);
+        this.plate.scaling.setAll(1);
+        this.plate.setEnabled(true);
         this.halves = halves;
+    }
+
+    // Lay a lid half (its middle at its origin, its length along its x) on the spoil and the ground about (x, z), turned
+    // `yaw` and rolled `roll`: lying on what is highest under it, tipped along its length to rest on two points of it.
+    _rest(half, x, z, yaw, roll) {
+        this.heap.computeWorldMatrix(true);
+        const along = new V3(Math.cos(yaw), 0, -Math.sin(yaw)), across = new V3(Math.sin(yaw), 0, Math.cos(yaw));
+        const reach = COFFIN.long / 2, side = COFFIN.wide / 4 * Math.cos(roll) + 0.02, under = COFFIN.lid / 2;
+        const ts = Array.from({ length: 25 }, (_, k) => -reach + (2 * reach * k) / 24);
+        const heights = ts.map((t) => Math.max(...[-side, 0, side].map((w) => {
+            const at = new V3(x, 0, z).addInPlace(along.scale(t)).addInPlace(across.scale(w));
+            const hit = new BABYLON.Ray(new V3(at.x, this.surface + 3, at.z), new V3(0, -1, 0), 6).intersectsMesh(this.heap, false);
+            return Math.max(heightAt(at.x, at.z), hit.hit ? hit.pickedPoint.y : -Infinity);
+        })) + under + Math.abs(Math.sin(roll)) * side);
+        // The lowest line over all of them through the middle: level on the highest, or through a point either side.
+        let best = { mid: Math.max(...heights), slope: 0 };
+        for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) {
+            if (ts[i] > 0 || ts[j] < 0) continue;
+            const slope = (heights[j] - heights[i]) / (ts[j] - ts[i]), mid = heights[i] - slope * ts[i];
+            if (mid < best.mid && ts.every((t, k) => mid + slope * t >= heights[k] - 1e-4)) best = { mid, slope };
+        }
+        half.position.set(x, best.mid, z);
+        half.rotation.set(roll, yaw, Math.atan(best.slope));
+    }
+
+    // The forged coffin into the stand-ins, the plate onto its lid, and the split lid made ready.
+    async _dress(scene) {
+        const [whole, ...split] = await Promise.all([0, 1, 2].map(() => place(scene, 'props/coffin')));
+        whole.root.parent = this.model;
+        fill(this.coffin, whole.parts.get('coffin') as BABYLON.Mesh);
+        fill(this.lid, whole.parts.get('coffin_lid') as BABYLON.Mesh);
+        if (!this.open) {
+            this.plate.setParent(this.lid);
+            this.plate.setEnabled(true);
+        }
+        // Each half: a lid as wide as half of one, its middle where the half is put.
+        this.spares = split.map(({ root, parts }) => {
+            const half = new BABYLON.TransformNode('lid half', scene), fit = new BABYLON.TransformNode('lid half model', scene);
+            fit.parent = half;
+            fit.rotation.y = -Math.PI / 2;
+            fit.scaling.x = 0.5;
+            fit.position.y = -(COFFIN.deep - COFFIN.lid / 2);
+            root.parent = fit;
+            parts.get('coffin').dispose();
+            parts.get('plate').setEnabled(false);
+            for (const mesh of root.getChildMeshes()) mesh.receiveShadows = true;
+            half.setEnabled(false);
+            return half;
+        });
+        if (this.open) {
+            this.open = false;
+            this.breakLid();
+        }
     }
 
     // Lifted out: the body is the bier's now.
@@ -196,7 +254,7 @@ export class Grave {
 
     dispose() {
         HOLE.splice(0, 4, 1e6, 1e6, 1e6, 1e6);
-        for (const mesh of [this.pit, this.heap, this.coffin, this.lid, this.plate, ...(this.halves || [])]) mesh?.dispose();
+        for (const node of [this.pit, this.heap, this.coffin, this.lid, this.plate, this.model, ...(this.spares || [])]) node?.dispose();
         this.body.dispose();
     }
 }
@@ -219,22 +277,6 @@ function spoil(scene, material, seed) {
             { shade: 1 - 0.4 * (i / rings) ** 2 });
     }
     return buf.toMesh('spoil', scene, material);
-}
-
-// The inside of a box, a board's thickness in from the outside of it: its four sides and its floor, each facing in.
-function lining(buf, [x0, y0, z0], [x1, y1, z1]) {
-    const middle = [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2];
-    const sides = [
-        [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]], [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
-        [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]],
-        [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
-    ];
-    for (const corners of sides) {
-        const centre = [0, 1, 2].map((k) => corners.reduce((sum, c) => sum + c[k], 0) / 4);
-        // Darker the further down: little light gets into a coffin.
-        buf.face(corners, middle.map((m, k) => m - centre[k]), corners.map(([cx, cy, cz]) => [(cx + cz) / 1.2, cy / 1.2]),
-            { shade: corners.map(([, cy]) => (cy > y1 - 0.01 ? 0.7 : 0.35)) });
-    }
 }
 
 // A brass plate with a name on it, lying on the lid.

@@ -21,19 +21,21 @@ import { Clipboard } from './clipboard.ts';
 import { Things } from './things.ts';
 import { buildStreet } from './street.ts';
 import { lay } from '../bake.ts';
+import { place } from '../glb.ts';
 
 const V3 = BABYLON.Vector3;
 // The room, from its middle on the floor: across (x), deep (z), high; and how thick its walls are. The door is in
 // the south wall, the window in the north one, over the road.
 const ROOM = { wide: 4.2, deep: 5, high: 2.55, wall: 0.24 };
-const DOOR = { x: 1.45, wide: 0.82, high: 1.98, opens: 1.25 };
+const DOOR = { x: 1.45, wide: 0.82, high: 1.98, opens: 1.25, hinge: [0.4085, 0.028] };    // hinge: its line, in from the middle and in from the room
 const WINDOW = { x: -0.4, wide: 1.25, sill: 0.82, high: 1.42 };
 const TABLE = { at: [1.72, -0.35], size: [0.66, 0.74, 1.0] };     // against the east wall by the door: middle, then size across, high, deep
 // What lights it: a bare bulb at night, a grey day in the morning.
 const LIGHT = { bulb: 8, day: 0.75 };
+const BOX = 0.325;          // how high the cardboard box by the east wall is under the radio's feet (its top sags in the middle)
 const BLINK = 1.1;          // seconds the machine's light takes to go on and off
 // What the bake lights (tools/forge): the room's own surfaces, and everything else on their materials.
-const BAKED = ['walls', 'floor', 'ceiling', 'woodwork', 'window frame', 'table top', 'table legs', 'radiator', 'door'];
+const BAKED = ['walls', 'floor', 'ceiling', 'woodwork', 'window frame', 'table top', 'table legs', 'radiator'];
 const SURFACES = ['wallpaper', 'carpet', 'ceiling', 'tabletop', 'pavement', 'terrace', 'tarmac', 'slates', 'limestone'];
 
 function paint(scene, name, colour, rough, mottle = 0.18) {
@@ -145,24 +147,21 @@ function curtain(scene, material, x, side, top, bottom) {
     return mesh;
 }
 
-// The door in its opening, hinged on its west edge: four panels, a knob. Returns its hinge, to swing it open.
-function door(scene, materials) {
-    const leaf = new Buf(), { wide: w, high: h } = DOOR, thick = 0.04;
-    leaf.box([0, 0, -thick / 2], [w, h, thick / 2], 1);
-    // The panels stand proud of the frame of the door on the room side.
-    for (const [x0, x1, y0, y1] of [[0.1, 0.38, 1.05, 1.86], [0.44, 0.72, 1.05, 1.86], [0.1, 0.38, 0.14, 0.92], [0.44, 0.72, 0.14, 0.92]]) {
-        leaf.box([x0, y0, thick / 2], [x1, y1, thick / 2 + 0.008], 1, { shade: 0.9 });
-        leaf.box([x0 + 0.03, y0 + 0.03, thick / 2 + 0.008], [x1 - 0.03, y1 - 0.03, thick / 2 + 0.014], 1);
-    }
+// The door in its opening, hinged on its west edge: the forged one (tools/forge/models/flat.py), its leaf with the
+// knobs and the hinges on it. Its frame stays out: the room's woodwork is the frame, baked with the room. The model
+// hangs on its left as seen from the room and this door on its right, so it is mirrored. Returns its hinge, to swing
+// it open.
+async function door(scene) {
+    const { root, parts } = await place(scene, 'props/door');
+    parts.get('door_frame').dispose();
     const hinge = new BABYLON.TransformNode('door hinge', scene);
-    hinge.position.set(DOOR.x - w / 2, 0, -ROOM.deep / 2 - 0.05);
-    const mesh = leaf.toMesh('door', scene, materials.gloss);
-    mesh.parent = hinge;
-    const knob = BABYLON.MeshBuilder.CreateSphere('door knob', { diameter: 0.055, segments: 12 }, scene);
-    knob.position.set(w - 0.07, 1.0, thick / 2 + 0.05);
-    knob.material = materials.brass;
-    knob.parent = hinge;
-    return { hinge, meshes: [mesh, knob] };
+    hinge.position.set(DOOR.x - DOOR.hinge[0], 0, -ROOM.deep / 2 - DOOR.hinge[1]);
+    const fit = new BABYLON.TransformNode('door model', scene);
+    fit.parent = hinge;
+    fit.position.set(DOOR.hinge[0], 0, DOOR.hinge[1]);
+    fit.scaling.x = -1;
+    root.parent = fit;
+    return { hinge, meshes: root.getChildMeshes() };
 }
 
 // The kitchen table, a worn top on square legs.
@@ -177,44 +176,32 @@ function table(scene, materials) {
     return [top.toMesh('table top', scene, materials.tabletop), legs.toMesh('table legs', scene, materials.tabletop)];
 }
 
-// The answering machine and the phone beside it, on the table. Returns the light that blinks and where each is.
-function phoneAndMachine(scene, materials) {
-    const [x, z] = TABLE.at, top = TABLE.size[1], plastic = new Buf(), dark = new Buf();
-    // The machine: a low box, a grille for its speaker, the window over its tape.
-    plastic.box([x - 0.12, top, z + 0.05], [x + 0.06, top + 0.045, z + 0.27], 1);
-    for (let i = 0; i < 6; i++) dark.box([x - 0.105 + i * 0.012, top + 0.045, z + 0.18], [x - 0.1 + i * 0.012, top + 0.047, z + 0.25], 1);
-    dark.box([x - 0.06, top + 0.045, z + 0.07], [x + 0.03, top + 0.047, z + 0.14], 1);
-    const machine = plastic.toMesh('machine', scene, materials.plastic);
-    // The phone: a base whose face of buttons slopes down toward whoever sits at the table (west), and the handset
-    // lying along its cradle. The base's profile is drawn across x and up, and it runs along z.
-    const body = new Buf();
-    body.extrude([[0, 0], [0.2, 0], [0.2, 0.09], [0.15, 0.09], [0, 0.045]], 0.17, 1);
-    const phone = body.toMesh('phone', scene, materials.plastic);
-    phone.position.set(x - 0.14, top, z - 0.18);
-    const handset = new Buf();
-    handset.box([-0.09, 0, -0.02], [0.09, 0.025, 0.02], 1);
-    handset.box([-0.1, -0.02, -0.03], [-0.05, 0.025, 0.03], 1);
-    handset.box([0.05, -0.02, -0.03], [0.1, 0.025, 0.03], 1);
-    const hand = handset.toMesh('handset', scene, materials.plastic);
-    hand.position.set(x + 0.02, top + 0.11, z - 0.18);
-    hand.rotation.y = Math.PI / 2;
-    for (const mesh of [machine, phone, hand]) mesh.useVertexColors = false;
-    const lamp = BABYLON.MeshBuilder.CreateSphere('blink', { diameter: 0.008, segments: 6 }, scene);
-    lamp.position.set(x + 0.04, top + 0.047, z + 0.07);
-    const blink = new BABYLON.StandardMaterial('blink', scene);
-    blink.disableLighting = true;
-    blink.emissiveColor = new BABYLON.Color3(1.4, 0.1, 0.05);
-    lamp.material = blink;
+// The answering machine and the phone beside it, on the table, forged (tools/forge/models/flat.py), both facing west
+// toward whoever sits there. Returns the light that blinks and where each is.
+async function phoneAndMachine(scene) {
+    const [x, z] = TABLE.at, top = TABLE.size[1];
+    const [phone, machine] = await Promise.all([stand(scene, 'props/phone', [x - 0.04, top, z - 0.18], -Math.PI / 2),
+        stand(scene, 'props/answering_machine', [x - 0.03, top, z + 0.16], -Math.PI / 2)]);
     return {
-        lamp, meshes: [machine, phone, dark.toMesh('grille', scene, materials.window), hand, lamp],
-        machineAt: new V3(x - 0.03, top + 0.03, z + 0.16), phoneAt: new V3(x - 0.02, top + 0.06, z - 0.18), handset: hand,
+        lamp: machine.parts.get('lamp'), meshes: [...phone.root.getChildMeshes(), ...machine.root.getChildMeshes()],
+        machineAt: new V3(x - 0.03, top + 0.03, z + 0.16), phoneAt: new V3(x - 0.02, top + 0.06, z - 0.18), handset: phone.parts.get('handset'),
     };
+}
+
+// A forged model standing at `at`, its front turned to `yaw` (0: +z).
+async function stand(scene, path, at, yaw) {
+    const model = await place(scene, path), fit = new BABYLON.TransformNode(path, scene);
+    fit.position.set(at[0], at[1], at[2]);
+    fit.rotation.y = yaw;
+    model.root.parent = fit;
+    return model;
 }
 
 // Letters on the table, face up: what came in the post.
 function letters(scene, material) {
     const [x, z] = TABLE.at, top = TABLE.size[1];
-    return [[0.12, -0.36, 0.2], [0.1, 0.38, -0.15]].map(([dx, dz, turn], i) => {
+    // Long way across the table, in the gaps either side of the phone and the machine.
+    return [[0.0, -0.405, Math.PI / 2 + 0.03], [0.02, 0.385, Math.PI / 2 - 0.03]].map(([dx, dz, turn], i) => {
         const sheet = BABYLON.MeshBuilder.CreatePlane('letter' + i, { width: 0.21, height: 0.297 }, scene);
         sheet.rotation.set(Math.PI / 2, turn, 0);
         sheet.position.set(x + dx - 0.08, top + 0.002 + i * 0.001, z + dz);
@@ -258,23 +245,22 @@ export async function openFlat(engine, canvas, { screen, noises, morning = false
         tabletop: surfaces.material('tabletop'),
         gloss: paint(scene, 'gloss', [0.26, 0.245, 0.2], 0.5),
         brass: paint(scene, 'brass', [0.42, 0.32, 0.14], 0.35, 0),
-        plastic: paint(scene, 'plastic', [0.07, 0.068, 0.065], 0.4, 0),
-        window: paint(scene, 'smoked', [0.015, 0.015, 0.015], 0.15, 0),
         letter: paint(scene, 'letter', [0.74, 0.73, 0.68], 0.85, 0.05),
         curtain: paint(scene, 'curtain', [0.32, 0.17, 0.08], 0.9, 0.25),
         glass,
     };
     materials.curtain.backFaceCulling = false;
     materials.curtain.twoSidedLighting = true;
-    const devices = { ...phoneAndMachine(scene, materials), blinking: true };
-    const entrance = door(scene, materials);
+    const devices = { ...(await phoneAndMachine(scene)), blinking: true };
+    const entrance = await door(scene);
+    // The radio on the box by the east wall, facing into the room.
+    const radio = await stand(scene, 'props/radio', [w - 0.3, BOX, 1.4], -Math.PI / 2);
     const meshes = [...shell(materials, scene), ...sashWindow(scene, materials), ...table(scene, materials), ...letters(scene, materials.letter),
-        ...devices.meshes, ...entrance.meshes, radiator(scene, materials.gloss)];
+        ...devices.meshes, ...entrance.meshes, ...radio.root.getChildMeshes(), radiator(scene, materials.gloss)];
 
     const models = new Models(scene, { cast() {}, uncast() {} }, 'assets/props/');
     const FURNISHED: [string, number[], number][] = [
         ['sofa_02', [-w + 0.45, 0, 0.2], Math.PI / 2],
-        ['Television_01', [w - 0.35, 0.34, 1.4], -Math.PI / 2],
         ['cardboard_box_01', [w - 0.35, 0, 1.4], Math.PI / 2],
         ['dining_chair_02', [TABLE.at[0] - 0.55, 0, TABLE.at[1] + 0.1], Math.PI / 2 + 0.25],
         ['drawer_cabinet', [-w + 0.6, 0, d - 0.3], Math.PI],
@@ -313,11 +299,15 @@ export async function openFlat(engine, canvas, { screen, noises, morning = false
     }
     // The street lamp comes in at the window and nowhere else: the walls stand in its way. Nothing out there moves,
     // so its shadows are drawn once.
+    // On what the bake does not light (the furniture, the forged things), a map this coarse a room's width from the
+    // lamp draws the sash's thin bars as a scatter of blocks and every edge as steps: the bars are left out of it, and
+    // what is in it is drawn soft.
     const sill = new BABYLON.ShadowGenerator(1024, street.light);
-    sill.usePercentageCloserFiltering = true;
+    sill.useCloseExponentialShadowMap = true;
+    sill.depthScale = 60;
     sill.bias = 0.004;
     sill.getShadowMap().refreshRate = BABYLON.RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
-    for (const mesh of meshes) sill.addShadowCaster(mesh);
+    for (const mesh of meshes) if (mesh.name !== 'window frame') sill.addShadowCaster(mesh);
 
     const solids = new Solids();
     solids.box(-w - 1, -d - 1, -w, d + 1);
@@ -326,7 +316,7 @@ export async function openFlat(engine, canvas, { screen, noises, morning = false
     solids.box(-w - 1, -d - 1, w + 1, -d);
     solids.box(TABLE.at[0] - TABLE.size[0] / 2, TABLE.at[1] - TABLE.size[2] / 2, TABLE.at[0] + TABLE.size[0] / 2, TABLE.at[1] + TABLE.size[2] / 2);
     solids.box(-w, -0.7, -w + 0.9, 1.1);                    // the sofa
-    solids.box(w - 0.6, 1.1, w, 1.7);                       // the television
+    solids.box(w - 0.6, 1.1, w, 1.7);                       // the box and the radio on it
     solids.box(-w, d - 0.55, -w + 1.2, d);                  // the cabinet
     const player = new Player(scene, canvas, {
         ground: () => 0, solids, limits: { x0: -w, z0: -d, x1: w, z1: d }, underfoot: () => 'carpet',
