@@ -96,6 +96,9 @@ export class Inside {
     // Whether it is still held by tubes not yet cut (and so cannot be taken out).
     tethered(organ) { return !!HELD[organ.name]?.by && !this.free(organ); }
 
+    // What still holds it: the names of its tubes not yet cut.
+    holding(organ) { return (HELD[organ.name]?.by ?? []).filter((name) => !this.organs.tubes.get(name).cut); }
+
     // Whether it is being pulled further than what holds it gives: the hand feels it.
     strained(organ) { return this.tethered(organ) && organ.shift.length() > HELD[organ.name].gives; }
 

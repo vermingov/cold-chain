@@ -89,7 +89,10 @@ export async function openTable(engine, canvas, game) {
         const organ = table.hand.held && table.hand.held.organ;
         cooler.lit(!!organ && inside.out(organ) && over(organ));
         if (!organ) return null;
-        if (inside.strained(organ)) return 'Still attached. Cut its vessels first or it will tear';
+        if (inside.strained(organ)) {
+            const left = inside.holding(organ).map((name) => name.replace(/^(left|right) (renal )?/, ''));
+            return `Still attached by its ${left.join(' and ')}. Cut ${left.length > 1 ? 'them' : 'it'} with the scalpel first or it will tear`;
+        }
         if (!inside.free(organ)) return null;
         if (!inside.out(organ)) return 'Roll the mouse wheel forward to lift it out';
         return over(organ) ? 'Let go of the mouse button to drop it in the cooler' : 'Carry it over the cooler and let go';

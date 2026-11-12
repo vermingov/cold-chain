@@ -96,6 +96,7 @@ function scalpelMesh(scene, room) {
 // marked wherever it is touched.
 const ACROSS = 0.003;
 const REACHES = 0.015;          // metres of fat round what the edge is on that it goes through as well
+const BEHIND = 0.035;           // and metres on down the blade's line, past what it is on, that it goes through to
 const ARRIVED = 0.004;          // metres short of a thing inside at which the point counts as on it
 // On the skin, a stroke that would have gone this much deeper than the wall
 // is thick (of 1) has gone into what lies under it.
@@ -298,17 +299,21 @@ export class Scalpel {
     _within(met, hit, ray, dt) {
         const thing = met.tube || met.organ, deep = hit ? BABYLON.Vector3.Distance(hit.point, met.point) : 0;
         if (!this.on || this.on.thing !== thing) this.on = { thing, travelled: 0, at: met.point };
-        // It cuts what it is on once its point has got down to it, as far as it is then drawn across it.
-        if (this.down && Math.abs(deep - this.sunk) < ARRIVED) {
+        // It cuts what it is on once its point has got down to it (or past it: drawn across from somewhere deeper, it is
+        // through it already), as far as it is then drawn across it.
+        if (this.down && deep - this.sunk < ARRIVED) {
             const went = BABYLON.Vector3.Distance(met.point, this.on.at);
             this.on.travelled += went;
             this.speed = went / Math.max(dt, 1e-3);
             if (met.tube && this.on.travelled > ACROSS && met.tube.sever(met.point)) this.severed++;
             if (met.organ) { met.organ.nick(met.point, met.normal); this.cutting = 'organ'; }
             // And whatever else runs in the fat right under the edge, seen or not: drawn across the hilum of a kidney, a
-            // blade parts its artery and vein behind whatever lies in front of them.
+            // blade parts its artery and vein behind whatever lies in front of them, as far on down its line as it reaches.
             if (this.on.travelled > ACROSS) {
-                for (const tube of this.inside.organs.tubes.values()) if (tube.distance(met.point) < REACHES && tube.sever(met.point)) this.severed++;
+                for (let on = 0; on <= BEHIND; on += REACHES / 3) {
+                    const at = met.point.add(ray.direction.scale(on));
+                    for (const tube of this.inside.organs.tubes.values()) if (!tube.cut && tube.distance(at) < REACHES && tube.sever(at)) this.severed++;
+                }
             }
         } else this.on.travelled = 0;
         this.on.at = met.point;
