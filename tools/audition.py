@@ -47,6 +47,21 @@ FOR = [
     (r'lid splitting', 'The lid splitting'),
     (r'bier', 'The bier rolling'),
     (r'van idling', 'A van idling'),
+    # Round five: the sandbox. Its headings keep clear of the words above (no "bone", no "room tone").
+    (r'pistol shot', 'A pistol shot'),
+    (r'rifle shot', 'A rifle shot'),
+    (r'shotgun shot', 'A shotgun shot'),
+    (r'bullet into', 'A bullet in a body'),
+    (r'spent casing', 'A casing on concrete'),
+    (r'racked', 'A gun racked'),
+    (r'swung', 'A swing through the air'),
+    (r'knife stab', 'A stab'),
+    (r'blunt blow', 'A blunt blow'),
+    (r'limb snaps', 'A bone cracking'),
+    (r'body falling', 'A body falling'),
+    (r'dripping', 'Dripping'),
+    (r'spurt', 'A spurt'),
+    (r'concrete hall', 'The empty hall'),
 ]
 
 

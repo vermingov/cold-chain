@@ -65,6 +65,20 @@ const ASKS = {
     'The lid splitting': 'The coffin lid giving under the bar, three heaves.',
     'The bier rolling': 'For as long as the bier is pushed, faster when it goes faster.',
     'A van idling': 'The van at the gate, its engine left running. Heard from a few metres off.',
+    'A pistol shot': 'One shot from a pistol, in a bare concrete room. Short, hard, with the room after it.',
+    'A rifle shot': 'One shot from a rifle, in the same room. Bigger and sharper than the pistol.',
+    'A shotgun shot': 'One shot from a shotgun, in the same room. The heaviest of the three.',
+    'A bullet in a body': 'Heard once, where a bullet goes into a body. Wet, short.',
+    'A casing on concrete': 'The spent case after each shot, landing and bouncing on the floor.',
+    'A gun racked': 'A slide or a pump worked once, when a gun is reloaded.',
+    'A swing through the air': 'A knife, the sword or the bat swung. Only the air, nothing hit.',
+    'A stab': 'Heard once, when a blade goes into a body.',
+    'A blunt blow': 'The bat or a fist landing on a body.',
+    'A bone cracking': 'Heard once, when a blow breaks a bone.',
+    'A body falling': 'A body going down onto the concrete floor.',
+    'Dripping': 'Blood dripping from a body onto the floor, one drop at a time.',
+    'A spurt': 'Blood pumping out of an opened artery.',
+    'The empty hall': 'Under everything in the sandbox, the whole time: a large empty concrete room.',
 };
 // As a stroke: two draws of the blade, the second lighter, with a stop between. Seconds, and how hard at each.
 const STROKE = { lasts: 4.8, at: (t) => (t < 2 ? Math.sin(Math.PI * t / 2) : t < 2.7 ? 0 : 0.7 * Math.sin(Math.PI * (t - 2.7) / 2.1)) };

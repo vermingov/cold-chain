@@ -44,6 +44,20 @@ NAMES = {
     'The lid splitting': ['lid'],
     'The bier rolling': ['bier'],
     'A van idling': ['van'],
+    'A pistol shot': ['shot-pistol'],
+    'A rifle shot': ['shot-rifle'],
+    'A shotgun shot': ['shot-shotgun'],
+    'A bullet in a body': ['bullet-flesh'],
+    'A casing on concrete': ['casing'],
+    'A gun racked': ['rack'],
+    'A swing through the air': ['swing'],
+    'A stab': ['stab'],
+    'A blunt blow': ['blunt'],
+    'A bone cracking': ['crack'],
+    'A body falling': ['body-fall'],
+    'Dripping': ['drip'],
+    'A spurt': ['spurt'],
+    'The empty hall': ['room-sandbox'],
 }
 
 
@@ -54,6 +68,11 @@ PICKS = {
     'Steps on carpet': 801034, 'Steps on gravel': 645451, 'Steps on grass': 556042, 'Steps on mud': 657869,
     'Steps on a pavement': 465299, 'The flat at night': 635732, 'Outside at night': 784410, 'A spade in clay': 574721,
     'The lid splitting': 663946, 'The bier rolling': 635488, 'A van idling': 453990,
+    # The sandbox, asked for the same way (2026-11-12).
+    'A pistol shot': 402789, 'A rifle shot': 592264, 'A shotgun shot': 702672, 'A bullet in a body': 641046,
+    'A casing on concrete': 210102, 'A gun racked': 589849, 'A swing through the air': 802462, 'A stab': 395365,
+    'A blunt blow': 871872, 'A bone cracking': 545601, 'A body falling': 160742, 'Dripping': 683772,
+    'A spurt': 563315, 'The empty hall': 427861,
 }
 
 

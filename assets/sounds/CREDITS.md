@@ -25,3 +25,17 @@ set to a level, and otherwise as its maker recorded it (tools/audition.py, tools
 - `lid-1.ogg`: "Hydraulic log splitter" by richwise, CC0. https://freesound.org/people/richwise/sounds/663946/
 - `bier-1.ogg`: "cart noisy push roll by hard floor squeaky rattly wheel" by kyles, CC0. https://freesound.org/people/kyles/sounds/635488/
 - `van-1.ogg`: "engine idle van diesel truck2 winter nearby" by kyles, CC0. https://freesound.org/people/kyles/sounds/453990/
+- `shot-pistol-1.ogg`: "Small pistol gunshot indoors" by acidsnowflake, CC0. https://freesound.org/people/acidsnowflake/sounds/402789/
+- `shot-rifle-1.ogg`: "Shooting_inside" by ikbenraar, CC0. https://freesound.org/people/ikbenraar/sounds/592264/
+- `shot-shotgun-1.ogg`: "Remington 870" by areniporgen, CC0. https://freesound.org/people/areniporgen/sounds/702672/
+- `bullet-flesh-1.ogg`: "Gore Impact - "LOT OF HEART"" by magnuswaker, CC0. https://freesound.org/people/magnuswaker/sounds/641046/
+- `casing-1.ogg`: "Brass bullet shell casing drop onto concrete, multiple takes" by GrayJoy, CC0. https://freesound.org/people/GrayJoy/sounds/210102/
+- `rack-1.ogg`: "Taurus G2c Slide Racking" by NoonerBear, CC0. https://freesound.org/people/NoonerBear/sounds/589849/
+- `swing-1.ogg`: "Stick - Whoosh 4 (typical stick swing)" by Sadiquecat, CC0. https://freesound.org/people/Sadiquecat/sounds/802462/
+- `stab-1.ogg`: "Sword stab 4" by ihitokage, CC0. https://freesound.org/people/ihitokage/sounds/395365/
+- `blunt-1.ogg`: "Someone is pounding a piece of meat" by HülyeHangok, CC0. https://freesound.org/people/HülyeHangok/sounds/871872/
+- `crack-1.ogg`: "Celery Stick#04" by Bandslam33, CC0. https://freesound.org/people/Bandslam33/sounds/545601/
+- `body-fall-1.ogg`: "body-fall-5" by CosmicEmbers, CC BY 3.0. https://freesound.org/people/CosmicEmbers/sounds/160742/
+- `drip-1.ogg`: "Water Dripping on Concrete" by Elements-Library, CC0. https://freesound.org/people/Elements-Library/sounds/683772/
+- `spurt-1.ogg`: "Gushing Flesh" by magnuswaker, CC0. https://freesound.org/people/magnuswaker/sounds/563315/
+- `room-sandbox-1.ogg`: "Roomtone Warehouse Fans Vents Large" by leonelmail, CC0. https://freesound.org/people/leonelmail/sounds/427861/

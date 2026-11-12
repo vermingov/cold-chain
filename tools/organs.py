@@ -183,7 +183,8 @@ def flank(corners, up, across, low, high):
     for share in (0.35, 0.45, 0.55):
         level = low + (high - low) * share
         out = np.sort(np.abs(corners[np.abs(corners[:, up] - level) < (high - low) * 0.02][:, across]))
-        gaps = np.where(np.diff(out) > (high - low) * 0.035)[0]
+        # (A gap near the midline is the cleft between the buttocks or the thighs, not the flank.)
+        gaps = np.where((np.diff(out) > (high - low) * 0.035) & (out[:-1] > (high - low) * 0.2))[0]
         found.append(out[gaps[0]] if len(gaps) else out[-1])
     return float(np.median(found))
 

@@ -641,3 +641,58 @@ MPFB for people, Poly Haven, glTF/WebP/OGG.
 
 Organs from BodyParts3D fitted into the torso; the chapel of rest as a real
 room; night one's procedure on the table.
+
+## The sandbox, 2026-11-13 (0.8.0)
+
+Asked for: "turn the game into a realistic ragdoll+vital+blood sandbox"
+with knives, swords, objects and guns, NPCs with real internals, and real
+bones and injuries with realistic physics. `play.html` is now the sandbox;
+the story's first night moved to `story.html` untouched.
+
+- `tools/anatomy.py` fits the whole BodyParts3D man into each person
+  (`assets/anatomy/<body>.bin`, ~4 MB): skeleton (skull, spine by region,
+  ribs, sternum, pelvis, scapulae, clavicles, every long bone, hands, feet),
+  brain, cerebellum, brainstem, heart, lungs (hull of the bronchial tree,
+  swollen to the pleura: there are no lung solids in BP3D 4.0), airway,
+  oesophagus, diaphragm and the belly organs from organs.py; arteries,
+  veins and the spinal cord as paths. Trunk by organs.py's stretches,
+  each limb segment joint to joint, the head notch to crown then seated
+  inside the scalp. Every part hangs from one bone. Run it for all three
+  bodies after changing it (~50 s each, `nice`).
+  organs.py's `flank()` skipped gaps near the midline from then on (the
+  buyer measured 0 wide).
+- `src/sandbox/ragdoll.ts`: 24 Havok bodies per person (long bones are two
+  bodies locked at a new mid bone, `withMidBones`), 6DoF joints with real
+  ranges, ANIMATED while standing (the pose leads), DYNAMIC once down (the
+  bodies lead). A fracture unlocks the mid joint. Joint friction is the
+  muscle tone: alive, out, dead.
+- `anatomy.ts`: rays turned into each bone's rest space against the parts
+  (clustered triangles), tubes by nearest approach. `npc.surface()` skins
+  the mesh on the CPU once a frame for the skin and clothes crossings
+  (~20 ms the first shot of a frame). Skin under clothes is hit-tested.
+- `wounds.ts`: `pierce` spends a missile's energy along the path (J per cm
+  of soft tissue, much more for bone), tears vessels within the channel,
+  breaks bones past a joule threshold, and carries on out the far side.
+  `blow` for bats and thrown things. `vitals.ts`: blood volume, bleeding
+  by vessel size and pressure, heart rate and pressure compensation and
+  collapse, lungs collapsing, SpO2, brain reserve and brain death.
+- `marks.ts`: wounds painted into per-person decal maps (Babylon's
+  DecalMapConfiguration, fed a DynamicTexture as `mesh.decalMap`), clothes
+  split onto their own mesh so the two sheets do not collide.
+- `blood.ts`: drops (thin instances), splashes shaped by impact angle, pools
+  by volume at 2.5 mm deep. A mesh with zero thin instances is still drawn
+  once at the origin: they are hidden until their first instance.
+- Weapons: Poly Haven CC0 models (knife, estoc, bat, pistol, bolt rifle)
+  and a CC BY shotgun, `assets/models/weapons/` with `weapons.json`
+  (grip, tip, up in glTF space). Turning them by that basis pointed them
+  back at the eye; half a turn about up fixes it (measured, see weapons.ts).
+- Sounds: round five, real recordings only (user, 2026-11-13: no
+  synthesized audio). `SOURCES5.md`, picks in tools/sounds.py's PICKS until
+  the user marks them on dev/listen.html.
+- Rig scripts: `~/.cache/cold-chain/sb*.mjs` (sb3 every weapon, sb6
+  shotgun/rifle/x-ray/frame time, sb8 the built preview). Wait on
+  `!!window.__sandbox`: returning the object itself never resolves.
+
+Not done: dismemberment, NPCs getting back up or moving about, blood running
+down skin, wall/clothing blood beyond soak, voices. Frame time measured
+headless uncapped: 9 ms idle, 17 ms with two ragdolls bleeding.

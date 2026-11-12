@@ -74,5 +74,47 @@
  ],
  "van": [
   "van-1.ogg"
+ ],
+ "shot-pistol": [
+  "shot-pistol-1.ogg"
+ ],
+ "shot-rifle": [
+  "shot-rifle-1.ogg"
+ ],
+ "shot-shotgun": [
+  "shot-shotgun-1.ogg"
+ ],
+ "bullet-flesh": [
+  "bullet-flesh-1.ogg"
+ ],
+ "casing": [
+  "casing-1.ogg"
+ ],
+ "rack": [
+  "rack-1.ogg"
+ ],
+ "swing": [
+  "swing-1.ogg"
+ ],
+ "stab": [
+  "stab-1.ogg"
+ ],
+ "blunt": [
+  "blunt-1.ogg"
+ ],
+ "crack": [
+  "crack-1.ogg"
+ ],
+ "body-fall": [
+  "body-fall-1.ogg"
+ ],
+ "drip": [
+  "drip-1.ogg"
+ ],
+ "spurt": [
+  "spurt-1.ogg"
+ ],
+ "room-sandbox": [
+  "room-sandbox-1.ogg"
  ]
 }
