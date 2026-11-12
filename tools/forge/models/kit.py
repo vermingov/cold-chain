@@ -719,7 +719,7 @@ def forge(name, build, size, pivots=None, parents=None, extrusion=0.004, dirt=0.
 
 def ship(name, sizes):
     """The maps that go out with `name`, made from its masters at `sizes` (colour, normal, ORM: each as large as it
-    has to be at the distance the thing is seen from in the game). Colour and ORM are lossy WebP at 80. The normal map
+    has to be at the distance the thing is seen from in the game). Colour is lossy WebP at 85, ORM at 80. The normal map
     is lossless, rounded to six bits a channel first: lossy WebP halves and blurs the colour channels, which in a
     normal map are its slopes, and every highlight then shows the blocks."""
     (TEXTURES / 'ship').mkdir(parents=True, exist_ok=True)
@@ -733,7 +733,7 @@ def ship(name, sizes):
             image.pixels.foreach_get(pixels)
             image.pixels.foreach_set(np.floor(pixels * 255 / 4) * 4 / 255)
         image.file_format = 'WEBP'
-        image.save(filepath=str(TEXTURES / 'ship' / f'{name}_{kind}.webp'), quality=100 if kind == 'normal' else 80)
+        image.save(filepath=str(TEXTURES / 'ship' / f'{name}_{kind}.webp'), quality=100 if kind == 'normal' else 85 if kind == 'color' else 80)
         bpy.data.images.remove(image)
 
 

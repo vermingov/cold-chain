@@ -644,14 +644,14 @@ def _cap(fine, material):
 
 MODELS = {
     'bier': dict(
-        shipped=(1024, 512, 512),     # colour, normal, ORM sizes in the GLB
+        shipped=(1024, 1024, 1024),     # colour, normal, ORM sizes in the GLB
         build=bier, size=2048, extrusion=0.005, reach_ao=0.25,
         apart=[[f'wheel_{e}{h}'] for e in 'fr' for h in 'lr'],
         pivots={f'wheel_{e}{h}': (s * TRACK, y, BIER['wheel']) for y, e in zip(AXLES, 'fr') for s, h in ((1, 'l'), (-1, 'r'))},
         look='yard', close=(0.3, -0.86, 0.3, 0.9), poses={'wheel_fl': [('X', 45)]},
     ),
     'coffin': dict(
-        shipped=(1024, 512, 512),
+        shipped=(1024, 1024, 1024),
         build=coffin, size=2048, extrusion=0.005, reach_ao=0.2,
         apart=[['coffin_lid', 'plate']],
         pivots={'coffin_lid': (0.0, 0.0, COFFIN['deep'] - COFFIN['lid']), 'plate': (0.0, PLATE['at'], COFFIN['deep'] + 0.002)},
@@ -659,7 +659,7 @@ MODELS = {
         look='yard', close=(0.0, -0.45, 0.34, 0.6), poses={'coffin_lid': [('z', 0.3), ('X', 8)]},
     ),
     'van': dict(
-        shipped=(1024, 512, 512),
+        shipped=(1024, 1024, 1024),
         build=van, size=2048, extrusion=0.01, reach_ao=0.4, dirt=0.4,
         apart=[[f'wheel_{e}{h}'] for e in 'fr' for h in 'lr'] + [[d] for d in ('cab_door_l', 'cab_door_r', 'rear_door_l', 'rear_door_r')],
         pivots={**{f'wheel_{e}{h}': (s * WHEELS['track'], y, WHEELS['radius']) for y, e in ((WHEELS['front'], 'f'), (WHEELS['rear'], 'r'))
