@@ -26,7 +26,7 @@ const DIMPLE = 0.011;
 // of where it is, `times` over. And skin that has been moved more than
 // `over` metres from where it began is looked at to see if it is lying on
 // other skin.
-const LIP = { keeps: 0.4, times: 4, over: 0.008 };
+const LIP = { keeps: 0.4, times: 4, over: 0.008, asks: 4 };     // (`asks`: frames between asking again whether skin lies over skin)
 // A cut face from lip to foot: how far down each row of its corners is, of the whole face.
 const ROWS = [0, 0.14, 0.4, 0.75, 1];
 const FAT_STANDS = 0.0012;      // metres the middle of a cut face stands out into a wound that has opened
@@ -74,6 +74,18 @@ class Sheet {
     declare cornerOf: Int32Array;
     declare points: any[];
     declare lips: Map<any, any>;
+    declare lipOf: Int32Array;
+    declare lipPoints: Int32Array;
+    declare lipBeside: Int32Array;
+    declare lipX: Float64Array;
+    declare lipY: Float64Array;
+    declare lipNextX: Float64Array;
+    declare lipNextY: Float64Array;
+    declare dirty: number[];
+    declare frame: number;
+    declare over: Float32Array;
+    declare asked: Float32Array;
+    declare movedAt: Float32Array;
     declare shape: number;
     declare pressed: { x: number; y: number; sinks: number; };
     declare at: Float32Array;
@@ -99,6 +111,11 @@ class Sheet {
         this.cornerOf = new Int32Array(field.tissue.x.length).fill(-1);     // which corner of the mesh each point of the tissue is
         this.points = [];                                                   // and the other way
         this.lips = new Map();          // each point on the edge of a cut that is through: the points on either side of it along that edge
+        this.lipOf = new Int32Array(field.tissue.x.length).fill(-1);       // and the same laid out in arrays (_lips)
+        this.lipPoints = new Int32Array(0);
+        this.lipBeside = new Int32Array(0);
+        this.dirty = [0, -1];           // the first and last corner _place moved
+        this.frame = 0;
         this.shape = -1;
         this.pressed = { x: 0, y: 0, sinks: 0 };                           // the blade on the skin, as it was last time
         this.at = new Float32Array(7);                                      // the body's surface at one spot, for `surface` to fill
@@ -119,6 +136,10 @@ class Sheet {
         this.uvs = kept(this.uvs, 2);
         this.ats = kept(this.ats, 2);
         this.seen = kept(this.seen, 2).fill(Infinity);
+        // Whether each corner's skin lies over other skin, and the frame that was last asked (`overlaps` is slow).
+        this.over = kept(this.over, 1);
+        this.asked = kept(this.asked, 1).fill(-Infinity);
+        this.movedAt = kept(this.movedAt, 1).fill(-1);    // the frame each corner was last moved in
         this.room = corners;
         this.mesh.setVerticesData('position', this.positions, true);
         this.mesh.setVerticesData('normal', this.normals, true);
@@ -150,10 +171,13 @@ class Sheet {
         }
         const was = this.pressed;
         this.pressed = { ...press };
+        this.dirty[0] = Infinity; this.dirty[1] = -1;
         if (!reshaped && !stirred && !press.sinks && !was.sinks) return false;
         if (!this._place(press, was)) return false;
-        this.mesh.updateVerticesData('position', this.positions);
-        this.mesh.updateVerticesData('normal', this.normals);
+        // Only the span of corners that moved goes up to the GPU.
+        const from = this.dirty[0] * 3, to = (this.dirty[1] + 1) * 3;
+        this.mesh.getVertexBuffer('position').updateDirectly(this.positions.subarray(from, to), from);
+        this.mesh.getVertexBuffer('normal').updateDirectly(this.normals.subarray(from, to), from);
         return true;
     }
 
@@ -171,6 +195,22 @@ class Sheet {
                 join(a, b); join(b, a);
             }
         }
+        // The same, laid out for drawing every frame without a lookup: the lip points in a row, each one's two
+        // neighbours along the edge as places in that row (-1 where the edge does not run on through it), and
+        // each point's place in the row (-1 for none).
+        const row = [...lips.keys()];
+        this.lipOf.fill(-1);
+        row.forEach((point, k) => { this.lipOf[point] = k; });
+        this.lipPoints = Int32Array.from(row);
+        this.lipBeside = new Int32Array(row.length * 2).fill(-1);
+        row.forEach((point, k) => {
+            const beside = lips.get(point);
+            if (beside.length === 2) beside.forEach((b, side) => { this.lipBeside[k * 2 + side] = this.lipOf[b] >= 0 ? this.lipOf[b] : -2 - b; });
+        });
+        this.lipX = new Float64Array(row.length);
+        this.lipY = new Float64Array(row.length);
+        this.lipNextX = new Float64Array(row.length);
+        this.lipNextY = new Float64Array(row.length);
     }
 
     // Where each point is drawn, on the field: where the tissue has it,
@@ -182,21 +222,23 @@ class Sheet {
     // the edge runs on through it, one point either side) is drawn `LIP.
     // keeps` of the way where it is and the rest the middle of the two
     // either side, `LIP.times` over.
+    // Left in lipX and lipY, by place in the row of lip points (lipOf).
     _drawnAt() {
-        const { tissue } = this.field, { x, y } = tissue, lips = this.lips;
-        let at = new Map();
-        for (const [point] of lips) at.set(point, [x[point], y[point]]);
+        const { x, y } = this.field.tissue, { lipPoints: row, lipBeside: beside } = this, keeps = LIP.keeps, mix = (1 - keeps) / 2;
+        let atX = this.lipX, atY = this.lipY, nextX = this.lipNextX, nextY = this.lipNextY;
+        for (let k = 0; k < row.length; k++) { atX[k] = x[row[k]]; atY[k] = y[row[k]]; }
         for (let time = 0; time < LIP.times; time++) {
-            const next = new Map();
-            for (const [point, [px, py]] of at) {
-                const beside = lips.get(point);
-                if (beside.length !== 2) { next.set(point, [px, py]); continue; }
-                const [a, b] = beside.map((p) => at.get(p) || [x[p], y[p]]);
-                next.set(point, [px * LIP.keeps + (a[0] + b[0]) / 2 * (1 - LIP.keeps), py * LIP.keeps + (a[1] + b[1]) / 2 * (1 - LIP.keeps)]);
+            for (let k = 0; k < row.length; k++) {
+                const a = beside[k * 2], b = beside[k * 2 + 1];
+                if (a === -1) { nextX[k] = atX[k]; nextY[k] = atY[k]; continue; }
+                // (A neighbour that is not a lip point itself, -2 - its point, stays where the tissue has it.)
+                const ax = a >= 0 ? atX[a] : x[-2 - a], ay = a >= 0 ? atY[a] : y[-2 - a], bx = b >= 0 ? atX[b] : x[-2 - b], by = b >= 0 ? atY[b] : y[-2 - b];
+                nextX[k] = atX[k] * keeps + (ax + bx) * mix;
+                nextY[k] = atY[k] * keeps + (ay + by) * mix;
             }
-            at = next;
+            [atX, nextX, atY, nextY] = [nextX, atX, nextY, atY];
         }
-        return at;
+        this.lipX = atX; this.lipY = atY; this.lipNextX = nextX; this.lipNextY = nextY;
     }
 
     // A corner for every point of the sheet that has none yet. Returns
@@ -232,10 +274,13 @@ class Sheet {
     _place(press, was) {
         const field = this.field, { tissue } = field, { positions, normals, leans, seen, points } = this, at = this.at;
         const [ox, oz] = field.origin, [ax, az] = field.across, [lx, lz] = field.along, near = (3 * DIMPLE) ** 2, facing = this.sunk ? 4 : 1;
-        const drawn = this._drawnAt(), thick = tissue.body.thick[this.which];
+        this._drawnAt();
+        this.frame++;
+        const { lipOf, lipX, lipY } = this, thick = tissue.body.thick[this.which];
         let moved = false;
+        this.dirty[0] = Infinity; this.dirty[1] = -1;
         for (let corner = 0; corner < points.length; corner++) {
-            const point = points[corner], smoothed = drawn.get(point), x = smoothed ? smoothed[0] : tissue.x[point], y = smoothed ? smoothed[1] : tissue.y[point];
+            const point = points[corner], k = lipOf[point], x = k >= 0 ? lipX[k] : tissue.x[point], y = k >= 0 ? lipY[k] : tissue.y[point];
             if (Math.abs(x - seen[corner * 2]) + Math.abs(y - seen[corner * 2 + 1]) < SEEN
                 && !(press.sinks > 0 && (x - press.x) ** 2 + (y - press.y) ** 2 < near) && !(was.sinks > 0 && (x - was.x) ** 2 + (y - was.y) ** 2 < near)) continue;
             seen[corner * 2] = x; seen[corner * 2 + 1] = y;
@@ -244,7 +289,10 @@ class Sheet {
             let down = this.sunk + press.sinks * Math.exp(-((x - press.x) ** 2 + (y - press.y) ** 2) / DIMPLE ** 2) + (field._inland(x, y) < EDGE.skin + 0.002 ? 0.0001 : 0);
             // Skin drawn over other skin (a flap laid back, a lip pulled across) lies on it, not in it.
             const p = tissue.place[point];
-            if (this.which === SKIN_SHEET && (x - tissue.homeX[p]) ** 2 + (y - tissue.homeY[p]) ** 2 > LIP.over ** 2 && tissue.overlaps(SKIN_SHEET, x, y, point)) down -= thick;
+            if (this.which === SKIN_SHEET && (x - tissue.homeX[p]) ** 2 + (y - tissue.homeY[p]) ** 2 > LIP.over ** 2) {
+                if (this.frame - this.asked[corner] >= LIP.asks) { this.over[corner] = tissue.overlaps(SKIN_SHEET, x, y, point) ? 1 : 0; this.asked[corner] = this.frame; }
+                if (this.over[corner]) down -= thick;
+            }
             positions[corner * 3] = ox + ax * x + lx * y - at[4] * down;
             positions[corner * 3 + 1] = at[0] - at[5] * down;
             positions[corner * 3 + 2] = oz + az * x + lz * y - at[6] * down;
@@ -252,6 +300,9 @@ class Sheet {
             normals[corner * 3] = at[facing]; normals[corner * 3 + 1] = at[facing + 1]; normals[corner * 3 + 2] = at[facing + 2];
             leans[corner * 3] = at[4]; leans[corner * 3 + 1] = at[5]; leans[corner * 3 + 2] = at[6];
             moved = true;
+            if (corner < this.dirty[0]) this.dirty[0] = corner;
+            this.dirty[1] = corner;
+            this.movedAt[corner] = this.frame;
         }
         return moved;
     }
@@ -283,6 +334,9 @@ class Faces {
     declare ats: Float32Array;
     declare downs: Float32Array;
     declare index: Uint32Array;
+    declare woundCount: number;
+    declare full: boolean;
+    declare stirred: Uint8Array;
 
     constructor(scene, field, sheets, material) {
         this.field = field;
@@ -296,6 +350,9 @@ class Faces {
         this.shape = -1;
         this.count = 0;                 // columns
         this.strips = 0;
+        this.woundCount = 0;
+        this.full = true;
+        this.stirred = new Uint8Array(0);
         this._room(1024);
     }
 
@@ -379,6 +436,8 @@ class Faces {
             }
         }
         this.mesh.updateIndices(this.index, 0, true);
+        this.woundCount = wounds;
+        this.full = true;
     }
 
     // Put every column where its lip is and hang it. Where the sheet is
@@ -387,9 +446,20 @@ class Faces {
     // stands out of an open face.
     _place() {
         const { tissue } = this.field, { net } = tissue, rows = ROWS.length, { wounds, positions, normals, downs, ats } = this;
+        // Only the wounds with a lip that moved this frame are worked out again (all of them after the cuts change).
+        const stirred = this.stirred.length >= this.woundCount ? this.stirred : (this.stirred = new Uint8Array(this.room));
+        stirred.fill(this.full ? 1 : 0, 0, this.woundCount);
+        if (!this.full) {
+            for (let column = 0; column < this.count; column++) {
+                const drawn = this.sheets[this.sheetOf[column]], corner = drawn.cornerOf[this.pointOf[column]];
+                if (drawn.dirty[1] >= 0 && drawn.movedAt[corner] === drawn.frame) stirred[this.woundOf[column]] = 1;
+            }
+        }
+        this.full = false;
         // First what each wound comes to: where its middle is, how deep the blade went there, whether it is through.
-        wounds.fill(0);
+        for (let w = 0; w < this.woundCount; w++) if (stirred[w]) wounds.fill(0, w * 6, w * 6 + 6);
         for (let column = 0; column < this.count; column++) {
+            if (!stirred[this.woundOf[column]]) continue;
             const drawn = this.sheets[this.sheetOf[column]], lip = drawn.cornerOf[this.pointOf[column]] * 3, wound = this.woundOf[column] * 6;
             wounds[wound] += drawn.positions[lip]; wounds[wound + 1] += drawn.positions[lip + 1]; wounds[wound + 2] += drawn.positions[lip + 2];
             wounds[wound + 3]++;
@@ -403,6 +473,7 @@ class Faces {
             wounds[wound + 4] = deepest; wounds[wound + 5] = least >= 1 ? 1 : 0;
         }
         for (let column = 0; column < this.count; column++) {
+            if (!stirred[this.woundOf[column]]) continue;
             const sheet = this.sheetOf[column], drawn = this.sheets[sheet], lip = drawn.cornerOf[this.pointOf[column]] * 3, wound = this.woundOf[column] * 6;
             const sides = wounds[wound + 3], place = this.placeOf[this.woundOf[column]];
             // A place the cut ends at is still in one piece: the wound comes up to nothing there.
@@ -422,10 +493,11 @@ class Faces {
             }
         }
         this._face();
-        this.mesh.updateVerticesData('position', positions);
-        this.mesh.updateVerticesData('normal', normals);
-        this.mesh.updateVerticesData('fleshAt', ats);
-        this.mesh.updateVerticesData('fleshDown', downs);
+        // Only the columns in use go up to the GPU.
+        const used = this.count * rows;
+        for (const [kind, data, size] of [['position', positions, 3], ['normal', normals, 3], ['fleshAt', ats, 2], ['fleshDown', downs, 2]] as const) {
+            this.mesh.getVertexBuffer(kind).updateDirectly(data.subarray(0, used * size), 0);
+        }
     }
 
     // Which way each face looks: square to the strip and to the way down
