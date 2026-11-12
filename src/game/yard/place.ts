@@ -131,12 +131,13 @@ export async function openYard(engine, canvas, game) {
     }
     things.add({
         at: () => grave.middle.add(new V3(0, -0.5, 0)), reach: 3.8, wide: 2.5,
-        verb: () => (job.has('checked') && grave.open && !job.has('lifted') ? 'Get him out, onto the bier' : null),
+        verb: () => {
+            if (!grave.open || job.has('lifted')) return null;
+            if (!job.has('checked')) return 'Check him against the order first (Tab)';
+            return V3.Distance(bier.position, grave.middle) > NEAR.bier ? 'Bring the bier up to the grave first' : 'Lift him out onto the bier';
+        },
         use: async () => {
-            if (V3.Distance(bier.position, grave.middle) > NEAR.bier) {
-                await screen.note('The bier has to be beside the grave first.');
-                return;
-            }
+            if (!job.has('checked') || V3.Distance(bier.position, grave.middle) > NEAR.bier) return;
             bier.letGo();
             await screen.through(async () => {
                 grave.emptied();
@@ -252,7 +253,7 @@ export async function openYard(engine, canvas, game) {
     return {
         scene, clipboard, night: ended, player, things, grave, bier, sexton, gate, held, torch, yard,
         update(dt) {
-            if (!work.tool) player.update(dt);
+            player.update(dt);
             const wheels = bier.position.clone();
             bier.update(dt, yard.footing.solids);
             // The air of the place; the bier's wheels as fast as it goes; the van's engine, louder the nearer.

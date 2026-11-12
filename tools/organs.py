@@ -15,9 +15,9 @@ tall, the flanks how wide, and the skin of the belly, front and back, how
 deep. Width and depth are only let stretch a little: a stout man's organs
 are much the size of a thin one's, and what he has more of is fat in front
 of them, so they are fitted against his back and the rest is left empty.
-After that nothing is allowed to come through the wall of the abdomen: a
-part of an organ that would lie nearer the skin than the wall is thick is
-pressed back in.
+After that nothing is allowed to come through the wall of the abdomen,
+front, back or either side: a part of an organ that would lie nearer the
+skin than the wall is thick is pressed back in.
 
 The source is in millimetres, z up, front at -y, the man's right at -x. A
 person here is in metres, y up, front at +z, their right at +x: so the two
@@ -232,13 +232,15 @@ def fit(source, names, header, arrays):
     return carry
 
 
-def walls(header, arrays, cell=0.008):
-    """Where the person's front and back are, over a grid of their trunk seen
-    from the front: returns a function from (n, 3) to the (front, back) depth
-    at each point's place."""
+def walls(header, arrays, cell=0.008, along=2, over=(0, 1)):
+    """Where the person's skin is on either side along axis `along`, over a
+    grid of the other two (`over`): by default their front and back, over
+    their trunk seen from the front. Returns a function from (n, 3) to the
+    (highest, lowest) value along that axis at each point's place."""
     corners, faces = skin_of(header, arrays)
-    x0, y0 = corners[:, 0].min(), corners[:, 1].min()
-    w, h = int((corners[:, 0].max() - x0) / cell) + 2, int((corners[:, 1].max() - y0) / cell) + 2
+    a, b = over
+    x0, y0 = corners[:, a].min(), corners[:, b].min()
+    w, h = int((corners[:, a].max() - x0) / cell) + 2, int((corners[:, b].max() - y0) / cell) + 2
     front, back = np.full((h, w), -np.inf), np.full((h, w), np.inf)
     # Every triangle is dropped into the grid as a spread of points across
     # it, close enough together that no cell under a triangle is missed: a
@@ -248,10 +250,10 @@ def walls(header, arrays, cell=0.008):
     steps = 9
     spread = [(a / steps, b / steps) for a in range(steps + 1) for b in range(steps + 1 - a)]
     samples = np.concatenate([tri[:, 0] * (1 - a - b) + tri[:, 1] * a + tri[:, 2] * b for a, b in spread])
-    i = ((samples[:, 0] - x0) / cell).astype(int)
-    j = ((samples[:, 1] - y0) / cell).astype(int)
-    np.maximum.at(front, (j, i), samples[:, 2])
-    np.minimum.at(back, (j, i), samples[:, 2])
+    i = ((samples[:, a] - x0) / cell).astype(int)
+    j = ((samples[:, b] - y0) / cell).astype(int)
+    np.maximum.at(front, (j, i), samples[:, along])
+    np.minimum.at(back, (j, i), samples[:, along])
     # Fill the cells nothing fell in from their neighbours.
     for grid, worst in ((front, -np.inf), (back, np.inf)):
         for _ in range(4):
@@ -265,8 +267,8 @@ def walls(header, arrays, cell=0.008):
         grid[grid == worst] = -worst
 
     def at(points):
-        i = np.clip(((points[:, 0] - x0) / cell).astype(int), 0, w - 1)
-        j = np.clip(((points[:, 1] - y0) / cell).astype(int), 0, h - 1)
+        i = np.clip(((points[:, a] - x0) / cell).astype(int), 0, w - 1)
+        j = np.clip(((points[:, b] - y0) / cell).astype(int), 0, h - 1)
         return front[j, i], back[j, i]
     return at
 
@@ -329,6 +331,8 @@ def main():
     header, arrays = read_person(person)
     carry = fit(source, names, header, arrays)
     wall_at = walls(header, arrays)
+    # And either side: seen from above, how far out to the left and right the skin is at each height and depth.
+    side_at = walls(header, arrays, along=0, over=(2, 1))
 
     positions, normals, indices, organs = [], [], [], []
     v_base = i_base = 0
@@ -341,6 +345,11 @@ def main():
         limit_front, limit_back = front - WALL, back + WALL
         pressed = int(((corners[:, 2] > limit_front) | (corners[:, 2] < limit_back)).sum())
         corners[:, 2] = np.maximum(np.minimum(corners[:, 2], limit_front), np.minimum(limit_back, limit_front))
+        # The flanks too: the crest of a wide pelvis came out through a narrow man's side.
+        outer, inner = side_at(corners)
+        limit_out, limit_in = outer - WALL, inner + WALL
+        pressed += int(((corners[:, 0] > limit_out) | (corners[:, 0] < limit_in)).sum())
+        corners[:, 0] = np.maximum(np.minimum(corners[:, 0], limit_out), np.minimum(limit_in, limit_out))
         # The mirror turned every triangle inside out: turn them back. The
         # normals are taken first, from the triangles as they were: in a
         # left-handed frame that is the way that comes out pointing outward.

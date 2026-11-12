@@ -35,6 +35,9 @@ const STRAIN = 0.3;
 const TEARS = 0.07;
 const OVER = 0.12;          // how much of a thing's width, each way from its middle, the wall has to be open over for it to come out
 const CLEAR = 0.02;         // metres above the skin under it that a free thing is out of the body
+// A thing out of the body and let go falls and lands as a thing does: this heavy for its size (kg per cubic metre of
+// its box, which it fills about half of), and this grippy and dead when it lands.
+const FALLS = { density: 520, friction: 0.9, restitution: 0.04, damping: 0.5 };
 
 export class Inside {
     declare field: any;
@@ -87,6 +90,9 @@ export class Inside {
         return organ.shift;
     }
 
+    // Whether a hand can move it at all (the spine, the pelvis, the great vessels are the body).
+    movable(organ) { return !!HELD[organ.name]; }
+
     // Whether it is still held by tubes not yet cut (and so cannot be taken out).
     tethered(organ) { return !!HELD[organ.name]?.by && !this.free(organ); }
 
@@ -95,6 +101,7 @@ export class Inside {
 
     // Put a free thing down with its middle at a point of the world (into the cooler, say).
     putAt(organ, point) {
+        this.hold(organ);
         organ.mesh.computeWorldMatrix(true);
         organ.shift.addInPlace(point.subtract(organ.mesh.getBoundingInfo().boundingBox.centerWorld));
         this._place(organ);
@@ -113,7 +120,7 @@ export class Inside {
     // What it hangs by goes with it: stretched while whole, its cut ends dangling once cut.
     _drag(organ) {
         const held = HELD[organ.name];
-        if (!held.by) return;
+        if (!held.by || organ.body) return;
         const offset = organ.mesh.position.subtract(organ.home);
         for (const name of held.by) this.organs.tubes.get(name).follow(organ, offset);
     }
@@ -138,12 +145,16 @@ export class Inside {
 
     // Let go of it. Nothing hangs in the air: a thing let go over the open
     // belly sinks back to the depth it lay at, in among the rest; one let go
-    // over skin or over the table comes to rest on it.
+    // over skin comes to rest on it; one out of the body and off it falls.
     drop(organ) {
         organ.mesh.computeWorldMatrix(true);
         const { minimumWorld, maximumWorld } = organ.mesh.getBoundingInfo().boundingBox;
         const [u, v] = this.field.place((minimumWorld.x + maximumWorld.x) / 2, (minimumWorld.z + maximumWorld.z) / 2);
         const overBody = u > 0 && u < 1 && v > 0 && v < 1 && this.field.heightAt(u, v) > -Infinity;
+        if (!overBody && this.free(organ) && organ.mesh.getScene().isPhysicsEnabled()) {
+            this.fall(organ);
+            return;
+        }
         if (overBody && this.field.open(u, v)) organ.shift.y = Math.min(organ.shift.y, 0);
         // (One that never came out from under the wall stays where it is.)
         else if (!(overBody && maximumWorld.y < this.field.heightAt(u, v) - WALL + 0.005)) {
@@ -153,6 +164,29 @@ export class Inside {
         }
         this._place(organ);
         if (HELD[organ.name]) this._drag(organ);
+    }
+
+    // From now on it is a thing of its own in the room: it falls, lands, rolls and knocks into whatever else is there.
+    fall(organ) {
+        if (organ.body) return;
+        organ.frame = organ.mesh.parent;
+        organ.mesh.setParent(null);
+        for (const name of HELD[organ.name]?.by ?? []) this.organs.tubes.get(name).ride(organ);
+        const size = organ.mesh.getBoundingInfo().boundingBox.extendSizeWorld;
+        const mass = FALLS.density * 8 * size.x * size.y * size.z;
+        organ.body = new BABYLON.PhysicsAggregate(organ.mesh, BABYLON.PhysicsShapeType.CONVEX_HULL,
+            { mass, friction: FALLS.friction, restitution: FALLS.restitution }, organ.mesh.getScene());
+        organ.body.body.setLinearDamping(FALLS.damping);
+        organ.body.body.setAngularDamping(FALLS.damping);
+    }
+
+    // Taken up again by the hand: it goes back to being moved by its shift, from wherever it lies now.
+    hold(organ) {
+        if (!organ.body) return;
+        organ.body.dispose();
+        organ.body = null;
+        organ.mesh.setParent(organ.frame);
+        organ.shift.copyFrom(BABYLON.Vector3.TransformNormal(organ.mesh.position.subtract(organ.home), organ.frame.getWorldMatrix()));
     }
 
     // The blade has gone through the wall at a point of the skin and on into

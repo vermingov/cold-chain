@@ -1,17 +1,16 @@
 // What people leave on graves.
 //
 // The recent ground is looked after, some of it: a grave candle burning in
-// red glass, flowers in a pot gone brown with the frost, a wreath on a mound
-// nobody has had time to put a stone on. The old ground has none of it. The
-// candles are the only lights in the yard nobody switched on, and they
-// flicker, each on its own.
+// red glass, flowers in a pot gone brown with the frost. The old ground has
+// none of it. The candles are the only lights in the yard nobody switched
+// on, and they flicker, each on its own.
 
 import * as BABYLON from '@babylonjs/core';
 import { GRAVE, heightAt } from '../map/plan.ts';
 import { Buf } from '../geometry.ts';
 
 const V3 = BABYLON.Vector3;
-// Of the taken plots of each kind of ground, how many have a candle, flowers, and (fresh mounds only) a wreath.
+// Of the taken plots of each kind of ground, how many have a candle, and flowers.
 const KEPT = { lawn: [0.07, 0.16], postwar: [0.02, 0.07], public: [0.06, 0.12], meadow: [0.04, 0.1], victorian: [0, 0.01] };
 const FLAMES = 4;           // groups of candles, each flickering on its own
 // The red glass glows dimly; the flame in it is small and bright enough to bloom.
@@ -51,15 +50,7 @@ function onMound(dx, dz) {
     return 0.2 * Math.cos(r * Math.PI / 2) - 0.02;
 }
 
-// A wreath laid flat on a mound.
-function wreathMesh(scene) {
-    const ring = BABYLON.MeshBuilder.CreateTorus('wreath', { diameter: 0.42, thickness: 0.09, tessellation: 18 }, scene);
-    ring.position.y = 0.04;
-    ring.bakeCurrentTransformIntoVertices();
-    return ring;
-}
-
-function plain(scene, name, colour, rough, vertex = false) {
+function plain(scene, name, colour, rough) {
     const m = new BABYLON.PBRMaterial(name, scene);
     m.albedoColor = BABYLON.Color3.FromArray(colour);
     m.metallic = 0;
@@ -82,7 +73,7 @@ const instanced = (mesh, matrices) => {
 
 // `plots` as the yard laid them (taken, fresh). Returns the meshes, and `update(t)` to make the candles flicker.
 export function buildTokens(scene, plots) {
-    const candles = Array.from({ length: FLAMES }, () => []), flowers = [], wreaths = [];
+    const candles = Array.from({ length: FLAMES }, () => []), flowers = [];
     for (const plot of plots) {
         if (!plot.taken) continue;
         const [candle, flower] = KEPT[plot.era] || [0, 0];
@@ -97,7 +88,6 @@ export function buildTokens(scene, plots) {
         };
         if (roll(29) < candle) candles[Math.floor(roll(41) * FLAMES)].push(at(0, -0.15, 0));
         if (roll(53) < flower) flowers.push(at(0.05, 0.18, roll(61) * 6.28));
-        if (plot.fresh || (plot.era === 'public' && roll(71) < 0.1)) wreaths.push(at(0.7, -side, roll(83) * 6.28));
     }
     const glass = candles.map((_, i) => {
         const m = new BABYLON.StandardMaterial('candle glass ' + i, scene);
@@ -128,13 +118,8 @@ export function buildTokens(scene, plots) {
     });
     if (flowers.length) {
         const mesh = flowerMesh(scene);
-        mesh.material = plain(scene, 'flowers', [1, 1, 1], 0.8, true);
+        mesh.material = plain(scene, 'flowers', [1, 1, 1], 0.8);
         meshes.push(instanced(mesh, flowers));
-    }
-    if (wreaths.length) {
-        const mesh = wreathMesh(scene);
-        mesh.material = plain(scene, 'wreath', [0.06, 0.12, 0.05], 0.7);
-        meshes.push(instanced(mesh, wreaths));
     }
     return {
         meshes,

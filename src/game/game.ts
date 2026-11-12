@@ -45,6 +45,9 @@ export class Game {
                 this.place.update(Math.min(0.05, engine.getDeltaTime() / 1000));
                 this.place.scene.render();
                 this.noises?.update();
+                // A place may say more exactly what is to be done in it than the night's list does.
+                screen.task(this.place.todo?.() ?? this.job?.todo ?? null, this.place.how ?? null);
+                screen.winded(this.place.player?.breathLeft ?? 1);
             } catch (error) {
                 screen.fault(error);
             }
@@ -65,7 +68,7 @@ export class Game {
         await this.night(NIGHTS[0]);
         this.run.night = 2;
         this.run.save();
-        await this.screen.through(async () => this._leave(), { card: ['That is as far as it goes for now.', 'Friday night is not built yet.'], hold: 3600 });
+        await this.screen.through(async () => this._leave(), { card: ['That\'s as far as the game goes for now.', 'Friday night isn\'t built yet.'], hold: 3600 });
     }
 
     // One night, from the call to the morning.
@@ -116,7 +119,7 @@ export class Game {
         let heard = false, called = false;
         const machine = things.add({
             at: flat.devices.machineAt, reach: 1.6,
-            verb: () => (heard ? null : 'Play the messages'),
+            verb: () => (heard ? null : 'Press E to play the messages'),
             use: async () => {
                 flat.devices.blinking = false;
                 noises.shot('beep');
@@ -124,13 +127,13 @@ export class Game {
                 noises.shot('beep');
                 heard = true;
                 noises.ring(true);
-                await screen.note('The phone goes.');
+                await screen.note('The phone rings.');
             },
         });
         await new Promise<void>((answered) => {
             things.add({
                 at: flat.devices.phoneAt, reach: 1.6,
-                verb: () => (heard && !called ? 'Answer it' : null),
+                verb: () => (heard && !called ? 'Press E to answer the phone' : null),
                 use: async () => {
                     noises.ring(false);
                     noises.shot('handset');
@@ -138,12 +141,12 @@ export class Game {
                     noises.shot('handset', 0.8);
                     called = true;
                     things.remove(machine);
-                    await screen.note('The order is on the clipboard. Tab to look at it.');
+                    await screen.note('You\'ve written the order on your clipboard. Press Tab to look at it, and Tab again to put it away.');
                     answered();
                 },
             });
         });
-        await this._door(flat, 'Go out');
+        await this._door(flat, 'Press E to go out');
     }
 
     // The flat in the morning: what was paid, what is still owed, and whatever is on the machine.
@@ -154,7 +157,7 @@ export class Game {
             flat.devices.blinking = true;
             await new Promise<void>((heard) => flat.things.add({
                 at: flat.devices.machineAt, reach: 1.6,
-                verb: () => 'Play the messages',
+                verb: () => 'Press E to play the messages',
                 use: async () => {
                     flat.devices.blinking = false;
                     this.noises.shot('beep');
@@ -163,9 +166,9 @@ export class Game {
                 },
             }));
         }
-        await this.screen.note(paid ? `£${paid.toLocaleString('en-GB')} on the table. It is not enough. It is never going to be enough.`
-            : 'Nothing on the table. Nothing for the clinic.');
-        await new Promise<void>((out) => flat.things.add({ at: flat.sofa, reach: 2, wide: 2, verb: () => 'Lie down', use: out }));
+        await this.screen.note(paid ? `£${paid.toLocaleString('en-GB')} on the table. It isn't enough. It's never going to be enough.`
+            : 'Nothing on the table, and nothing for the clinic.');
+        await new Promise<void>((out) => flat.things.add({ at: flat.sofa, reach: 2, wide: 2, verb: () => 'Press E to lie down', use: out }));
     }
 
     _door(flat, verb) {

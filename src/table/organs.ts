@@ -72,6 +72,8 @@ class Organ {
     declare mesh: any;
     declare home: any;
     declare shift: BABYLON.Vector3;
+    declare body: BABYLON.PhysicsAggregate | null;     // while it lies loose in the room (Inside.fall)
+    declare frame: BABYLON.Node;                        // what it hangs in while it is in the body
     declare nicks: any[];
 
     constructor(name, kind, mesh) {
@@ -220,6 +222,12 @@ class Tube {
         }
         if (this.drawnWith && this.drawnWith.equalsWithEpsilon(offset, 1e-5)) return;
         this._draw(offset);
+    }
+
+    // The organ has come loose into the room: the length of it still on the organ is carried with it from here on.
+    ride(organ) {
+        if (!this.cut || this.end === undefined) return;
+        this.pieces[this.end === 0 ? 0 : this.parts.length - 1]?.setParent(organ.mesh);
     }
 
     _draw(offset) {

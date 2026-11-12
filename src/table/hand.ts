@@ -80,7 +80,8 @@ export class Hand {
             return;
         }
         const met = this.inside.meet(ray);
-        if (met && met.organ) {
+        if (met && met.organ && this.inside.movable(met.organ)) {
+            this.inside.hold(met.organ);
             // It is moved level, at the height it was taken hold of, under the hand: the wheel lifts and lowers it.
             const plane = BABYLON.Plane.FromPositionAndNormal(met.point, BABYLON.Vector3.Up());
             this.held = { organ: met.organ, plane, from: met.point, shift: met.organ.shift.clone() };
@@ -112,9 +113,11 @@ export class Hand {
         } else if (this.held && this.held.organ) {
             const far = ray.intersectsPlane(this.held.plane);
             if (far !== null) {
-                this.held.at = ray.origin.add(ray.direction.scale(far));
-                this.held.at.y += this.held.up || 0;
-                this.inside.move(this.held.organ, this.held.shift.add(this.held.at.subtract(this.held.from)));
+                const wants = ray.origin.add(ray.direction.scale(far));
+                wants.y += this.held.up || 0;
+                const shift = this.inside.move(this.held.organ, this.held.shift.add(wants.subtract(this.held.from)));
+                // The hand stays on the place it took hold of, wherever what holds the thing let it go.
+                this.held.at = this.held.from.add(shift.subtract(this.held.shift));
             }
         } else if (this.held) {
             const skin = this.field.hit(ray);

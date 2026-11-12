@@ -6,6 +6,7 @@
 // a tiled floor against a tiled wall.
 
 import * as BABYLON from '@babylonjs/core';
+import HavokPhysics from '@babylonjs/havok';
 import { People } from '../person.ts';
 import * as P from '../poses.ts';
 import { gradePicture } from '../picture.ts';
@@ -93,13 +94,20 @@ function room(scene, { lamp, shadows }) {
     return { meshes, reflections };
 }
 
+// The physics engine, started once for every visit to the table.
+let havok: ReturnType<typeof HavokPhysics> | undefined;
+
 // Build it into `scene`. `base` is where the game's root is from the page; `view` names where the eye is. `sound` is
 // one already loaded with every recording (the game's own, so they are not fetched and unpacked a second time); without
 // it the table loads its own.
 export async function buildTable(scene, canvas, { base = '', view = 'work', sound = null } = {}) {
     scene.clearColor = new BABYLON.Color4(0.01, 0.01, 0.012, 1);
     const lit = light(scene), { shadows } = lit;
-    const { reflections } = room(scene, lit);
+    const { reflections, meshes: solid } = room(scene, lit);
+    // What is taken out and let go falls, and lands on whatever is solid in the room.
+    havok ??= HavokPhysics();
+    scene.enablePhysics(new V3(0, -9.81, 0), new BABYLON.HavokPlugin(true, await havok));
+    for (const mesh of solid) new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.8 }, scene);
 
     const people = await new People(scene, base + 'assets/people/').load(['oldman', 'buyer']);
     // The dead one, on his back on the table, head toward the wall.

@@ -1,0 +1,147 @@
+[
+ {
+  "file": "src/game/table.ts",
+  "old": "'There is a mark of the blade on it.'",
+  "new": "'There\\'s a knife mark on it.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'It is torn. Nobody will pay for that.'",
+  "new": "'It\\'s torn. Nobody will pay for that.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'His suit is cut off him and bagged for the furnace.'",
+  "new": "'You cut his suit off and bag it for the furnace.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'1 is the scalpel, 2 the bare hand, 3 a retractor. V goes round to the other side of the table. E steps back from it.'",
+  "new": "'Press 1 for the scalpel, 2 for your free hand, 3 for a retractor. Press V to walk round to the other side of the table. Press E to step away from the table when you\\'ve finished.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Draw the scalpel slowly down the middle of the belly, and again, and again, until it is through.'",
+  "new": "'With the scalpel, hold the left mouse button and drag down the middle of the belly. Slower strokes cut deeper. Go over the same line until it opens.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Hook each lip with a retractor and draw it out. Move the bowel off the kidney with the hand, and the colon, and whatever lies over it.'",
+  "new": "'With a retractor, hold the left mouse button on one edge of the cut, drag it back and let go. It stays there. Do the same on the other edge. Then, with your hand, drag the bowel and the colon off the kidney.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Cut across its artery, its vein and its ureter, close to it. Lift it out with the wheel, carry it over the cooler and let go.'",
+  "new": "'Cut through the artery, the vein and the ureter, close to the kidney. Grab it with your hand, roll the mouse wheel forward to lift it out, carry it over the cooler and let go.'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Still held by its vessels: cut them first, or it tears'",
+  "new": "'Still attached. Cut its vessels first or it will tear'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Lift it out: the wheel'",
+  "new": "'Roll the mouse wheel forward to lift it out'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Let go: into the cooler'",
+  "new": "'Let go of the mouse button to drop it in the cooler'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "'Over the cooler, and let go'",
+  "new": "'Carry it over the cooler and let go'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Take the spade and the bar'",
+  "new": "'Press E to take the spade and crowbar'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Push the bier'",
+  "new": "'Press E to push the bier'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Let go of the bier'",
+  "new": "'Press E to let go of the bier'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Dig (hold the button)'",
+  "new": "'Hold the left mouse button to dig'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Cut the turf and dig (hold the button)'",
+  "new": "'Hold the left mouse button to cut the turf and dig'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Break the lid (hold the button)'",
+  "new": "'Hold the left mouse button to break the lid with the crowbar'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Check him against the order first (Tab)'",
+  "new": "'Check the body against the order first (Tab shows it)'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Bring the bier up to the grave first'",
+  "new": "'Bring the bier over to the grave first'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Lift him out onto the bier'",
+  "new": "'Press E to lift him out onto the bier'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Twenty minutes.'",
+  "new": "'Twenty minutes later.'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'A rope under his arms, and everything you have.'",
+  "new": "'A rope under his arms, and every bit of strength you have.'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Wheel him in'",
+  "new": "'Press E to wheel him in'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Hand the cooler through'",
+  "new": "'Press E to pass the cooler through the bars'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'The van goes.'",
+  "new": "'The van drives off.'"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "'Go home'",
+  "new": "'Press E to go home'"
+ },
+ {
+  "file": "src/game/table.ts",
+  "old": "`The ${organ.name}, into the ice. ${SAYS[grade]}`",
+  "new": "`You put the ${organ.name} on the ice. ${SAYS[grade]}`"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "`${night.order.handover.place}, ${night.order.handover.time}. There are headlights on the track already.`",
+  "new": "`${night.order.handover.place}, ${night.order.handover.time}. There are already headlights on the track.`"
+ },
+ {
+  "file": "src/game/yard/place.ts",
+  "old": "`He counts it out through the bars. £${job.paid.toLocaleString('en-GB')}.`",
+  "new": "`The buyer counts out £${job.paid.toLocaleString('en-GB')} and passes it through the bars.`"
+ }
+]

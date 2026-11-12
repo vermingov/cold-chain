@@ -9,6 +9,7 @@
 <canvas id="view"></canvas>
 <script type="module">
 import * as BABYLON from '@babylonjs/core';
+Object.assign(window, { BABYLON });     // for the rig's scripts
 // The cemetery, to walk about in with a torch.
 //   ?view=gate | avenue | old | lawn | public | chapel | front | lodge | ...   where the player starts (VIEWS)
 //   ?torch=0                                                             without the torch

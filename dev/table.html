@@ -9,6 +9,7 @@
 <canvas id="view"></canvas>
 <script type="module">
 import * as BABYLON from '@babylonjs/core';
+Object.assign(window, { BABYLON });     // for the rig's scripts
 // A body on the table and a scalpel in the hand.
 //   ?view=work | far | close | low | top | near    where the eye is
 //   ?skin=0                                    without the skin, to see what is inside and where

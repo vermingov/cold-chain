@@ -2,23 +2,23 @@
 //
 // The steps are the procedure as DESIGN.md has it, in the order a person
 // would do them, and each is ticked by whatever place it is done in. The
-// clipboard writes them out; nothing else shows them.
+// clipboard writes them out, and the next one is always in the corner of the screen.
 
 import { MONTHS } from '../map/register.ts';
 
 // Each: what it is called, and how it is written on the clipboard.
 const STEPS = [
-    ['tools', 'Spade and bar from the store behind the chapel'],
-    ['bier', 'The bier, from beside the store'],
+    ['tools', 'Get the spade and crowbar from the shed behind the chapel'],
+    ['bier', 'Take the bier (the trolley) from beside the shed'],
     ['found', 'Find the grave'],
     ['dug', 'Dig down to the lid'],
-    ['opened', 'Open the lid'],
-    ['checked', 'Check him against the order'],
-    ['lifted', 'Get him up onto the bier'],
-    ['inside', 'Wheel him to the cold room (east door)'],
+    ['opened', 'Break open the lid'],
+    ['checked', 'Check the body against the order'],
+    ['lifted', 'Lift the body onto the bier'],
+    ['inside', 'Wheel it to the cold room (the chapel\'s east door)'],
     ['taken', 'Take what is wanted'],
     ['handed', 'Hand it over'],
-    ['home', 'Go home (the main gate)'],
+    ['home', 'Go home by the main gate'],
 ];
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -46,6 +46,9 @@ export class Job {
 
     // The first step not done.
     get next() { return STEPS.find(([name]) => !this.done.has(name))?.[0] ?? null; }
+
+    // What the first step not done says, for the corner of the screen.
+    get todo() { return this.steps.find((s) => !s.done)?.says ?? null; }
 
     tick(name) { this.done.add(name); }
 

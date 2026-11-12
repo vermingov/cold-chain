@@ -9,6 +9,7 @@
 <canvas id="view"></canvas>
 <script type="module">
 import * as BABYLON from '@babylonjs/core';
+Object.assign(window, { BABYLON });     // for the rig's scripts
 // Everyone the game can show, under the kind of light they will be seen in:
 // one of them on a table under a lamp, the rest standing.
 //   ?view=table | face | line | hands     where the camera is

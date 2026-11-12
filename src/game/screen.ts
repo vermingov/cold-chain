@@ -21,6 +21,11 @@ export class Screen {
     declare verb: HTMLDivElement;
     declare held: HTMLDivElement;
     declare faults: HTMLDivElement;
+    declare version: HTMLDivElement;
+    declare todo: HTMLDivElement;
+    declare how: HTMLDivElement;
+    declare breath: HTMLDivElement;
+    declare marker: HTMLDivElement;
     declare seen: Set<any>;
     declare skipping: (() => void) | (() => void);
     declare speaking: boolean;
@@ -40,6 +45,15 @@ export class Screen {
         this.held = add(layer, 'held');
         // (In a corner: what went wrong, if anything did, for whoever is playing to pass on.)
         this.faults = add(layer, 'fault');
+        // (Top left: which build this is, and what the night's work wants doing next.)
+        this.version = add(layer, 'version shown');
+        this.version.textContent = `Cold Chain ${__VERSION__}`;
+        this.todo = add(layer, 'todo');
+        this.how = add(layer, 'how');
+        // (Low in the middle: how much breath is left, while any has been spent.)
+        this.breath = add(layer, 'breath');
+        // (Over a place in the picture: where something is to go.)
+        this.marker = add(layer, 'marker');
         this.seen = new Set();
         this.skipping = null;
         this.speaking = false;          // whether lines are being said just now
@@ -144,6 +158,29 @@ export class Screen {
         console.error(error);
         this.faults.textContent = `Fault: ${said}`;
         this.faults.classList.add('shown');
+    }
+
+    // The next thing to do, or null for nothing; and, under it, how the controls for it go.
+    task(says, how = null) {
+        for (const [el, words] of [[this.todo, says], [this.how, how]]) {
+            el.classList.toggle('shown', !!words);
+            if (words && el.textContent !== words) el.textContent = words;
+        }
+    }
+
+    // How much breath is left, 0 to 1; shown only while it is not full.
+    winded(left) {
+        this.breath.classList.toggle('shown', left < 0.995);
+        this.breath.style.transform = `scaleX(${left.toFixed(3)})`;
+    }
+
+    // A word over a point of the screen, [x, y] in CSS pixels, or null for none.
+    mark(at, words = '') {
+        this.marker.classList.toggle('shown', !!at);
+        if (!at) return;
+        if (this.marker.textContent !== words) this.marker.textContent = words;
+        this.marker.style.left = `${at[0].toFixed(0)}px`;
+        this.marker.style.top = `${at[1].toFixed(0)}px`;
     }
 
     // What the hand would do with what is in the middle of the eye, or null for nothing.

@@ -19,7 +19,8 @@ const BODY = {
     walk: 1.55, run: 3.4, creep: 0.85,
     accel: 9, friction: 11,
     stride: 0.74,                   // metres between footfalls
-    drain: 0.14, recover: 0.09,     // of a full breath, a second
+    drain: 0.065, recover: 0.11,    // of a full breath, a second: about fifteen seconds of running from full
+    winded: 0.3,                    // once out of breath, how much has to come back before running again
 };
 
 export class Player {
@@ -40,6 +41,7 @@ export class Player {
     declare steps: number;
     declare bobPhase: number;
     declare breathing: number;
+    declare winded: boolean;
     declare onStep: any;
     declare held: boolean;
     declare slowed: number;
@@ -75,8 +77,9 @@ export class Player {
         this.steps = 0;
         this.bobPhase = 0;
         this.breathing = 0;
+        this.winded = false;
         this.onStep = null;         // called with (what is underfoot, how hard) on every footfall
-        this.held = false;          // kept where they are: neither walking nor looking about
+        this.held = false;          // kept where they are, at work: they can look about but not walk
         this.slowed = 1;            // of the usual pace, for somebody pushing something heavy
 
         this.keys = new Set();
@@ -92,7 +95,7 @@ export class Player {
         const blur = () => this.keys.clear();
         const click = () => this.canvas.requestPointerLock();
         const look = (e) => {
-            if (document.pointerLockElement !== this.canvas || this.held) return;
+            if (document.pointerLockElement !== this.canvas) return;
             this.yaw += e.movementX * LOOK_RATE * this.lookSpeed;
             const limit = Math.PI * 0.46;
             this.pitch = Math.max(-limit, Math.min(limit, this.pitch + e.movementY * LOOK_RATE * this.lookSpeed));
@@ -131,8 +134,10 @@ export class Player {
 
         const down = k.has('ControlLeft') || k.has('KeyC');
         this.crouch += ((down ? 1 : 0) - this.crouch) * Math.min(1, dt * 7);
-        // Nobody runs on their heels, or with no breath left.
-        this.running = moving && this.crouch < 0.3 && (k.has('ShiftLeft') || k.has('ShiftRight')) && this.breathLeft > 0.04;
+        // Nobody runs on their heels, or with no breath left; and somebody who ran out has to get some back first.
+        if (this.breathLeft <= 0) this.winded = true;
+        else if (this.breathLeft >= BODY.winded) this.winded = false;
+        this.running = moving && this.crouch < 0.3 && (k.has('ShiftLeft') || k.has('ShiftRight')) && !this.winded;
         this.breathLeft = Math.max(0, Math.min(1, this.breathLeft + (this.running ? -BODY.drain : BODY.recover) * dt));
 
         const upright = this.running ? BODY.run : BODY.walk;

@@ -22,6 +22,8 @@ const COOLER = { size: [0.34, 0.26, 0.46] };
 const OVER = 0.3;           // metres from the cooler's middle, across the floor, that a thing carried counts as over it
 // How many marks of a blade an organ can have and still be sound, or still be worth anything.
 const NICKS = { sound: 0, marginal: 2 };
+// How the tools work, under what is to be done.
+const HOW = '1 scalpel: hold the left button and draw. 2 hand: hold to grab, mouse wheel to lift. 3 retractor. V: other side. E: leave.';
 const SAYS = { sound: 'Whole and clean.', marginal: 'There is a mark of the blade on it.', reject: 'It is torn. Nobody will pay for that.' };
 
 export async function openTable(engine, canvas, game) {
@@ -38,10 +40,13 @@ export async function openTable(engine, canvas, game) {
     const stand = () => {
         cooler.root.position.set(-side * TROLLEY.out, 0, table.field.point(0.5, 0.5).z + TROLLEY.along);
         cooler.root.computeWorldMatrix(true);
-        kept.forEach((organ, i) => inside.putAt(organ, place(i)));
+        kept.forEach((organ, i) => {
+            inside.putAt(organ, place(i));
+            inside.fall(organ);
+        });
     };
-    // Where the i-th thing in the cooler lies on the ice.
-    const place = (i) => cooler.root.position.add(new V3(0, TROLLEY.top + COOLER.size[1] * 0.45, (i % 3 - 1) * 0.13));
+    // Where the i-th thing in the cooler is let fall onto the ice from.
+    const place = (i) => cooler.root.position.add(new V3(0, TROLLEY.top + COOLER.size[1] * 0.7, (i % 3 - 1) * 0.13));
     stand();
 
     const keys = (e) => {
@@ -71,7 +76,7 @@ export async function openTable(engine, canvas, game) {
         if (!inside.out(organ) || !over(organ)) return false;
         organ.taken = true;
         kept.push(organ);
-        inside.putAt(organ, place(kept.length - 1));
+        inside.fall(organ);
         const grade = inside.torn.includes(organ.name) ? 'reject'
             : organ.nicks.length <= NICKS.sound ? 'sound' : organ.nicks.length <= NICKS.marginal ? 'marginal' : 'reject';
         job.keep(organ.name, grade);
@@ -90,15 +95,37 @@ export async function openTable(engine, canvas, game) {
         return over(organ) ? 'Let go: into the cooler' : 'Over the cooler, and let go';
     };
 
+    // What is to be done here, and how, for the corner of the screen.
+    const wanted = job.night.order.wanted;
+    const todo = () => (job.has('taken') ? 'Done here. Press E to step back from the table.'
+        : `Put the ${wanted.join(' and the ')} in the cooler: ${kept.length} of ${wanted.length} done`);
+    // Where the cooler is, marked on the screen over it while anything is still to go in.
+    const mark = () => {
+        if (job.has('taken')) return screen.mark(null);
+        const engine = scene.getEngine(), canvas = engine.getRenderingCanvas();
+        const top = cooler.root.position.add(new V3(0, TROLLEY.top + COOLER.size[1] + 0.12, 0));
+        const p = V3.Project(top, BABYLON.Matrix.Identity(), scene.getTransformMatrix(), table.camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()));
+        const css = canvas.clientWidth / engine.getRenderWidth(), ahead = V3.Dot(top.subtract(table.camera.position), table.camera.getDirection(V3.Forward())) > 0;
+        screen.mark(ahead ? [p.x * css, p.y * css] : null, 'Cooler');
+    };
+
     return {
-        scene, clipboard, done, cooler, table,
+        scene, clipboard, done, cooler, table, todo, how: HOW,
         update(dt) {
             table.update(dt);
             clipboard.update(dt);
             screen.hint(advise());
+            mark();
+            // shortcut: a thing knocked out of the ice by the physics is put back in it; a real knock-on would need CCD.
+            kept.forEach((organ, i) => {
+                if (organ.mesh.getAbsolutePosition().y > TROLLEY.top - 0.2) return;
+                inside.putAt(organ, place(i));
+                inside.fall(organ);
+            });
         },
         dispose() {
             screen.hint(null);
+            screen.mark(null);
             window.removeEventListener('keydown', keys);
             table.dispose();
             scene.dispose();
@@ -129,16 +156,23 @@ function trolley(scene, shadows) {
         shadows.addShadowCaster(mesh);
         return mesh;
     };
-    box('trolley top', [tw, 0.02, td], [0, top - 0.01, 0], steel);
+    // Solid to what falls. (They follow the trolley when it goes round to the other side, so they are kept in step with it.)
+    const solid = (mesh) => {
+        const aggregate = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.9 }, scene);
+        aggregate.body.disablePreStep = false;
+        return mesh;
+    };
+    solid(box('trolley top', [tw, 0.02, td], [0, top - 0.01, 0], steel));
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) box('trolley leg', [0.03, top, 0.03], [sx * (tw / 2 - 0.03), top / 2, sz * (td / 2 - 0.03)], steel);
-    box('cooler floor', [w, t, d], [0, top + t / 2, 0], white);
+    solid(box('cooler floor', [w, t, d], [0, top + t / 2, 0], white));
     const rim = [
         box('cooler side', [w, h, t], [0, top + h / 2, -d / 2 + t / 2], white),
         box('cooler side', [w, h, t], [0, top + h / 2, d / 2 - t / 2], white),
         box('cooler end', [t, h, d], [-w / 2 + t / 2, top + h / 2, 0], white),
         box('cooler end', [t, h, d], [w / 2 - t / 2, top + h / 2, 0], white),
     ];
-    box('ice', [w - 2 * t, 0.012, d - 2 * t], [0, top + h * 0.35, 0], ice);
+    solid(box('ice', [w - 2 * t, 0.012, d - 2 * t], [0, top + h * 0.35, 0], ice));
+    for (const mesh of rim) solid(mesh);
     const glow = plain('cooler, ready', [0.78, 0.78, 0.74], 0.5);
     glow.emissiveColor = new BABYLON.Color3(0.25, 0.3, 0.28);
     return {
