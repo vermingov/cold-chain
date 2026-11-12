@@ -146,6 +146,12 @@ export class Sound {
         const { listener, currentTime: now } = this.context, at = camera.globalPosition, ahead = camera.getDirection(FORWARD), up = camera.getDirection(UP);
         if (!Number.isFinite(at.x + at.y + at.z)) return;
         // (Babylon's world is left-handed and Web Audio's right-handed: z is turned round.)
+        // Firefox's listener has no positionX and the rest, only the older setPosition and setOrientation.
+        if (!listener.positionX) {
+            listener.setPosition(at.x, at.y, -at.z);
+            listener.setOrientation(ahead.x, ahead.y, -ahead.z, up.x, up.y, -up.z);
+            return;
+        }
         for (const [param, value] of [[listener.positionX, at.x], [listener.positionY, at.y], [listener.positionZ, -at.z],
             [listener.forwardX, ahead.x], [listener.forwardY, ahead.y], [listener.forwardZ, -ahead.z],
             [listener.upX, up.x], [listener.upY, up.y], [listener.upZ, -up.z]]) param.setTargetAtTime(value, now, 0.02);
