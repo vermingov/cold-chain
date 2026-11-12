@@ -73,7 +73,13 @@ class Organ {
     declare home: any;
     declare shift: BABYLON.Vector3;
     declare body: BABYLON.PhysicsAggregate | null;     // while it lies loose in the room (Inside.fall)
-    declare frame: BABYLON.Node;                        // what it hangs in while it is in the body
+    declare frame: BABYLON.Node;                        // the body's frame it was made in (it is in the world's now)
+    declare bit: number;                                // its own bit, to be told apart in a collision
+    declare passes: number;                             // the bits of what it may pass through for now (Inside.hold)
+    declare loose: boolean;                             // out of the body and a thing of its own in the room
+    declare wants: BABYLON.Vector3 | null;              // the shift a hand wants it at
+    declare rest: BABYLON.Vector3;                      // the shift it lay at before it was pushed aside
+    declare solid: string | null;                       // what its physics body is: 'still', 'moving' or none
     declare nicks: any[];
 
     constructor(name, kind, mesh) {

@@ -13,6 +13,7 @@
 import * as BABYLON from '@babylonjs/core';
 import { buildTable } from '../table/room.ts';
 import { Clipboard } from './clipboard.ts';
+import { RIM } from '../table/inside.ts';
 
 const V3 = BABYLON.Vector3;
 // The trolley: how far out from the table's middle it stands (on the far side from the eye), how far along toward
@@ -121,7 +122,7 @@ export async function openTable(engine, canvas, game) {
             mark();
             // shortcut: a thing knocked out of the ice by the physics is put back in it; a real knock-on would need CCD.
             kept.forEach((organ, i) => {
-                if (organ.mesh.getAbsolutePosition().y > TROLLEY.top - 0.2) return;
+                if (organ.mesh.getBoundingInfo().boundingBox.centerWorld.y > TROLLEY.top - 0.2) return;
                 inside.putAt(organ, place(i));
                 inside.fall(organ);
             });
@@ -160,9 +161,10 @@ function trolley(scene, shadows) {
         return mesh;
     };
     // Solid to what falls. (They follow the trolley when it goes round to the other side, so they are kept in step with it.)
-    const solid = (mesh) => {
+    const solid = (mesh, rim = false) => {
         const aggregate = new BABYLON.PhysicsAggregate(mesh, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.9 }, scene);
         aggregate.body.disablePreStep = false;
+        if (rim) aggregate.shape.filterMembershipMask = RIM;
         return mesh;
     };
     solid(box('trolley top', [tw, 0.02, td], [0, top - 0.01, 0], steel));
@@ -175,7 +177,7 @@ function trolley(scene, shadows) {
         box('cooler end', [t, h, d], [w / 2 - t / 2, top + h / 2, 0], white),
     ];
     solid(box('ice', [w - 2 * t, 0.012, d - 2 * t], [0, top + h * 0.35, 0], ice));
-    for (const mesh of rim) solid(mesh);
+    for (const mesh of rim) solid(mesh, true);
     const glow = plain('cooler, ready', [0.78, 0.78, 0.74], 0.5);
     glow.emissiveColor = new BABYLON.Color3(0.25, 0.3, 0.28);
     return {

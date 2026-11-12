@@ -53,7 +53,7 @@ export class Game {
                 this.noises?.update();
                 // A place may say more exactly what is to be done in it than the night's list does.
                 screen.task(this.place.todo?.() ?? this.job?.todo ?? null, this.place.how ?? null);
-                screen.winded(this.place.player?.breathLeft ?? 1);
+                screen.winded(this.place.player?.breathLeft ?? null);
             } catch (error) {
                 screen.fault(error);
             }

@@ -25,6 +25,7 @@ export class Screen {
     declare todo: HTMLDivElement;
     declare how: HTMLDivElement;
     declare breath: HTMLDivElement;
+    declare breathFill: HTMLElement;
     declare marker: HTMLDivElement;
     declare seen: Set<any>;
     declare skipping: (() => void) | (() => void);
@@ -50,8 +51,10 @@ export class Screen {
         this.version.textContent = `Cold Chain ${__VERSION__}`;
         this.todo = add(layer, 'todo');
         this.how = add(layer, 'how');
-        // (Low in the middle: how much breath is left, while any has been spent.)
+        // (Bottom left: how much stamina is left, while there is anybody walking about.)
         this.breath = add(layer, 'breath');
+        this.breath.innerHTML = '<span class="label">Stamina</span><span class="track"><span class="fill"></span></span>';
+        this.breathFill = this.breath.querySelector('.fill');
         // (Over a place in the picture: where something is to go.)
         this.marker = add(layer, 'marker');
         this.seen = new Set();
@@ -168,10 +171,12 @@ export class Screen {
         }
     }
 
-    // How much breath is left, 0 to 1; shown only while it is not full.
+    // How much stamina is left, 0 to 1, or null where nobody is walking (the table).
     winded(left) {
-        this.breath.classList.toggle('shown', left < 0.995);
-        this.breath.style.transform = `scaleX(${left.toFixed(3)})`;
+        this.breath.classList.toggle('shown', left !== null);
+        if (left === null) return;
+        this.breathFill.style.transform = `scaleX(${left.toFixed(3)})`;
+        this.breath.classList.toggle('low', left < 0.3);
     }
 
     // A word over a point of the screen, [x, y] in CSS pixels, or null for none.

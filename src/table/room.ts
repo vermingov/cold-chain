@@ -168,6 +168,7 @@ export async function buildTable(scene, canvas, { base = '', view = 'work', soun
         scene, camera, dead, field, flesh, lining, organs, inside, scalpel, hand, retractor, hands, lamp: lit.lamp, shadows, rightArm, leftArm, pieces, sound, look,
         update(dt) {
             hands.update(dt);
+            inside.update(dt);
             retractor.draw();
             pieces.update(dt);
             field.update();
