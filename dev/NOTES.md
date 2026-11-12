@@ -614,6 +614,22 @@ MPFB for people, Poly Haven, glTF/WebP/OGG.
 - WebGPU: `?gpu=webgpu`. It starts, but not every time in the headless rig;
   WebGL 2 stays the default until it has been seen right everywhere.
 
+## The forge's models, 2026-11-12 evening
+
+- `src/glb.ts` loads `assets/models/<path>.glb` once per scene (`glb`) and
+  places copies (`place`). Made in Blender by `tools/forge/models/`
+  (`props.py`, `buildings.py`, `graves.py`; `--repack` re-ships textures
+  from the kept masters without baking). Budget: the game downloads over a
+  ~1.5 MB/s uplink: props 4.6 MB, buildings 4.1 MB (one kit GLB).
+- In the game: door leaf, phone, answering machine, radio (where the TV
+  was), bier, coffin, van; the town's terraces and tower, the chapel and the
+  lodge. A mirror (glTF root) baked into vertices must have its winding
+  turned back (town.ts `unpack`): it rendered the kit black.
+- Not in the game yet: the grave models in `assets/models/graves` (16 GLBs)
+  were made but never wired into `stones.ts`; the stones are procedural.
+- Vessels: the blade cuts tubes 35 mm on down its line past what it is on
+  (`BEHIND`, scalpel.ts); the hint names what still holds an organ.
+
 ## Known and not fixed
 
 - Hands at rest are claws; the old man's hair proxy looked like a wig so he
