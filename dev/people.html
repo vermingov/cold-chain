@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>people</title>
+<style>html, body { margin: 0; height: 100%; background: #000; } canvas { width: 100%; height: 100%; display: block; }</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<script src="../vendor/babylon.js"></script>
+<script type="module">
+// Everyone the game can show, under the kind of light they will be seen in:
+// one of them on a table under a lamp, the rest standing.
+//   ?view=table | face | line | hands     where the camera is
+//   ?dressed=0                            the one on the table as buried, or not
+import { People } from '../src/person.js';
+import * as P from '../src/poses.js';
+
+const query = new URLSearchParams(location.search);
+const canvas = document.getElementById('view');
+const engine = new BABYLON.Engine(canvas, true);
+const scene = new BABYLON.Scene(engine);
+scene.clearColor = new BABYLON.Color4(0.01, 0.01, 0.012, 1);
+const ip = scene.imageProcessingConfiguration;
+ip.toneMappingEnabled = true;
+ip.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
+ip.exposure = 1.1;
+
+const V3 = BABYLON.Vector3;
+const fill = new BABYLON.HemisphericLight('fill', new V3(0, 1, 0), scene);
+fill.intensity = query.get('view') === 'line' || query.get('view') === 'buyer' ? 0.7 : 0.06;
+fill.diffuse = new BABYLON.Color3(0.7, 0.8, 1.0);
+const lamp = new BABYLON.SpotLight('lamp', new V3(0, 2.4, 0.1), new V3(0, -1, 0.02), 1.9, 2, scene);
+lamp.falloffType = BABYLON.Light.FALLOFF_GLTF;
+lamp.intensity = 15;
+lamp.diffuse = new BABYLON.Color3(1.0, 0.95, 0.86);
+lamp.shadowMinZ = 0.2;
+lamp.shadowMaxZ = 6;
+const shadows = new BABYLON.ShadowGenerator(2048, lamp);
+shadows.usePercentageCloserFiltering = true;
+shadows.bias = 0.0008;
+shadows.normalBias = 0.01;
+
+const steel = new BABYLON.PBRMaterial('steel', scene);
+steel.albedoColor = new BABYLON.Color3(0.55, 0.57, 0.58);
+steel.metallic = 0.0;
+steel.roughness = 0.35;
+steel.environmentIntensity = 0;
+const tile = new BABYLON.PBRMaterial('tile', scene);
+tile.albedoColor = new BABYLON.Color3(0.33, 0.35, 0.33);
+tile.metallic = 0;
+tile.roughness = 0.6;
+tile.environmentIntensity = 0;
+const box = (name, w, h, d, at, mat) => {
+    const m = BABYLON.MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
+    m.position = at; m.material = mat; m.receiveShadows = true; shadows.addShadowCaster(m);
+    return m;
+};
+box('floor', 9, 0.1, 9, new V3(0, -0.05, 0), tile);
+box('wall', 9, 3, 0.1, new V3(0, 1.5, 2.2), tile);
+box('table', 0.8, 0.06, 2.1, new V3(0, 0.87, 0), steel);
+box('leg', 0.5, 0.84, 1.2, new V3(0, 0.42, 0), steel);
+
+const people = await new People(scene, '../assets/people/').load(['oldman', 'buyer', 'sexton']);
+
+// The dead one, on his back on the table, head toward the wall.
+const dead = people.make('oldman', { dressed: query.get('dressed') === '1', dead: true, bald: true });
+dead.blinks = false;
+dead.blink = 0.55;
+dead.root.position.set(0, 0.9, 0.05);
+dead.root.rotation.y = Math.PI;
+dead.apply({ ...P.RELAXED, _pitch: -90, jaw: 9, headTilt: 4, shoulderAbductL: -30, shoulderAbductR: -32, elbowL: 6, elbowR: 4,
+    curlL: 28, curlR: 24, thumbL: 14, thumbR: 12, ankleL: -30, ankleR: -34, hipTwistL: 12, hipTwistR: -14 }, { ground: 'skin' });
+shadows.addShadowCaster(dead.mesh);
+
+const standing = [['buyer', -1.6], ['sexton', 1.6]].map(([name, x]) => {
+    const p = people.make(name);
+    p.root.position.set(x, 0, 0.6);
+    p.root.rotation.y = Math.PI + (x < 0 ? -0.35 : 0.35);
+    shadows.addShadowCaster(p.mesh);
+    return p;
+});
+
+const VIEWS = {
+    table: [new V3(1.35, 1.8, -0.9), new V3(0, 0.95, 0.1)],
+    face: [new V3(0.34, 1.38, 0.55), new V3(0, 1.0, 0.82)],
+    hands: [new V3(0.75, 1.45, -0.1), new V3(0.3, 0.95, 0.05)],
+    side: [new V3(2.2, 1.0, 0.05), new V3(0, 0.95, 0.05)],
+    top: [new V3(0.001, 2.9, 0.05), new V3(0, 0.9, 0.05)],
+    line: [new V3(0, 1.45, -2.6), new V3(0, 1.2, 0.6)],
+    buyer: [new V3(-1.15, 1.72, -0.35), new V3(-1.6, 1.68, 0.6)],
+};
+const [from, to] = VIEWS[query.get('view')] || VIEWS.table;
+const camera = new BABYLON.FreeCamera('cam', from, scene);
+camera.minZ = 0.05;
+camera.fov = 0.8;
+camera.setTarget(to);
+
+let t = 0;
+window.__people = { scene, people, dead, standing, lamp, camera };
+engine.runRenderLoop(() => {
+    t += engine.getDeltaTime() / 1000;
+    for (const p of standing) { p.tick(1 / 60); p.look = camera.position; p.lookWeight = 0.7; p.apply(P.stand(t)); }
+    scene.render();
+});
+window.addEventListener('resize', () => engine.resize());
+</script>
+</body>
+</html>

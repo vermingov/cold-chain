@@ -1,0 +1,78 @@
+{
+ "skin": [
+  "skin-1.flac"
+ ],
+ "fat": [
+  "skin-1.flac"
+ ],
+ "flesh": [
+  "skin-1.flac"
+ ],
+ "organ": [
+  "skin-1.flac"
+ ],
+ "snip": [
+  "skin-1.flac"
+ ],
+ "bone": [
+  "bone-1.flac"
+ ],
+ "give": [
+  "give-1.flac",
+  "give-2.flac"
+ ],
+ "wet": [
+  "wet-1.flac"
+ ],
+ "glove": [
+  "glove-1.flac"
+ ],
+ "lay": [
+  "lay-1.flac"
+ ],
+ "ring": [
+  "ring-1.flac"
+ ],
+ "beep": [
+  "beep-1.flac"
+ ],
+ "handset": [
+  "handset-1.flac"
+ ],
+ "door": [
+  "door-1.flac"
+ ],
+ "step-carpet": [
+  "step-carpet-1.flac"
+ ],
+ "step-gravel": [
+  "step-gravel-1.flac"
+ ],
+ "step-grass": [
+  "step-grass-1.flac"
+ ],
+ "step-mud": [
+  "step-mud-1.flac"
+ ],
+ "step-tarmac": [
+  "step-tarmac-1.flac"
+ ],
+ "room": [
+  "room-1.flac"
+ ],
+ "night": [
+  "night-1.flac"
+ ],
+ "dig": [
+  "dig-1.flac"
+ ],
+ "lid": [
+  "lid-1.flac"
+ ],
+ "bier": [
+  "bier-1.flac"
+ ],
+ "van": [
+  "van-1.flac"
+ ]
+}

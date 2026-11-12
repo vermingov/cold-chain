@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listening</title>
+<style>
+@font-face { font-family: 'Fell'; src: url('../vendor/fonts/im-fell-english.woff2') format('woff2'); }
+@font-face { font-family: 'Fell'; font-style: italic; src: url('../vendor/fonts/im-fell-english-italic.woff2') format('woff2'); }
+html { background: #0b0c0d; color: #b9b4a8; font: 18px/1.45 'Fell', Georgia, serif; }
+body { margin: 0; padding: 9vh 7vw 30vh; max-width: 46rem; }
+h1 { font-size: 2.8rem; font-weight: normal; line-height: 1; margin: 0 0 0.8rem; color: #e4dfd2; }
+h2 { font-size: 1.7rem; font-weight: normal; margin: 4.5rem 0 0.4rem; color: #e4dfd2; }
+p { margin: 0 0 0.5rem; }
+section > p { font-style: italic; color: #8a857a; margin-bottom: 1.6rem; }
+article { margin: 0 0 2.1rem; }
+article.no { opacity: 0.4; }
+h3 { font-size: 1.15rem; font-weight: normal; margin: 0; color: #e4dfd2; }
+h3 span { color: #8a857a; font-style: italic; }
+article p { color: #8a857a; font-size: 0.95rem; }
+button, input { font: inherit; color: inherit; background: none; border: 0; padding: 0; }
+button { cursor: pointer; margin-right: 1.3rem; text-decoration: underline; text-decoration-color: #5b574f; text-underline-offset: 0.2em; }
+button:hover { color: #e4dfd2; text-decoration-color: #e4dfd2; }
+button.playing { color: #d9a441; text-decoration-color: #d9a441; }
+button.chosen { color: #0b0c0d; background: #e4dfd2; text-decoration: none; padding: 0 0.45em; margin-left: -0.45em; margin-right: 0.85rem; }
+.verdict { margin-left: 1.6rem; }
+input { display: block; width: 100%; margin-top: 0.45rem; border-bottom: 1px solid #2b2a27; color: #b9b4a8; font-style: italic; }
+input::placeholder { color: #55514a; }
+input:focus { outline: none; border-bottom-color: #8a857a; }
+</style>
+</head>
+<body>
+<h1>Listening</h1>
+<p>Every recording there is to choose from, at one loudness. Say of each whether it will do for what it is under. What you say is kept as you go.</p>
+<p id="heard"></p>
+<main></main>
+<script type="module">
+// The recordings a sound might be made from, for somebody with ears to pass
+// or throw out (tools/audition.py makes what is played here; the verdicts
+// go to dev/verdicts.json, which tools/sounds.py is then written from).
+import { Sound } from '../src/sound.js';
+
+const BASE = '../assets/audition/';
+// What each purpose asks of a recording, said once over its list.
+const ASKS = {
+    'A blade drawn through flesh': 'Heard for as long as the blade is cutting. It should be wet and soft, with nothing hard under it.',
+    'A blade on bone': 'Heard when the blade comes down on a rib.',
+    'Flesh parting': 'Heard once, when the wall of the belly gives under the blade.',
+    'Wet tissue moved': 'Heard while a wound springs open, a lip is pulled back, or something inside is shifted.',
+    'A gloved hand': 'Heard once, when the hand takes hold of skin.',
+    'Steel put down': 'For a tool laid on the tray. Nothing in the game uses it yet.',
+    'Something soft laid down': 'Heard once, when something taken out is put down.',
+    'The phone ringing': 'The phone in the flat, ringing once the messages are done. A British double ring.',
+    'The answering machine': 'The beep before each message and at the end of them.',
+    'The handset': 'Heard when the phone is answered and put down.',
+    'A door': 'The flat\'s door, opened on the way out.',
+    'Steps on carpet': 'One step at a time, in the flat. Short and soft.',
+    'Steps on gravel': 'One step at a time on the cemetery\'s paths.',
+    'Steps on grass': 'One step at a time on the lawns, wet, in December.',
+    'Steps on mud': 'One step at a time in the public ground.',
+    'Steps on a pavement': 'One step at a time on the road outside the gate.',
+    'The flat at night': 'Under everything in the flat, the whole time. It must not be noticed.',
+    'Outside at night': 'Under everything in the cemetery, the whole time: a town far off, a little wind.',
+    'A spade in clay': 'One spadeful at a time: in, levered, thrown.',
+    'The lid splitting': 'The coffin lid giving under the bar, three heaves.',
+    'The bier rolling': 'For as long as the bier is pushed, faster when it goes faster.',
+    'A van idling': 'The van at the gate, its engine left running. Heard from a few metres off.',
+};
+// As a stroke: two draws of the blade, the second lighter, with a stop between. Seconds, and how hard at each.
+const STROKE = { lasts: 4.8, at: (t) => (t < 2 ? Math.sin(Math.PI * t / 2) : t < 2.7 ? 0 : 0.7 * Math.sin(Math.PI * (t - 2.7) / 2.1)) };
+
+const list = await (await fetch(BASE + 'list.json')).json();
+const verdicts = await fetch('verdicts.json').then((res) => (res.ok ? res.json() : {}));
+const sound = new Sound(), player = new Audio(), streams = new Map();
+let stop = () => {};
+
+function count() {
+    document.getElementById('heard').textContent = `${list.filter((take) => verdicts[take.id] && verdicts[take.id].verdict).length} of ${list.length} judged.`;
+}
+
+function keep() {
+    count();
+    fetch('verdicts.json', { method: 'PUT', body: JSON.stringify(verdicts, null, 1) });
+}
+
+// Play a recording as it is, or stop it if it is the one playing.
+function play(take, button) {
+    const mine = button.classList.contains('playing');
+    stop();
+    if (mine) return;
+    player.src = `${BASE}${take.id}.flac`;
+    player.play();
+    button.classList.add('playing');
+    player.onended = stop = () => { player.pause(); button.classList.remove('playing'); stop = () => {}; };
+}
+
+// Play a recording the way the game would: only while a blade is being drawn, and as loud as it is drawn fast.
+async function stroke(take, button) {
+    const mine = button.classList.contains('playing');
+    stop();
+    if (mine) return;
+    button.classList.add('playing');
+    if (!streams.has(take.id)) {
+        // (A sound is known to the player by a name, and a number will not do for one.)
+        await sound.load(BASE, { [`take ${take.id}`]: [`${take.id}.flac`] });
+        streams.set(take.id, sound.stream(`take ${take.id}`));
+    }
+    const stream = streams.get(take.id), from = performance.now();
+    let going = requestAnimationFrame(function drawn() {
+        const t = (performance.now() - from) / 1000, hard = Math.max(0, STROKE.at(t));
+        stream.drive(Math.sqrt(hard), 1 + 0.22 * (hard - 0.5));
+        sound.update();
+        if (t < STROKE.lasts) going = requestAnimationFrame(drawn);
+        else stop();
+    });
+    stop = () => { cancelAnimationFrame(going); stream.drive(0); button.classList.remove('playing'); stop = () => {}; };
+}
+
+function row(take) {
+    const article = document.createElement('article'), said = verdicts[take.id] || (verdicts[take.id] = {});
+    const button = (label, act, kind = '') => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.className = kind;
+        b.addEventListener('click', () => act(b));
+        return b;
+    };
+    const head = document.createElement('h3'), by = document.createElement('span'), what = document.createElement('p');
+    const controls = document.createElement('div'), note = document.createElement('input');
+    by.textContent = take.uploader;
+    head.append(take.title + ' ', by);
+    what.textContent = take.what;
+    controls.append(button('Play', (b) => play(take, b)));
+    if (take.for === 'A blade drawn through flesh') controls.append(button('As a stroke', (b) => stroke(take, b)));
+    const choices = ['No', 'Maybe', 'Yes'].map((label, i) => button(label, () => {
+        said.verdict = said.verdict === label.toLowerCase() ? '' : label.toLowerCase();
+        show();
+        keep();
+    }, i ? '' : 'verdict'));
+    const show = () => {
+        choices.forEach((b) => b.classList.toggle('chosen', b.textContent.toLowerCase() === said.verdict));
+        article.classList.toggle('no', said.verdict === 'no');
+    };
+    controls.append(...choices);
+    note.placeholder = 'What it sounds like, if not what it should';
+    note.value = said.note || '';
+    note.addEventListener('change', () => { said.note = note.value; keep(); });
+    article.append(head, what, controls, note);
+    show();
+    return article;
+}
+
+const main = document.querySelector('main');
+// What still has recordings nobody has judged comes first.
+const unjudged = (purpose) => list.some((take) => take.for === purpose && !(verdicts[take.id] && verdicts[take.id].verdict));
+for (const purpose of Object.keys(ASKS).sort((a, b) => unjudged(b) - unjudged(a))) {
+    const takes = list.filter((take) => take.for === purpose);
+    if (!takes.length) continue;
+    const section = document.createElement('section'), heading = document.createElement('h2'), asks = document.createElement('p');
+    heading.textContent = purpose;
+    asks.textContent = ASKS[purpose];
+    section.append(heading, asks, ...takes.map(row));
+    main.append(section);
+}
+count();
+</script>
+</body>
+</html>
