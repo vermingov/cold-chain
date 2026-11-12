@@ -1,78 +1,78 @@
 {
  "skin": [
-  "skin-1.flac"
+  "skin-1.ogg"
  ],
  "fat": [
-  "skin-1.flac"
+  "skin-1.ogg"
  ],
  "flesh": [
-  "skin-1.flac"
+  "skin-1.ogg"
  ],
  "organ": [
-  "skin-1.flac"
+  "skin-1.ogg"
  ],
  "snip": [
-  "skin-1.flac"
+  "skin-1.ogg"
  ],
  "bone": [
-  "bone-1.flac"
+  "bone-1.ogg"
  ],
  "give": [
-  "give-1.flac",
-  "give-2.flac"
+  "give-1.ogg",
+  "give-2.ogg"
  ],
  "wet": [
-  "wet-1.flac"
+  "wet-1.ogg"
  ],
  "glove": [
-  "glove-1.flac"
+  "glove-1.ogg"
  ],
  "lay": [
-  "lay-1.flac"
+  "lay-1.ogg"
  ],
  "ring": [
-  "ring-1.flac"
+  "ring-1.ogg"
  ],
  "beep": [
-  "beep-1.flac"
+  "beep-1.ogg"
  ],
  "handset": [
-  "handset-1.flac"
+  "handset-1.ogg"
  ],
  "door": [
-  "door-1.flac"
+  "door-1.ogg"
  ],
  "step-carpet": [
-  "step-carpet-1.flac"
+  "step-carpet-1.ogg"
  ],
  "step-gravel": [
-  "step-gravel-1.flac"
+  "step-gravel-1.ogg"
  ],
  "step-grass": [
-  "step-grass-1.flac"
+  "step-grass-1.ogg"
  ],
  "step-mud": [
-  "step-mud-1.flac"
+  "step-mud-1.ogg"
  ],
  "step-tarmac": [
-  "step-tarmac-1.flac"
+  "step-tarmac-1.ogg"
  ],
  "room": [
-  "room-1.flac"
+  "room-1.ogg"
  ],
  "night": [
-  "night-1.flac"
+  "night-1.ogg"
  ],
  "dig": [
-  "dig-1.flac"
+  "dig-1.ogg"
  ],
  "lid": [
-  "lid-1.flac"
+  "lid-1.ogg"
  ],
  "bier": [
-  "bier-1.flac"
+  "bier-1.ogg"
  ],
  "van": [
-  "van-1.flac"
+  "van-1.ogg"
  ]
 }

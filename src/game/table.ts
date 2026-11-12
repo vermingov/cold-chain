@@ -110,7 +110,7 @@ export async function openTable(engine, canvas, game) {
     };
 
     return {
-        scene, clipboard, done, cooler, table, todo, how: HOW,
+        scene, clipboard, done, cooler, table, todo, how: HOW, room: 'cold',
         update(dt) {
             table.update(dt);
             clipboard.update(dt);

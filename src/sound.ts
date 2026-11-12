@@ -14,6 +14,13 @@
 //               loud as it is driven. Stop driving it and it stops: a
 //               blade that halts is silent in a twentieth of a second.
 //   a shot      plays one burst, once: a thing put down, a thing that gives.
+//
+// A sound with a place in the world (`at`) is heard from there, through the
+// head (HRTF): the van behind the bars, the sexton's spade over the wall.
+// Everything is heard in the room it is in (`room`), and the whole goes
+// through a limiter, so that nothing that sounds at once can clip.
+
+import * as BABYLON from '@babylonjs/core';
 
 const LEVEL = 0.7;              // how loud everything is: recordings are set near full scale, and several sound at once
 const QUIET = 0.07;             // a recording is sounding where it is louder than this much of its loudest
@@ -24,6 +31,17 @@ const BURST = { least: 0.02, joins: 0.09, lead: 0.012, rings: 0.3 };
 // A stream plays `length` seconds at a time, each faded over `fade` into the
 // next, and is told what to do about `ahead` seconds before it is heard.
 const STREAM = { length: 0.22, fade: 0.07, ahead: 0.12, eases: 0.035 };
+// The rooms things are heard in: how long the room rings on (seconds to fall 60 dB), how late the first of it comes
+// back (seconds), how much of it is heard against the sound itself, and how dark it is (the share of each sample of
+// the ring carried into the next: more is duller).
+const ROOMS = {
+    flat: { rings: 0.45, late: 0.008, wet: 0.16, dark: 0.55 },
+    yard: { rings: 1.6, late: 0.045, wet: 0.1, dark: 0.75 },
+    cold: { rings: 1.1, late: 0.006, wet: 0.24, dark: 0.3 },
+    none: { rings: 0.05, late: 0, wet: 0, dark: 0 },
+};
+// How a sound with a place falls away with distance (metres).
+const FALLS = { near: 1.5, far: 60, rolls: 1.1 };
 
 // Where a recording is sounding: [[from, to], ...] in seconds.
 function bursts(buffer) {
@@ -65,17 +83,37 @@ function hits(buffer) {
     return found;
 }
 
+const FORWARD = BABYLON.Vector3.Forward(), UP = BABYLON.Vector3.Up();
+
 export class Sound {
     declare context: AudioContext;
     declare out: GainNode;
     declare takes: Map<any, any>;
     declare streams: any[];
+    declare limiter: DynamicsCompressorNode;
+    declare ring: ConvolverNode;
+    declare wet: GainNode;
+    declare rooms: Map<string, AudioBuffer>;
 
     constructor() {
         this.context = new AudioContext({ latencyHint: 'interactive' });
-        this.out = this.context.createGain();
+        const context = this.context;
+        this.out = context.createGain();
         this.out.gain.value = LEVEL;
-        this.out.connect(this.context.destination);
+        // Straight to the limiter, and through the room's ring to it as well.
+        this.limiter = context.createDynamicsCompressor();
+        this.limiter.threshold.value = -3;
+        this.limiter.knee.value = 0;
+        this.limiter.ratio.value = 20;
+        this.limiter.attack.value = 0.002;
+        this.limiter.release.value = 0.2;
+        this.ring = context.createConvolver();
+        this.wet = context.createGain();
+        this.out.connect(this.limiter);
+        this.out.connect(this.ring).connect(this.wet).connect(this.limiter);
+        this.limiter.connect(context.destination);
+        this.rooms = new Map();
+        this.room('none');
         this.takes = new Map();         // name -> [{ buffer, bursts }]
         this.streams = [];
         // A page may not sound until somebody has touched it.
@@ -95,12 +133,55 @@ export class Sound {
         return this;
     }
 
+    // Heard as in the room called `name` (ROOMS) from now on.
+    room(name) {
+        const room = ROOMS[name] || ROOMS.none;
+        if (!this.rooms.has(name)) this.rooms.set(name, this._ringing(room));
+        this.ring.buffer = this.rooms.get(name);
+        this.wet.gain.setTargetAtTime(room.wet, this.context.currentTime, 0.05);
+    }
+
+    // Where the ears are, and which way they face: a camera, once a frame.
+    listen(camera) {
+        const { listener, currentTime: now } = this.context, at = camera.globalPosition, ahead = camera.getDirection(FORWARD), up = camera.getDirection(UP);
+        // (Babylon's world is left-handed and Web Audio's right-handed: z is turned round.)
+        for (const [param, value] of [[listener.positionX, at.x], [listener.positionY, at.y], [listener.positionZ, -at.z],
+            [listener.forwardX, ahead.x], [listener.forwardY, ahead.y], [listener.forwardZ, -ahead.z],
+            [listener.upX, up.x], [listener.upY, up.y], [listener.upZ, -up.z]]) param.setTargetAtTime(value, now, 0.02);
+    }
+
+    // A place in the world to hear something from, [x, y, z] in the game's world; its node is what the sound goes into.
+    place(at) {
+        const panner = new PannerNode(this.context, {
+            panningModel: 'HRTF', distanceModel: 'inverse', refDistance: FALLS.near, maxDistance: FALLS.far, rolloffFactor: FALLS.rolls,
+            positionX: at[0], positionY: at[1], positionZ: -at[2],
+        });
+        panner.connect(this.out);
+        return panner;
+    }
+
+    // The ring of a room, made once: a burst that dies away as the room's walls give back less of it each time, darker
+    // the further it goes, a little different in each ear.
+    _ringing({ rings, late, dark }) {
+        const rate = this.context.sampleRate, length = Math.ceil((rings + late) * rate), buffer = this.context.createBuffer(2, length, rate);
+        for (let ear = 0; ear < 2; ear++) {
+            const data = buffer.getChannelData(ear);
+            let held = 0;
+            for (let i = Math.floor(late * rate); i < length; i++) {
+                const t = i / rate - late;
+                held = held * dark + (Math.random() * 2 - 1) * (1 - dark);
+                data[i] = held * Math.pow(10, -3 * t / rings);
+            }
+        }
+        return buffer;
+    }
+
     // Whether there is any recording called `name`. (What has none is not heard: nothing is made up to stand in.)
     has(name) { return this.takes.has(name); }
 
-    // A stream of the recordings called `name`.
-    stream(name) {
-        const stream = new Stream(this, this.takes.get(name));
+    // A stream of the recordings called `name`; heard from a place (`at`) if it has one.
+    stream(name, at = null) {
+        const stream = new Stream(this, this.takes.get(name), at && this.place(at));
         this.streams.push(stream);
         return stream;
     }
@@ -109,23 +190,25 @@ export class Sound {
     // at `rate` times its own speed (a little either way of 1 keeps two the
     // same from sounding the same).
     // With `most` (seconds) it is one strike instead (`hits`), cut off at most that long after it: a footstep.
-    shot(name, { gain = 1, rate = 1, most = 0 } = {}) {
-        const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)];
+    // With `at` ([x, y, z]) it is heard from there.
+    shot(name, { gain = 1, rate = 1, most = 0, at = null } = {}) {
+        const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)], into = at ? this.place(at) : this.out;
         if (most && take.hits.length) {
             const which = Math.floor(Math.random() * take.hits.length), from = Math.max(0, take.hits[which] - BURST.lead);
             const next = which + 1 < take.hits.length ? take.hits[which + 1] - BURST.lead : take.buffer.duration;
-            this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, rate * (0.96 + Math.random() * 0.08), this.out);
+            this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, rate * (0.96 + Math.random() * 0.08), into, !!at);
             return;
         }
         const which = Math.floor(Math.random() * take.bursts.length), [from, to] = take.bursts[which];
         // It rings on after it has gone quiet, as far as the next one or the end.
         const until = Math.min(to + BURST.rings, which + 1 < take.bursts.length ? take.bursts[which + 1][0] : take.buffer.duration);
-        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, rate * (0.96 + Math.random() * 0.08), this.out);
+        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, rate * (0.96 + Math.random() * 0.08), into, !!at);
     }
 
     // A stream no longer wanted: it falls silent and is no longer kept going.
     drop(stream) {
         stream.level.disconnect();
+        stream.panner?.disconnect();
         this.streams = this.streams.filter((s) => s !== stream);
     }
 
@@ -135,8 +218,8 @@ export class Sound {
     }
 
     // A length of a recording, from `from` for `length` seconds, starting
-    // at `when`, faded in and out, into `into`.
-    _play(buffer, when, from, length, fadeIn, fadeOut, gain, rate, into) {
+    // at `when`, faded in and out, into `into` (let go of with it when `owned`).
+    _play(buffer, when, from, length, fadeIn, fadeOut, gain, rate, into, owned = false) {
         const source = this.context.createBufferSource(), level = this.context.createGain();
         source.buffer = buffer;
         source.playbackRate.value = rate;
@@ -147,12 +230,16 @@ export class Sound {
         level.gain.linearRampToValueAtTime(0, when + lasts);
         source.connect(level).connect(into);
         source.start(when, from, length);
-        source.onended = () => level.disconnect();
+        source.onended = () => {
+            level.disconnect();
+            if (owned) into.disconnect();
+        };
     }
 }
 
 class Stream {
     declare sound: any;
+    declare panner: PannerNode | null;
     declare takes: any;
     declare level: any;
     declare driven: number;
@@ -162,18 +249,27 @@ class Stream {
     declare head: number;
     declare until: number;
 
-    constructor(sound, takes) {
+    constructor(sound, takes, panner = null) {
         this.sound = sound;
         this.takes = takes;
+        this.panner = panner;
         this.level = sound.context.createGain();
         this.level.gain.value = 0;
-        this.level.connect(sound.out);
+        this.level.connect(panner || sound.out);
         this.driven = 0;
         this.rate = 1;
         this.next = 0;                  // when the next length is due to start
         this.take = null;               // which recording it is in, and where
         this.head = 0;
         this.until = 0;
+    }
+
+    // Heard from somewhere else now, [x, y, z] (only a stream made with a place has one).
+    at(where) {
+        const now = this.sound.context.currentTime;
+        this.panner?.positionX.setTargetAtTime(where[0], now, 0.03);
+        this.panner?.positionY.setTargetAtTime(where[1], now, 0.03);
+        this.panner?.positionZ.setTargetAtTime(-where[2], now, 0.03);
     }
 
     // How loud it is to be from now (0 is silent), and how fast its recordings are to run.

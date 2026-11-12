@@ -36,29 +36,36 @@ export class Noises {
         return new Noises(sound);
     }
 
-    // Something that happens once. `gain` is how hard, 0 to 1.
-    shot(name, gain = 1) {
+    // Something that happens once. `gain` is how hard, 0 to 1; `at`, where in the world it happens ([x, y, z]), if
+    // anywhere but in the player's own hands.
+    shot(name, gain = 1, at = null) {
         const kind = name.replace(/-.*/, '');
-        if (this.sound.has(name)) this.sound.shot(name, { gain: gain * (LEVEL[kind] ?? 1), most: MOST[kind] ?? 0 });
+        if (this.sound.has(name)) this.sound.shot(name, { gain: gain * (LEVEL[kind] ?? 1), most: MOST[kind] ?? 0, at });
     }
 
-    // Something that goes on, this frame as loud as `level` (0 for silent), at `rate` of its own speed.
-    drive(name, level, rate = 1) {
+    // Something that goes on, this frame as loud as `level` (0 for silent), at `rate` of its own speed; from `at`
+    // ([x, y, z]) if it is somewhere in particular.
+    drive(name, level, rate = 1, at = null) {
         if (!this.sound.has(name)) return;
-        if (!this.beds.has(name)) this.beds.set(name, this.sound.stream(name));
-        this.beds.get(name).drive(level * (LEVEL[name] ?? 1), rate);
+        if (!this.beds.has(name)) this.beds.set(name, this.sound.stream(name, at));
+        const bed = this.beds.get(name);
+        if (at) bed.at(at);
+        bed.drive(level * (LEVEL[name] ?? 1), rate);
     }
+
+    // The room everything is heard in from now: 'flat', 'yard', 'cold'.
+    room(name) { this.sound.room(name); }
 
     // A footfall of whoever is walking, on what is underfoot, as hard as it came down.
     step(surface, weight) { this.shot('step-' + surface, weight); }
 
-    // The phone, ringing until it is stopped.
-    ring(on) {
+    // The phone, ringing until it is stopped, from where it is ([x, y, z]).
+    ring(on, at = null) {
         clearInterval(this.ringing);
         this.ringing = null;
         if (!on) return;
-        this.shot('ring');
-        this.ringing = window.setInterval(() => this.shot('ring'), RINGS * 1000);
+        this.shot('ring', 1, at);
+        this.ringing = window.setInterval(() => this.shot('ring', 1, at), RINGS * 1000);
     }
 
     // Everything that was going on stops: the place is being left.

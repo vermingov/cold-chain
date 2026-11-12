@@ -251,15 +251,15 @@ export async function openYard(engine, canvas, game) {
     };
 
     return {
-        scene, clipboard, night: ended, player, things, grave, bier, sexton, gate, held, torch, yard,
+        scene, clipboard, night: ended, player, things, grave, bier, sexton, gate, held, torch, yard, room: 'yard',
         update(dt) {
             player.update(dt);
             const wheels = bier.position.clone();
             bier.update(dt, yard.footing.solids);
-            // The air of the place; the bier's wheels as fast as it goes; the van's engine, louder the nearer.
+            // The air of the place; the bier's wheels as fast as it goes, from the bier; the van's engine, from the van.
             noises.drive('night', 1);
-            noises.drive('bier', bier.pusher ? Math.min(1, V3.Distance(wheels, bier.position) / dt / 0.9) : 0);
-            noises.drive('van', gate.waiting ? Math.min(1, 6 / Math.max(1, V3.Distance(camera.globalPosition, gate.bars))) : 0);
+            noises.drive('bier', bier.pusher ? Math.min(1, V3.Distance(wheels, bier.position) / dt / 0.9) : 0, 1, bier.position.asArray());
+            noises.drive('van', gate.waiting ? 1 : 0, 1, gate.bars.asArray());
             if (!job.has('found') && Math.hypot(player.pos.x - plot.x, player.pos.z - plot.z) < NEAR.grave + 0.6) job.tick('found');
             things.update();
             strike(dt);

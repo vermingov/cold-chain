@@ -11,13 +11,13 @@ was marked yes for a purpose, the maybes are; and a purpose nothing passed
 for has no sound at all, which the game takes to mean silence.
 
 What goes in is the same twenty seconds that were listened to, as they were
-listened to. Written out: the files, `manifest.json` ({ name: [file, ...] }),
-and `CREDITS.md`, which says whose every recording is.
+listened to, as Ogg Vorbis (ffmpeg). Written out: the files, `manifest.json`
+({ name: [file, ...] }), and `CREDITS.md`, which says whose every recording is.
 """
 
 import json
 import os
-import shutil
+import subprocess
 import sys
 
 # What each purpose on the listening page is called in the game. A blade sounds the same in skin, fat, flesh and
@@ -62,7 +62,7 @@ def main(audition, verdicts, out):
     said = {int(sound_id): v.get('verdict') for sound_id, v in json.load(open(verdicts)).items()}
     os.makedirs(out, exist_ok=True)
     for old in os.listdir(out):
-        if old.endswith('.flac'):
+        if old.endswith(('.flac', '.ogg')):
             os.remove(os.path.join(out, old))
     manifest, credits = {}, []
     for purpose, names in NAMES.items():
@@ -74,8 +74,9 @@ def main(audition, verdicts, out):
             continue
         files = []
         for n, take in enumerate(passed):
-            file = f'{names[0]}-{n + 1}.flac'
-            shutil.copyfile(os.path.join(audition, f'{take["id"]}.flac'), os.path.join(out, file))
+            file = f'{names[0]}-{n + 1}.ogg'
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', os.path.join(audition, f'{take["id"]}.flac'), '-c:a', 'libvorbis', '-q:a', '6',
+                            os.path.join(out, file)], check=True)
             files.append(file)
             credits.append(f'- `{file}`: "{take["title"]}" by {take["uploader"]}, {take["licence"]}. '
                            f'https://freesound.org/people/{take["uploader"]}/sounds/{take["id"]}/')
