@@ -5,38 +5,40 @@
 // where somebody is still up, a church tower to the north-west, and the
 // sodium lamps along Vicarage Road. None of it can be walked to; it is there
 // to be seen over the wall and through the mist, so the dark has an edge.
+//
+// The houses, their gable ends and the tower are the forge's building kit
+// (tools/forge/models/buildings.py, assets/models/buildings/kit.glb). The
+// town does not move, so every piece is put where it stands and all of a
+// material is one mesh: the whole town, near rows and far ones, the tower
+// and the lit windows, is a couple of dozen draws.
 
 import * as BABYLON from '@babylonjs/core';
-import { BOUNDS, heightAt } from '../map/plan.ts';
-import { Buf } from '../geometry.ts';
+import { glb } from '../glb.ts';
+import { heightAt } from '../map/plan.ts';
 import { makeRng } from '../rng.ts';
 
 const V3 = BABYLON.Vector3;
-// Rows of houses: where the row's front runs (a line, x0 z0 to x1 z1), which way its windows face (toward the yard),
-// how far it stands back, and how high its houses are.
+// Rows of houses: where the row's line runs (x0 z0 to x1 z1), which way it looks (toward the yard), how high its
+// houses are, and whether it is the backs of the houses that look that way.
 const ROWS = [
-    { from: [-64, 156], to: [-8, 156], faces: [0, -1], storeys: 2 },         // backs of the terraces north of the wall, past their yards
-    { from: [10, 160], to: [66, 160], faces: [0, -1], storeys: 2 },
+    { from: [-64, 156], to: [-8, 156], faces: [0, -1], storeys: 2, backs: true },   // backs of the terraces north of the wall, past their yards
+    { from: [10, 160], to: [66, 160], faces: [0, -1], storeys: 2, backs: true },
     { from: [-78, 10], to: [-78, 62], faces: [1, 0], storeys: 2 },           // west, over the lych gate's footpath
     { from: [-80, 76], to: [-80, 140], faces: [1, 0], storeys: 2 },
     { from: [84, 4], to: [84, 70], faces: [-1, 0], storeys: 2 },             // east, past the service track and its field
     { from: [88, 86], to: [88, 146], faces: [-1, 0], storeys: 2 },
     { from: [-80, -16], to: [80, -16], faces: [0, 1], storeys: 3 },          // across Vicarage Road: shops with flats over
 ];
-const HOUSE = 5.4, STOREY = 2.8, DEEP = 8, ROOF = 2.6;
+const HOUSE = 5.4, DEEP = 8;            // a house of the kit, side to side and front to back (tools/forge/models/terrace.py)
 const LIT = 0.16;           // of windows that have somebody up behind them
-const TOWER = { at: [-52, 172], wide: 6, high: 26 };
+const GAP = 0.06;           // of houses that are gone, leaving the ends of two terraces
+const BAYS = 0.4;           // of terraces with bay windows
+const TOWER = { at: [-52, 172] };
 const LAMPS = [-44, -26, 24, 44];       // x of the sodium lamps along Vicarage Road (the one at the gate is the yard's own)
-
-function painted(scene, name, colour, rough) {
-    const m = new BABYLON.PBRMaterial(name, scene);
-    m.albedoColor = BABYLON.Color3.FromArray(colour);
-    m.metallic = 0;
-    m.roughness = rough;
-    m.environmentIntensity = 0;
-    m.maxSimultaneousLights = 8;
-    return m;
-}
+// The colours the kit's front doors and shop fronts are painted (linear, as the forge's surfaces.py has them); the
+// shops' in the order of their signs in the kit's picture of them.
+const DOORS = [[0.03, 0.11, 0.065], [0.26, 0.025, 0.025], [0.025, 0.05, 0.14], [0.018, 0.018, 0.02]];
+const SHOPS = [[0.03, 0.075, 0.06], [0.16, 0.02, 0.025], [0.015, 0.015, 0.017], [0.02, 0.04, 0.11]];
 
 function glow(scene, name, colour) {
     const m = new BABYLON.StandardMaterial(name, scene);
@@ -46,87 +48,130 @@ function glow(scene, name, colour) {
     return m;
 }
 
-// Curtains with a lamp behind them, as somebody across the way sees them.
-function curtained(scene, warm) {
-    const tex = new BABYLON.DynamicTexture('window', { width: 32, height: 48 }, scene, true);
-    const ctx = tex.getContext(), light = ctx.createRadialGradient(16, 30, 1, 16, 24, 34);
-    light.addColorStop(0, warm ? '#ffc278' : '#a8c4ff');
-    light.addColorStop(1, warm ? '#5a2c0c' : '#1c2a4a');
-    ctx.fillStyle = light;
-    ctx.fillRect(0, 0, 32, 48);
-    ctx.fillStyle = 'rgba(20,10,4,0.35)';
-    for (let x = 0; x < 32; x += 5) ctx.fillRect(x, 0, 2, 48);
-    ctx.fillStyle = '#0c0805';
-    ctx.fillRect(15, 0, 2, 48);
-    ctx.fillRect(0, 23, 32, 2);
-    tex.update(true);
-    const m = new BABYLON.StandardMaterial('lit window', scene);
-    m.disableLighting = true;
-    m.emissiveTexture = tex;
-    m.diffuseColor = BABYLON.Color3.Black();
+// --- the kit ------------------------------------------------------------------------------------------------------
+
+// A piece of the kit as the game draws it: its parts (one per material) with their vertices in the piece's own
+// frame, Babylon's way round, and its lit panes the same. A piece's front looks +z; its ground is y = 0.
+export type Piece = { parts: { data: BABYLON.VertexData, material: BABYLON.Material }[], panes: BABYLON.VertexData[] };
+
+export type Kit = { pieces: Map<string, Piece>, material: (name: string) => BABYLON.Material };
+const kits = new WeakMap<BABYLON.Scene, Promise<Kit>>();
+
+// The kit's pieces by name and its materials, loaded into `scene` once.
+export function kit(scene: BABYLON.Scene, base = ''): Promise<Kit> {
+    if (!kits.has(scene)) kits.set(scene, glb(scene, 'buildings/kit', base).then(unpack));
+    return kits.get(scene);
+}
+
+function unpack(container: BABYLON.AssetContainer): Kit {
+    const all = new Map<string, Piece>();
+    for (const node of container.rootNodes[0].getChildren()) {
+        const piece: Piece = { parts: [], panes: [] };
+        // (A piece of one material is itself the mesh; one of more has a mesh for each under it.)
+        const meshes = [node, ...(node as BABYLON.TransformNode).getChildMeshes(true)] as BABYLON.Mesh[];
+        for (const mesh of meshes.filter((m) => m instanceof BABYLON.Mesh && m.getTotalVertices() > 0)) {
+            // (The file's root turns glTF's hand to Babylon's; it is put into the vertices, the winding with it.)
+            const world = mesh.computeWorldMatrix(true), data = BABYLON.VertexData.ExtractFromMesh(mesh, true, true).transform(world);
+            // A mirror (the root's turn of hand) turns every triangle round: wind them back.
+            if (world.determinant() < 0) for (let i = 0; i < data.indices.length; i += 3) [data.indices[i + 1], data.indices[i + 2]] = [data.indices[i + 2], data.indices[i + 1]];
+            if (mesh.name.includes('.pane.')) piece.panes.push(data);
+            else piece.parts.push({ data, material: mesh.material });
+        }
+        all.set(node.name, piece);
+    }
+    for (const material of container.materials) {
+        if (!(material instanceof BABYLON.PBRMaterial)) continue;
+        material.maxSimultaneousLights = 8;
+        material.environmentIntensity = 0;
+        material.backFaceCulling = true;
+        material.ambientTextureImpactOnAnalyticalLights = 0.7;     // the baked occlusion, under the lamps and the moon
+    }
+    return { pieces: all, material: (name) => container.materials.find((m) => m.name === name) };
+}
+
+// Where a piece stands: at (x, z) on the ground, its front looking `yaw` round from +z.
+export function standing(x: number, z: number, yaw: number, y = heightAt(x, z)) {
+    return BABYLON.Matrix.Compose(V3.One(), BABYLON.Quaternion.RotationYawPitchRoll(yaw, 0, 0), new V3(x, y, z));
+}
+
+// A piece's material to be painted by its vertices' colours (the doors, the shop fronts): white under them.
+function paintable(material: BABYLON.Material) {
+    const m = material.clone(`${material.name} painted`) as BABYLON.PBRMaterial;
+    m.albedoColor = BABYLON.Color3.White();
     return m;
 }
 
-// A row of houses along a line from `from` to `to`, their windows to `faces`, into the town's buffers (brick, slates)
-// and its window panes (dark, warm, cold).
-function terrace(scene, rng, town, { from: [x0, z0], to: [x1, z1], faces: [fx, fz], storeys }) {
-    const length = Math.hypot(x1 - x0, z1 - z0), along = [(x1 - x0) / length, (z1 - z0) / length], back = [-fx, -fz];
-    for (let s = 0; s + HOUSE <= length; s += HOUSE) {
-        // No two houses quite alike: some stand forward or back of the line, some are taller, some are gone.
-        if (rng() < 0.06) continue;
-        const set = (rng() - 0.5) * 1.2;
-        const ax = x0 + along[0] * s + fx * set, az = z0 + along[1] * s + fz * set, bx = ax + along[0] * HOUSE, bz = az + along[1] * HOUSE;
-        const ground = heightAt((ax + bx) / 2, (az + bz) / 2), high = storeys * STOREY + (rng() - 0.3) * 1.6;
-        // The house as a block standing back from its front, and its roof ridge along the row.
-        const corners = [[ax, az], [bx, bz], [bx + back[0] * DEEP, bz + back[1] * DEEP], [ax + back[0] * DEEP, az + back[1] * DEEP]];
-        const xs = corners.map((c) => c[0]), zs = corners.map((c) => c[1]);
-        town.brick.box([Math.min(...xs), ground - 0.5, Math.min(...zs)], [Math.max(...xs), ground + high, Math.max(...zs)], 1.2);
-        const eave = ground + high, ridge = eave + ROOF;
-        const ridgeA = [ax + back[0] * DEEP / 2, az + back[1] * DEEP / 2], ridgeB = [bx + back[0] * DEEP / 2, bz + back[1] * DEEP / 2];
-        town.slates.face([[ax, eave, az], [bx, eave, bz], [ridgeB[0], ridge, ridgeB[1]], [ridgeA[0], ridge, ridgeA[1]]], [fx, 1, fz],
-            [[0, 0], [HOUSE / 1.5, 0], [HOUSE / 1.5, 2.4], [0, 2.4]]);
-        town.slates.face([[corners[3][0], eave, corners[3][1]], [corners[2][0], eave, corners[2][1]], [ridgeB[0], ridge, ridgeB[1]], [ridgeA[0], ridge, ridgeA[1]]],
-            [-fx, 1, -fz], [[0, 0], [HOUSE / 1.5, 0], [HOUSE / 1.5, 2.4], [0, 2.4]]);
-        // The gable walls up into the roof at each end, so a house taller than its neighbour has a gable, not a hole.
-        for (const [p, q, top, toward] of [[[ax, az], corners[3], ridgeA, [-along[0], 0, -along[1]]], [[bx, bz], corners[2], ridgeB, [along[0], 0, along[1]]]]) {
-            town.brick.face([[p[0], eave, p[1]], [q[0], eave, q[1]], [top[0], ridge, top[1]]], toward, [[0, 0], [DEEP / 1.2, 0], [DEEP / 2.4, ROOF / 1.2]]);
+// Many copies of the kit's parts of one material, each moved to where its piece stands, as one mesh: the town is
+// still, so all of it of a material is one draw.
+export class Batch {
+    positions: number[] = [];
+    normals: number[] = [];
+    uvs: number[] = [];
+    uvs2: number[] = [];
+    colors: number[] = [];
+    indices: number[] = [];
+
+    // `data` moved by `at`, its texture coordinates `down` the picture, painted `colour` if it is given.
+    add(data: BABYLON.VertexData, at: BABYLON.Matrix, down = 0, colour?: number[]) {
+        const base = this.positions.length / 3, p = new V3(), n = new V3();
+        for (let i = 0; i < data.positions.length; i += 3) {
+            V3.TransformCoordinatesFromFloatsToRef(data.positions[i], data.positions[i + 1], data.positions[i + 2], at, p);
+            V3.TransformNormalFromFloatsToRef(data.normals[i], data.normals[i + 1], data.normals[i + 2], at, n);
+            this.positions.push(p.x, p.y, p.z);
+            this.normals.push(n.x, n.y, n.z);
         }
-        // A gutter along the front eave.
-        town.trim.bar([ax, eave - 0.05, az].map((c, k) => c + [fx, 0, fz][k] * 0.12), [bx, eave - 0.05, bz].map((c, k) => c + [fx, 0, fz][k] * 0.12), 0.1, 0.1, 1);
-        // A chimney stack on the party wall, most of them, with its pots.
-        if (rng() < 0.75) {
-            const cx = ridgeA[0], cz = ridgeA[1], tall = 0.9 + rng() * 0.8;
-            town.brick.box([cx - 0.4, ridge - 0.6, cz - 0.3], [cx + 0.4, ridge + tall, cz + 0.3], 1.2);
-            for (const k of [-0.18, 0.18]) town.brick.box([cx + k - 0.08, ridge + tall, cz - 0.08], [cx + k + 0.08, ridge + tall + 0.35, cz + 0.08], 1.2);
-        }
-        // A window or two on each floor, on the face toward the yard, each in a painted frame on a stone sill; and on the
-        // ground floor of a street front, a door between them under its fanlight.
-        const onFront = (w, up, out = 0): [number, number, number] => [ax + along[0] * HOUSE * w + fx * out, ground + up, az + along[1] * HOUSE * w + fz * out];
-        for (let f = 0; f < storeys; f++) {
-            for (const w of [0.24, 0.76]) {
-                const pane = BABYLON.MeshBuilder.CreatePlane('house window', { width: 1.0, height: 1.25 }, scene);
-                pane.position.set(...onFront(w, f * STOREY + 1.6, 0.03));
-                pane.rotation.y = Math.atan2(-fx, -fz);
-                const roll = rng();
-                (roll < LIT ? town.warm : roll < LIT * 1.25 ? town.cold : town.dark).push(pane);
-                const [cx, cy, cz] = onFront(w, f * STOREY + 1.6, 0.05);
-                const half = [along[0] * 0.56, along[1] * 0.56];
-                town.trim.bar([cx - half[0], cy - 0.66, cz - half[1]], [cx + half[0], cy - 0.66, cz + half[1]], 0.08, 0.1, 1);
-                town.trim.bar([cx - half[0], cy + 0.66, cz - half[1]], [cx + half[0], cy + 0.66, cz + half[1]], 0.08, 0.06, 1);
-                for (const k of [-1, 1]) town.trim.bar([cx + half[0] * k, cy - 0.66, cz + half[1] * k], [cx + half[0] * k, cy + 0.66, cz + half[1] * k], 0.07, 0.06, 1);
-                town.trim.bar([cx, cy - 0.62, cz], [cx, cy + 0.62, cz], 0.04, 0.04, 1);
-                town.sills.bar([cx - half[0] * 1.15, cy - 0.74, cz - half[1] * 1.15].map((c, k) => c + [fx, 0, fz][k] * 0.05),
-                    [cx + half[0] * 1.15, cy - 0.74, cz + half[1] * 1.15].map((c, k) => c + [fx, 0, fz][k] * 0.05), 0.08, 0.16, 1);
-            }
-        }
-        if (storeys >= 2 && rng() < 0.85) {
-            const [dx, dy, dz] = onFront(0.5, 1.0, 0.04), half = [along[0] * 0.45, along[1] * 0.45];
-            town.doors.face([[dx - half[0], dy - 1.0, dz - half[1]], [dx + half[0], dy - 1.0, dz + half[1]], [dx + half[0], dy + 1.0, dz + half[1]], [dx - half[0], dy + 1.0, dz - half[1]]],
-                [fx, 0, fz], [[0, 0], [1, 0], [1, 2], [0, 2]]);
-            town.sills.bar([dx - half[0] * 1.3, ground + 0.06, dz - half[1] * 1.3].map((c, k) => c + [fx, 0, fz][k] * 0.15),
-                [dx + half[0] * 1.3, ground + 0.06, dz + half[1] * 1.3].map((c, k) => c + [fx, 0, fz][k] * 0.15), 0.14, 0.32, 1);
-        }
+        for (let i = 0; i < data.uvs.length; i += 2) this.uvs.push(data.uvs[i], data.uvs[i + 1] + down);
+        if (data.uvs2) for (const v of data.uvs2) this.uvs2.push(v);
+        if (colour) for (let i = 0; i < data.positions.length; i += 3) this.colors.push(colour[0], colour[1], colour[2], 1);
+        for (const index of data.indices) this.indices.push(base + index);
     }
+
+    mesh(scene: BABYLON.Scene, name: string, material: BABYLON.Material) {
+        const mesh = new BABYLON.Mesh(name, scene);
+        Object.assign(new BABYLON.VertexData(), {
+            positions: this.positions, normals: this.normals, uvs: this.uvs, uvs2: this.uvs2.length ? this.uvs2 : null,
+            colors: this.colors.length ? this.colors : null, indices: this.indices,
+        }).applyToMesh(mesh);
+        mesh.material = material;
+        mesh.isPickable = false;
+        mesh.freezeWorldMatrix();
+        return mesh;
+    }
+}
+
+// --- the rows -----------------------------------------------------------------------------------------------------
+
+type Placed = { piece: string, at: BABYLON.Matrix, paint?: number };
+
+// A row of houses along a line, in terraces: here and there a house is gone and the terrace ends there, closed by a
+// gable end on each side of the gap. Near rows are the kit's houses (with bays in some terraces, shops on the road);
+// far ones are its far boxes.
+function terrace(rng, { from: [x0, z0], to: [x1, z1], faces: [fx, fz], storeys, backs = false }, far: boolean): Placed[] {
+    const length = Math.hypot(x1 - x0, z1 - z0), along = [(x1 - x0) / length, (z1 - z0) / length];
+    // The way the houses' fronts look; with their backs to the yard, the row's line is their back wall.
+    const front = backs ? [-fx, -fz] : [fx, fz], set = backs ? DEEP : 0;
+    const yaw = Math.atan2(front[0], front[1]);
+    const toRight = along[0] * -Math.cos(yaw) + along[1] * Math.sin(yaw) > 0;      // a house's right, from the street
+    const kind = far ? `house_${storeys}_far` : storeys === 3 ? 'house_shop' : rng() < BAYS ? 'house_bay' : 'house_plain';
+    const end = (side: string) => `gable_${storeys}_${side}${far ? '_far' : ''}`;
+    const placed: Placed[] = [];
+    let run: Placed[] = [];
+    const close = () => {
+        if (!run.length) return;
+        const [first, last] = toRight ? [run[0], run[run.length - 1]] : [run[run.length - 1], run[0]];
+        placed.push(...run, { piece: end('left'), at: first.at }, { piece: end('right'), at: last.at });
+        run = [];
+    };
+    for (let s = 0; s + HOUSE <= length; s += HOUSE) {
+        if (rng() < GAP) {
+            close();
+            continue;
+        }
+        const x = x0 + along[0] * (s + HOUSE / 2) + front[0] * set, z = z0 + along[1] * (s + HOUSE / 2) + front[1] * set;
+        run.push({ piece: kind, at: standing(x, z, yaw), paint: Math.floor(rng() * 4) });
+    }
+    close();
+    return placed;
 }
 
 // The town further off, all the way round: short rows facing every way, at `FAR` metres from the middle of the
@@ -145,32 +190,76 @@ function farRows(rng) {
     return rows;
 }
 
-export function buildTown(scene, surfaces) {
-    const rng = makeRng(4417), town = { brick: new Buf(), slates: new Buf(), trim: new Buf(), sills: new Buf(), doors: new Buf(), dark: [] as BABYLON.Mesh[], warm: [] as BABYLON.Mesh[], cold: [] as BABYLON.Mesh[] };
-    for (const row of [...ROWS, ...farRows(rng)]) terrace(scene, rng, town, row);
-    const { brick, slates, dark, warm, cold } = town;
-    // The church tower over the roofs to the north-west, with its louvres black.
-    const [tx, tz] = TOWER.at, tg = heightAt(tx, tz);
-    brick.box([tx - TOWER.wide / 2, tg, tz - TOWER.wide / 2], [tx + TOWER.wide / 2, tg + TOWER.high, tz + TOWER.wide / 2], 1.2);
-    slates.face([[tx - TOWER.wide / 2, tg + TOWER.high, tz - TOWER.wide / 2], [tx + TOWER.wide / 2, tg + TOWER.high, tz - TOWER.wide / 2], [tx, tg + TOWER.high + 9, tz]], [0, 0.4, -1], [[0, 0], [4, 0], [2, 6]]);
-    slates.face([[tx + TOWER.wide / 2, tg + TOWER.high, tz - TOWER.wide / 2], [tx + TOWER.wide / 2, tg + TOWER.high, tz + TOWER.wide / 2], [tx, tg + TOWER.high + 9, tz]], [1, 0.4, 0], [[0, 0], [4, 0], [2, 6]]);
-    slates.face([[tx - TOWER.wide / 2, tg + TOWER.high, tz + TOWER.wide / 2], [tx - TOWER.wide / 2, tg + TOWER.high, tz - TOWER.wide / 2], [tx, tg + TOWER.high + 9, tz]], [-1, 0.4, 0], [[0, 0], [4, 0], [2, 6]]);
-
-    const meshes = [
-        brick.toMesh('town brick', scene, surfaces.material('brick', { tint: [0.55, 0.5, 0.47] })),
-        slates.toMesh('town roofs', scene, surfaces.material('slates')),
-        town.trim.toMesh('town paintwork', scene, painted(scene, 'window frames', [0.5, 0.49, 0.45], 0.45)),
-        town.sills.toMesh('town sills', scene, surfaces.material('limestone')),
-        town.doors.toMesh('town doors', scene, painted(scene, 'front doors', [0.05, 0.09, 0.07], 0.35)),
-    ];
-    const unlit = glow(scene, 'dark window', [0.006, 0.007, 0.009]), home = curtained(scene, true), telly = curtained(scene, false);
-    // Every window of a kind as one mesh: there are a thousand and more of them.
-    for (const [panes, material] of [[dark, unlit], [warm, home], [cold, telly]] as [BABYLON.Mesh[], BABYLON.Material][]) {
-        if (!panes.length) continue;
-        const merged = BABYLON.Mesh.MergeMeshes(panes, true, true);
-        merged.material = material;
-        meshes.push(merged);
+// Every piece where it stands, drawn: the houses' doors and shop fronts in their colours, the shops' signs each on
+// its own row of the kit's picture of them, all of a material as one mesh; the lit windows (a share of all of them,
+// some lit by a television) as two meshes more, the dark ones left to the kit's glass.
+async function raise(scene: BABYLON.Scene, placed: Placed[], rng) {
+    const { pieces, material } = await kit(scene);
+    const batches = new Map<BABYLON.Material, Batch>(), paints = new Map<string, BABYLON.Material>();
+    const batch = (m: BABYLON.Material) => batches.get(m) ?? batches.set(m, new Batch()).get(m);
+    // (Every door is one material, and every shop front, whatever its colour: the colour is in the vertices.)
+    const painted = (m: BABYLON.Material) => {
+        const kind = m.name.startsWith('paint_shop') ? 'shop' : 'door';
+        if (!paints.has(kind)) paints.set(kind, paintable(m));
+        return paints.get(kind);
+    };
+    const warm = new Batch(), cold = new Batch();
+    // The tower's door looks south, to the yard.
+    for (const { piece: name, at, paint } of [...placed, { piece: 'church_tower', at: standing(TOWER.at[0], TOWER.at[1], Math.PI) }]) {
+        const piece = pieces.get(name);
+        for (const { data, material: m } of piece.parts) {
+            // (The signs are a column of four in their picture; the kit's shop has the first.)
+            if (m.name === 'shop_sign') batch(m).add(data, at, paint / 4);
+            else if (/^paint_(door|shop)/.test(m.name)) batch(painted(m)).add(data, at, 0, (m.name.startsWith('paint_shop') ? SHOPS : DOORS)[paint]);
+            else batch(m).add(data, at);
+        }
+        for (const pane of piece.panes) {
+            const roll = rng();
+            if (roll < LIT) warm.add(pane, at);
+            else if (roll < LIT * 1.25 && curtained(pane)) cold.add(pane, at);
+        }
     }
+    const lit = material('window_lit');
+    return [...[...batches].map(([m, b]) => b.mesh(scene, `town ${m.name}`, m)),
+        warm.mesh(scene, 'town windows warm', lit), cold.mesh(scene, 'town windows cold', telly(scene, lit))];
+}
+
+// Whether a lit pane shows curtains (a room behind it), not a shop or a hall: the curtained windows are the bottom
+// half of the kit's picture of them, which glTF counts from the top.
+function curtained(pane: BABYLON.VertexData) {
+    return pane.uvs[1] > 0.5;
+}
+
+// The same vertices with their texture coordinates moved down the picture by `by`.
+function shifted(data: BABYLON.VertexData, by: number) {
+    return Object.assign(new BABYLON.VertexData(), {
+        positions: data.positions, normals: data.normals, indices: data.indices, uvs: Array.from(data.uvs, (v, i) => (i % 2 ? v + by : v)),
+    });
+}
+
+// The bluish flicker of a television through curtains: the lit windows' material, its picture turned cold.
+function telly(scene, warm: BABYLON.Material) {
+    const tex = new BABYLON.DynamicTexture('telly', { width: 32, height: 48 }, scene, true);
+    const ctx = tex.getContext(), light = ctx.createRadialGradient(16, 30, 1, 16, 24, 34);
+    light.addColorStop(0, '#a8c4ff');
+    light.addColorStop(1, '#1c2a4a');
+    ctx.fillStyle = light;
+    ctx.fillRect(0, 0, 32, 48);
+    ctx.fillStyle = 'rgba(20,10,4,0.35)';
+    for (let x = 0; x < 32; x += 5) ctx.fillRect(x, 0, 2, 48);
+    tex.update(true);
+    // (The panes' coordinates are a quarter of the kit's picture of windows: the picture here covers each.)
+    tex.uScale = tex.vScale = 2;
+    const m = warm.clone('telly') as BABYLON.PBRMaterial;
+    m.emissiveTexture = tex;
+    return m;
+}
+
+export function buildTown(scene, _surfaces) {
+    const rng = makeRng(4417);
+    const rows = [...ROWS.map((row) => ({ row, far: false })), ...farRows(rng).map((row) => ({ row, far: true }))];
+    const placed = rows.flatMap(({ row, far }) => terrace(rng, row, far));
+    const meshes: BABYLON.Mesh[] = [];
 
     // Lamps along Vicarage Road: a sodium head on its post, and the pool it throws on the road under it.
     const sodium = glow(scene, 'sodium head', [3.2, 1.6, 0.45]), post = glow(scene, 'lamp post', [0.01, 0.01, 0.01]);
@@ -192,7 +281,9 @@ export function buildTown(scene, surfaces) {
         mesh.isPickable = false;
         mesh.freezeWorldMatrix();
     }
-    return { meshes };
+    // The houses come when the kit has loaded; `meshes` is the town's from then on.
+    const ready = raise(scene, placed, rng).then((made) => { meshes.push(...made); });
+    return { meshes, ready };
 }
 
 // The orange pool of a sodium lamp on wet tarmac, drawn as light laid on the road (added, never darkening it).

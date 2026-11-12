@@ -11,6 +11,7 @@ hall light through a fanlight), one in each quarter, shown by emission.
 """
 
 import os
+import subprocess
 
 import bpy
 import numpy as np
@@ -20,17 +21,19 @@ PREPARED = os.path.expanduser('~/.cache/cold-chain/forge/buildings/textures')
 
 # name: (Poly Haven id, resolution fetched, size shipped, metres to a repeat)
 SETS = {
-    'brick': ('red_brick_03', '2k', 2048, 1.0),
+    'brick': ('red_brick_03', '2k', 1024, 1.0),
     'slate': ('roof_slates_03', '2k', 1024, 3.0),
     'stone': ('plaster_grey_04', '1k', 1024, 1.5),
     'ashlar': ('medieval_blocks_03', '2k', 1024, 2.0),
     'paint': ('painted_plaster_wall', '1k', 1024, 1.0),
 }
 
+ORM = 512
+
 # name: (set or None, linear colour, roughness multiplier, metallic)
 LOOKS = {
     'brick': ('brick', (0.78, 0.72, 0.7), 1.0, 0.0),
-    'slate': ('slate', (0.8, 0.82, 0.86), 0.9, 0.0),
+    'slate': ('slate', (0.42, 0.44, 0.5), 0.85, 0.0),
     'ridge': ('stone', (0.16, 0.13, 0.13), 0.9, 0.0),
     'stone': ('stone', (0.74, 0.66, 0.54), 1.0, 0.0),
     'ashlar': ('ashlar', (0.62, 0.6, 0.56), 1.0, 0.0),
@@ -41,12 +44,18 @@ LOOKS = {
     'paint_door_blue': ('paint', (0.025, 0.05, 0.14), 0.55, 0.0),
     'paint_door_black': ('paint', (0.018, 0.018, 0.02), 0.5, 0.0),
     'paint_shop': ('paint', (0.03, 0.075, 0.06), 0.55, 0.0),
+    'paint_shop_maroon': ('paint', (0.16, 0.02, 0.025), 0.55, 0.0),
+    'paint_shop_black': ('paint', (0.015, 0.015, 0.017), 0.5, 0.0),
+    'paint_shop_blue': ('paint', (0.02, 0.04, 0.11), 0.55, 0.0),
     'oak': ('paint', (0.075, 0.045, 0.028), 0.85, 0.0),
     'iron': ('paint', (0.022, 0.022, 0.024), 0.6, 0.0),
     'brass': (None, (0.55, 0.4, 0.17), 0.35, 1.0),
     'glass': (None, (0.012, 0.014, 0.016), 0.04, 0.0),
 }
 LIT = 'window_lit'
+CLOCK = 'clock_face'
+SIGN = 'shop_sign'
+SHOPS = ('paint_shop', 'paint_shop_maroon', 'paint_shop_black', 'paint_shop_blue')    # in the signs' row order
 CELLS = {'curtains': 0, 'parlour': 1, 'shop': 2, 'hall': 3}      # quarters of the lit picture
 
 
@@ -89,6 +98,9 @@ def _prepare(set_name):
     occlusion = _pixels(arm)[:, :, :1]
     _save(f'{set_name}_colour', _pixels(diffuse)[:, :, :3] * (1 - (1 - occlusion) * 2 / 3), 'sRGB')
     _save(f'{set_name}_normal', _pixels(normal)[:, :, :3], 'Non-Color')
+    # Never the size of a model's occlusion picture (2048), or the exporter packs the two into
+    # one image read through two sets of UVs.
+    arm.scale(ORM, ORM)
     _save(f'{set_name}_orm', _pixels(arm)[:, :, :3], 'Non-Color')
     for image in (diffuse, arm, normal):
         bpy.data.images.remove(image)
@@ -140,6 +152,27 @@ def _lit_picture():
     return path
 
 
+def _clock_picture():
+    """A church clock's dial, lit from behind: opal glass, a black chapter ring, hour bars and minute ticks."""
+    path = os.path.join(PREPARED, 'clock_face.png')
+    if os.path.exists(path):
+        return path
+    os.makedirs(PREPARED, exist_ok=True)
+    n = 512
+    y, x = (np.mgrid[0:n, 0:n].astype(np.float32) + 0.5) / n - 0.5
+    r, angle = np.hypot(x, y), np.arctan2(y, x)
+    dial = np.ones((n, n, 3), np.float32) * np.array([0.82, 0.8, 0.7], np.float32)
+    dial *= (1 - 0.25 * (r / 0.5) ** 2)[..., None]
+    black = (r > 0.47) | (np.abs(r - 0.445) < 0.004) | (np.abs(r - 0.36) < 0.003)
+    minute = np.abs(((angle / (2 * np.pi) * 60) + 0.5) % 1 - 0.5) * 2 * np.pi * r / 60 < 0.0035
+    hour = np.abs(((angle / (2 * np.pi) * 12) + 0.5) % 1 - 0.5) * 2 * np.pi * r / 12 < 0.012
+    black |= minute & (r > 0.41) & (r < 0.445)
+    black |= hour & (r > 0.33) & (r < 0.445)
+    dial[black] = 0.02
+    _save('clock_face', dial, 'sRGB')
+    return path
+
+
 def cell_uv(cell, u, v):
     """Where (u, v) in 0..1 over a lit pane falls in the picture's quarter `cell`."""
     c = CELLS[cell]
@@ -158,6 +191,11 @@ def _gltf_output():
     return group
 
 
+def socket(node, identifier):
+    """A socket by its identifier: a Mix node's inputs share their names ('A', 'B', 'Factor') between types."""
+    return next(s for s in list(node.inputs) + list(node.outputs) if s.identifier == identifier)
+
+
 def _image(path, colour):
     image = bpy.data.images.load(path, check_existing=True)
     image.colorspace_settings.name = colour
@@ -172,7 +210,8 @@ class Materials(dict):
         self.occlusion = occlusion
 
     def __missing__(self, name):
-        material = _lit_material() if name == LIT else self._make(name)
+        special = {LIT: _lit_material, CLOCK: _clock_material, SIGN: _sign_material}
+        material = special.get(name, lambda: self._make(name))()
         self[name] = material
         return material
 
@@ -191,10 +230,10 @@ class Materials(dict):
             base.image = _image(paths['colour'], 'sRGB')
             tint = nodes.new('ShaderNodeMix')
             tint.data_type, tint.blend_type = 'RGBA', 'MULTIPLY'
-            tint.inputs['Factor_Float'].default_value = 1.0
-            tint.inputs['B_Color'].default_value = (*colour, 1)
-            links.new(base.outputs['Color'], tint.inputs['A_Color'])
-            links.new(tint.outputs['Result'], bsdf.inputs['Base Color'])
+            socket(tint, 'Factor_Float').default_value = 1.0
+            socket(tint, 'B_Color').default_value = (*colour, 1)
+            links.new(base.outputs['Color'], socket(tint, 'A_Color'))
+            links.new(socket(tint, 'Result_Color'), bsdf.inputs['Base Color'])
             orm = nodes.new('ShaderNodeTexImage')
             orm.image = _image(paths['orm'], 'Non-Color')
             split = nodes.new('ShaderNodeSeparateColor')
@@ -239,6 +278,45 @@ def _lit_material():
     picture.image = _image(_lit_picture(), 'sRGB')
     links.new(picture.outputs['Color'], bsdf.inputs['Emission Color'])
     bsdf.inputs['Emission Strength'].default_value = 1.0
+    return material
+
+
+def _clock_material():
+    material = bpy.data.materials.new(CLOCK)
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    bsdf = nodes['Principled BSDF']
+    picture = nodes.new('ShaderNodeTexImage')
+    picture.image = _image(_clock_picture(), 'sRGB')
+    links.new(picture.outputs['Color'], bsdf.inputs['Base Color'])
+    links.new(picture.outputs['Color'], bsdf.inputs['Emission Color'])
+    bsdf.inputs['Emission Strength'].default_value = 0.35
+    bsdf.inputs['Roughness'].default_value = 0.2
+    return material
+
+
+def _sign_picture():
+    """The four shops' fascias (signs.py, with the system's Python), each on its board's paint."""
+    path = os.path.join(PREPARED, 'shop_signs.png')
+    if not os.path.exists(path):
+        os.makedirs(PREPARED, exist_ok=True)
+        boards = [','.join(f'{(c * 0.8) ** (1 / 2.2):.3f}' for c in LOOKS[paint][1]) for paint in SHOPS]
+        subprocess.run(['python3', os.path.join(os.path.dirname(__file__), 'signs.py'), path, *boards], check=True)
+    return path
+
+
+def sign_uv(row, u, v):
+    """Where (u, v) over a fascia falls in the signs' picture, row 0 at the top."""
+    return (u, 1 - (row + 1) / 4 + v / 4)
+
+
+def _sign_material():
+    material = bpy.data.materials.new(SIGN)
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    bsdf = nodes['Principled BSDF']
+    picture = nodes.new('ShaderNodeTexImage')
+    picture.image = _image(_sign_picture(), 'sRGB')
+    links.new(picture.outputs['Color'], bsdf.inputs['Base Color'])
+    bsdf.inputs['Roughness'].default_value = 0.4
     return material
 
 

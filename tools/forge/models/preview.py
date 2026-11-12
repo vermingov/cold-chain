@@ -1,157 +1,126 @@
-"""Look at the grave models as the game will: imported back from their GLBs and rendered at night, in Cycles.
-
-    blender -b --factory-startup --python-exit-code 1 -P tools/forge/models/preview.py -- <kind ...> [--samples N]
-
-Each assets/models/graves/<kind>.glb is imported and checked (its shapes' size above the ground against their `size`,
-how far they go below it, which way their `_face` material looks, their triangles), then stood in a row on grass
-and rendered under a cool moon with a warm torch from beside the eye: a three-quarter view of the row and a close
-one of the first shape, to ~/.cache/cold-chain/forge-previews/graves/<kind>.png and <kind>_close.png.
+"""Night renders of the models as the game will have them: read back from their GLB files, on a wet road and a
+flagged pavement, under a low cool moon, with a sodium street lamp, and some of the windows lit.
 """
 
 import math
-import sys
-from pathlib import Path
+import os
+import random
 
 import bpy
-import mathutils
+from mathutils import Vector
 
-HERE = Path(__file__).resolve().parents[3]
-MODELS = HERE / 'assets' / 'models' / 'graves'
-GRASS = HERE / 'assets' / 'surfaces' / 'grass'
-OUT = Path.home() / '.cache' / 'cold-chain' / 'forge-previews' / 'graves'
+import baking
+import surfaces
 
-args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-SAMPLES = int(args[args.index('--samples') + 1]) if '--samples' in args else 64
-KINDS = [a for i, a in enumerate(args) if not a.startswith('--') and (i == 0 or args[i - 1] != '--samples')]
+SURFACES = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'assets', 'surfaces')
 
 
-def fresh_scene():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    scene = bpy.context.scene
-    scene.render.engine = 'CYCLES'
-    scene.cycles.device = 'CPU'
-    scene.render.threads_mode = 'FIXED'
-    scene.render.threads = 6
-    scene.cycles.samples = SAMPLES
-    scene.cycles.use_denoising = True
-    scene.view_settings.view_transform = 'AgX'
-    scene.view_settings.exposure = 1.6
-    world = bpy.data.worlds.new('night')
-    world.node_tree.nodes['Background'].inputs['Color'].default_value = (0.003, 0.0045, 0.009, 1)
-    scene.world = world
-    return scene
-
-
-def check(objects):
-    """Print what came back: per shape its size, depth below ground, face direction and triangles."""
-    for obj in objects:
-        corners = [obj.matrix_world @ mathutils.Vector(c) for c in obj.bound_box]
-        lo = [min(c[i] for c in corners) for i in range(3)]
-        hi = [max(c[i] for c in corners) for i in range(3)]
-        mesh = obj.data
-        mesh.calc_loop_triangles()
-        face = mathutils.Vector()
-        mats = [m.name for m in mesh.materials]
-        for poly in mesh.polygons:
-            if mats[poly.material_index].endswith('_face'):
-                face += poly.normal * poly.area
-        size = obj.get('size')
-        print(f'  {obj.name}: x {lo[0]:+.3f}..{hi[0]:+.3f}  y {lo[1]:+.3f}..{hi[1]:+.3f}  z {lo[2]:+.3f}..{hi[2]:+.3f}'
-              f'  (size {list(size) if size else None})  tris {len(mesh.loop_triangles)}  materials {mats}'
-              f'  face looks {tuple(round(v, 2) for v in face.normalized()) if face.length else None}  panel {list(obj["panel"]) if "panel" in obj else None}')
-
-
-def ground():
-    bpy.ops.mesh.primitive_plane_add(size=40)
-    plane = bpy.context.active_object
-    mat = bpy.data.materials.new('grass')
-    tree = mat.node_tree
-    bsdf = tree.nodes['Principled BSDF']
-    coord = tree.nodes.new('ShaderNodeTexCoord')
-    mapping = tree.nodes.new('ShaderNodeMapping')
-    mapping.inputs['Scale'].default_value = (1 / 2.5, 1 / 2.5, 1)
-    tree.links.new(coord.outputs['Object'], mapping.inputs[0])
-    for file, socket, space in (('albedo.jpg', 'Base Color', 'sRGB'), ('rough.jpg', 'Roughness', 'Non-Color'), ('normal.jpg', None, 'Non-Color')):
-        tex = tree.nodes.new('ShaderNodeTexImage')
-        tex.image = bpy.data.images.load(str(GRASS / file))
-        tex.image.colorspace_settings.name = space
-        tree.links.new(mapping.outputs[0], tex.inputs[0])
-        if socket:
-            tree.links.new(tex.outputs[0], bsdf.inputs[socket])
+def _textured(name, folder, tile, tint=(1, 1, 1)):
+    material = bpy.data.materials.new(name)
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    bsdf = nodes['Principled BSDF']
+    coords = nodes.new('ShaderNodeTexCoord')
+    scale = nodes.new('ShaderNodeVectorMath')
+    scale.operation = 'SCALE'
+    scale.inputs['Scale'].default_value = 1 / tile
+    links.new(coords.outputs['Object'], scale.inputs[0])
+    for kind, socket in (('albedo', 'Base Color'), ('rough', 'Roughness'), ('normal', None)):
+        node = nodes.new('ShaderNodeTexImage')
+        node.image = bpy.data.images.load(os.path.join(SURFACES, folder, kind + '.jpg'), check_existing=True)
+        links.new(scale.outputs['Vector'], node.inputs['Vector'])
+        if kind == 'albedo':
+            mix = nodes.new('ShaderNodeMix')
+            mix.data_type, mix.blend_type = 'RGBA', 'MULTIPLY'
+            surfaces.socket(mix, 'Factor_Float').default_value = 1
+            surfaces.socket(mix, 'B_Color').default_value = (*tint, 1)
+            links.new(node.outputs['Color'], surfaces.socket(mix, 'A_Color'))
+            links.new(surfaces.socket(mix, 'Result_Color'), bsdf.inputs['Base Color'])
+        elif kind == 'rough':
+            node.image.colorspace_settings.name = 'Non-Color'
+            wet = nodes.new('ShaderNodeMath')
+            wet.operation = 'MULTIPLY'
+            wet.inputs[1].default_value = 0.55
+            links.new(node.outputs['Color'], wet.inputs[0])
+            links.new(wet.outputs['Value'], bsdf.inputs['Roughness'])
         else:
-            nmap = tree.nodes.new('ShaderNodeNormalMap')
-            tree.links.new(tex.outputs[0], nmap.inputs['Color'])
-            tree.links.new(nmap.outputs[0], bsdf.inputs['Normal'])
-    plane.data.materials.append(mat)
+            node.image.colorspace_settings.name = 'Non-Color'
+            bump = nodes.new('ShaderNodeNormalMap')
+            links.new(node.outputs['Color'], bump.inputs['Color'])
+            links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
+    return material
 
 
-def aim(obj, target):
-    obj.rotation_euler = (mathutils.Vector(target) - obj.location).to_track_quat('-Z', 'Y').to_euler()
+def _slab(name, lo, hi, material):
+    bpy.ops.mesh.primitive_cube_add(location=[(a + b) / 2 for a, b in zip(lo, hi)])
+    obj = bpy.context.object
+    obj.name = name
+    obj.scale = [(b - a) / 2 for a, b in zip(lo, hi)]
+    bpy.ops.object.transform_apply(scale=True)
+    obj.data.materials.append(material)
+    return obj
 
 
-def lights():
-    moon = bpy.data.objects.new('moon', bpy.data.lights.new('moon', 'SUN'))
-    moon.data.energy = 0.35
-    moon.data.color = (0.62, 0.72, 1.0)
-    moon.data.angle = math.radians(1.0)
-    moon.rotation_euler = (math.radians(58), 0, math.radians(-150))
-    bpy.context.scene.collection.objects.link(moon)
+def street(front_y=0.0, length=60.0, kerb=-2.2, x=0.0):
+    """A flagged pavement in front of a row whose fronts are at `front_y`, a kerb, and a wet tarmac road, `length`
+    long round `x`."""
+    flags = _textured('pavement', 'pavement', 2.0, (0.55, 0.55, 0.55))
+    road = _textured('road', 'tarmac', 3.0, (0.35, 0.35, 0.37))
+    _slab('pavement', (x - length / 2, front_y + kerb, -0.3), (x + length / 2, front_y + 12, 0.0), flags)
+    _slab('road', (x - length / 2, front_y - 12, -0.42), (x + length / 2, front_y + kerb, -0.12), road)
 
 
-def torch(at, target, energy):
-    lamp = bpy.data.objects.new('torch', bpy.data.lights.new('torch', 'SPOT'))
-    lamp.data.energy = energy
-    lamp.data.color = (1.0, 0.72, 0.42)
-    lamp.data.spot_size = math.radians(55)
-    lamp.data.spot_blend = 0.6
-    lamp.data.shadow_soft_size = 0.03
-    lamp.location = at
-    aim(lamp, target)
-    bpy.context.scene.collection.objects.link(lamp)
-    return lamp
+def night(lamps=((-6.0, -2.6),), moon=(0.95, 0.0, 0.75)):
+    """The sky, a moon low in it, and sodium lamps at (x, y) on 5.5 m posts."""
+    scene = bpy.context.scene
+    scene.world = scene.world or bpy.data.worlds.new('night')
+    background = scene.world.node_tree.nodes['Background']
+    background.inputs['Color'].default_value = (0.006, 0.009, 0.018, 1)
+    background.inputs['Strength'].default_value = 1.0
+    sun = bpy.data.lights.new('moon', 'SUN')
+    sun.energy = 0.3
+    sun.color = (0.62, 0.72, 1.0)
+    sun.angle = math.radians(1.2)
+    obj = bpy.data.objects.new('moon', sun)
+    obj.rotation_euler = moon
+    scene.collection.objects.link(obj)
+    post = bpy.data.materials.new('lamp post')
+    post.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.02, 0.025, 0.02, 1)
+    for x, y in lamps:
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.07, depth=5.6, location=(x, y, 2.8))
+        bpy.context.object.data.materials.append(post)
+        light = bpy.data.lights.new('sodium', 'POINT')
+        light.energy = 900
+        light.color = (1.0, 0.5, 0.16)
+        light.shadow_soft_size = 0.12
+        lamp = bpy.data.objects.new('sodium', light)
+        lamp.location = (x, y + 0.6, 5.4)
+        scene.collection.objects.link(lamp)
 
 
-def render(scene, eye, target, lens, energy, path, size):
-    cam = bpy.data.objects.new('eye', bpy.data.cameras.new('eye'))
-    cam.data.lens = lens
-    cam.location = eye
-    aim(cam, target)
-    scene.collection.objects.link(cam)
-    scene.camera = cam
-    lamp = torch(mathutils.Vector(eye) + mathutils.Vector((0.25, 0.05, -0.25)), target, energy)
+def light_some(panes, share=0.3, seed=3):
+    """Hide all but `share` of the lit panes, as the game does."""
+    rng = random.Random(seed)
+    for obj in panes:
+        lit = rng.random() < share
+        obj.hide_render = not lit
+
+
+def render(path, eye, look, lens=32, samples=64, size=(1280, 720)):
+    scene = bpy.context.scene
+    baking.cycles(samples)
+    scene.cycles.use_denoising = True
     scene.render.resolution_x, scene.render.resolution_y = size
-    scene.render.filepath = str(path)
+    scene.view_settings.view_transform = 'AgX'
+    scene.view_settings.exposure = 1.2
+    camera = bpy.data.cameras.new('eye')
+    camera.lens = lens
+    camera.clip_end = 1000
+    obj = bpy.data.objects.new('eye', camera)
+    scene.collection.objects.link(obj)
+    obj.location = eye
+    obj.rotation_euler = (Vector(look) - Vector(eye)).to_track_quat('-Z', 'Y').to_euler()
+    scene.camera = obj
+    scene.render.filepath = path
     bpy.ops.render.render(write_still=True)
-    bpy.data.objects.remove(cam)
-    bpy.data.objects.remove(lamp)
-    print('rendered', path)
-
-
-def preview(kind):
-    scene = fresh_scene()
-    bpy.ops.import_scene.gltf(filepath=str(MODELS / f'{kind}.glb'))
-    shapes = sorted((o for o in scene.objects if o.type == 'MESH'), key=lambda o: o.name)
-    print(kind)
-    check(shapes)
-    ground()
-    lights()
-    x, tallest = 0.0, 0.0
-    for obj in shapes:
-        lo = min((obj.matrix_world @ mathutils.Vector(c)).x for c in obj.bound_box)
-        hi = max((obj.matrix_world @ mathutils.Vector(c)).x for c in obj.bound_box)
-        obj.location.x = x - lo
-        x += hi - lo + 0.45
-        tallest = max(tallest, obj.dimensions.z)
-    middle = (x - 0.45) / 2
-    OUT.mkdir(parents=True, exist_ok=True)
-    distance = max(2.2, x * 0.9 + tallest)
-    render(scene, (middle - distance * 0.55, -distance * 0.85, 1.55), (middle, 0, tallest * 0.42), 40, 120,
-           OUT / f'{kind}.png', (1280, 720))
-    first = shapes[0]
-    cx = first.location.x
-    top = first.dimensions.z - 0.15
-    render(scene, (cx - 0.35, -0.95, min(1.5, top * 0.75 + 0.3)), (cx, 0, top * 0.6), 35, 25, OUT / f'{kind}_close.png', (1024, 768))
-
-
-for kind in KINDS:
-    preview(kind)
+    bpy.data.objects.remove(obj)
+    print('preview', path)

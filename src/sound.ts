@@ -144,6 +144,7 @@ export class Sound {
     // Where the ears are, and which way they face: a camera, once a frame.
     listen(camera) {
         const { listener, currentTime: now } = this.context, at = camera.globalPosition, ahead = camera.getDirection(FORWARD), up = camera.getDirection(UP);
+        if (!Number.isFinite(at.x + at.y + at.z)) return;
         // (Babylon's world is left-handed and Web Audio's right-handed: z is turned round.)
         for (const [param, value] of [[listener.positionX, at.x], [listener.positionY, at.y], [listener.positionZ, -at.z],
             [listener.forwardX, ahead.x], [listener.forwardY, ahead.y], [listener.forwardZ, -ahead.z],

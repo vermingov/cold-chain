@@ -15,7 +15,7 @@ import math
 
 import bpy
 
-from shape import Frame, Shape
+from shape import Frame
 import surfaces
 
 FRAME = 0.065       # the face of a sash box frame
@@ -36,6 +36,35 @@ def holed(shape, frame, xs, ys, holes, material, d=0.0):
                 continue
             shape.face([frame.at(x0, y0, d), frame.at(x1, y0, d), frame.at(x1, y1, d), frame.at(x0, y1, d)],
                        material, frame.out)
+
+
+def gable_wall(shape, frame, half, eaves, apex, material, hole=None):
+    """The triangle of wall from the eaves (x from -half to half) up to the apex, less a rectangular `hole`
+    (x0, x1, y0, y1) inside it."""
+    if hole is None:
+        shape.face([frame.at(-half, eaves), frame.at(half, eaves), frame.at(0, apex)], material, frame.out)
+        return
+    x0, x1, y0, y1 = hole
+    edge = lambda y: half * (apex - y) / (apex - eaves)
+    pieces = [[(-half, eaves), (half, eaves), (edge(y0), y0), (-edge(y0), y0)],
+              [(-edge(y0), y0), (x0, y0), (x0, y1), (-edge(y1), y1)],
+              [(x1, y0), (edge(y0), y0), (edge(y1), y1), (x1, y1)],
+              [(-edge(y1), y1), (edge(y1), y1), (0, apex)]]
+    for piece in pieces:
+        shape.face([frame.at(x, y) for x, y in piece], material, frame.out)
+
+
+def course(shape, faces, y0, y1, proud, material, gaps=None):
+    """A course round a building from y0 to y1, `proud` of its walls. `faces` is [(frame, half its length, whether
+    it takes the corners)]: those that do run on past their ends by `proud`, the others stop short at them, so no two
+    faces lie in one plane. `gaps` {face index: [(x0, x1)]} are left open, for doors."""
+    for i, (frame, half, corners) in enumerate(faces):
+        reach = half + proud if corners else half
+        start = -reach
+        for x0, x1 in sorted((gaps or {}).get(i, [])) + [(reach, reach)]:
+            if x0 > start:
+                shape.block(frame, (start, x0), (y0, y1), (0, proud), material, skip=('back',))
+            start = x1
 
 
 def ring(shape, frame, outer, d_outer, inner, d_inner, material):
@@ -59,13 +88,13 @@ def pane(panes, points, frame, cell):
     panes.append(([frame.at(*p) for p in points], uvs))
 
 
-def build_panes(name, panes, materials, parent):
-    """Each lit pane as an object of its own, a child of the building, named `<building>.pane.<n>`."""
+def build_panes(name, panes, materials, parent, material=surfaces.LIT, label='pane'):
+    """Each lit pane as an object of its own, a child of the building, named `<building>.<label>.<n>`."""
     objects = []
     for n, (points, uvs) in enumerate(panes):
-        mesh = bpy.data.meshes.new(f'{name}.pane.{n}')
+        mesh = bpy.data.meshes.new(f'{name}.{label}.{n}')
         mesh.from_pydata([tuple(p) for p in points], [], [tuple(range(len(points)))])
-        mesh.materials.append(materials[surfaces.LIT])
+        mesh.materials.append(materials[material])
         layer = mesh.uv_layers.new(name='uv')
         for loop, uv in zip(mesh.polygons[0].loop_indices, uvs):
             layer.data[loop].uv = uv
@@ -221,8 +250,9 @@ def front_door(shape, frame, panes, door, wall='brick', width=1.0, height=2.45, 
     ground and how far it comes out. Returns the hole to leave in the wall."""
     w2, back = width / 2, -reveal
     jamb, case = 0.07, (back - 0.12, back)
-    reveals(shape, frame, width, 0.0, height, reveal, wall, 'stone' if head else wall,
-            LINTEL['back'] if head else 0.0)
+    if reveal > 0:
+        reveals(shape, frame, width, 0.0, height, reveal, wall, 'stone' if head else wall,
+                LINTEL['back'] if head else 0.0)
     if head:
         lintel(shape, frame, width, height)
     shape.block(frame, (-w2, -w2 + jamb), (0, height), case, 'paint_frame', skip=('back', 'left'))

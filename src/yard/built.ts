@@ -1,17 +1,17 @@
 // What was built: the wall round the place, its gates, the chapel of rest,
 // the sexton's lodge, the store.
 //
-// All of it from the plan, in scanned stone, brick and slate, into one
-// buffer per material. A building here is a box under a roof and then
-// everything a mason does to stop it looking like one: coped gables,
-// buttresses, dressed stone round every opening, quoins, a bellcote,
-// gutters and the pipes down from them. These are the outsides only: what
-// is inside the chapel is its own scene, and from the yard a window is a
-// dark pane and a door is shut.
+// All of it from the plan. The wall, its piers and gates, the lych gate and
+// the store are built here in scanned stone, brick and slate, into one
+// buffer per material; the chapel of rest and the lodge are the forge's
+// models (the building kit), with real openings, doors and windows. These
+// are the outsides only: what is inside the chapel is its own scene, and
+// from the yard a window is dark glass and a door is shut.
 
+import * as BABYLON from '@babylonjs/core';
 import { Buf } from '../geometry.ts';
 import { BOUNDS, BUILDINGS, GATES, heightAt } from '../map/plan.ts';
-import { OUTLINES } from './outlines.ts';
+import { Batch, kit, standing } from './town.ts';
 
 const WALL = { height: 2.15, thick: 0.46, run: 4 };
 const PIER = { size: 0.78, height: 3.0 };
@@ -28,11 +28,10 @@ class Yard {
 }
 
 // Metres to a repeat: each scan's own size, or near it.
-const TILE = { wall: 2.0, ashlar: 2.0, brick: 1.0, slates: 1.5, flags: 3.0, post: 2.0, coffin: 2.0, limestone: 1.5, iron: 1.0, glass: 1 };
+const TILE = { wall: 2.0, ashlar: 2.0, slates: 1.5, flags: 3.0, post: 2.0, limestone: 1.5, iron: 1.0 };
 // How a surface is asked for, where it is not wanted as it came: cast iron
-// is painted black under its rust, and a door that has stood in the weather
-// has lost the red of new wood.
-const LOOKS = { iron: { tint: [0.3, 0.27, 0.26] }, coffin: { tint: [0.42, 0.36, 0.33] } };
+// is painted black under its rust.
+const LOOKS = { iron: { tint: [0.3, 0.27, 0.26] } };
 
 // --- the wall ----------------------------------------------------------------
 
@@ -133,207 +132,73 @@ function verges(yard, roof, surface, { out, wide, deep, lift }) {
     }
 }
 
-// A cast-iron gutter along each eave, and a pipe down from it at each of
-// `drops` (distances along the ridge line from the middle of the roof).
-function gutters(yard, roof, ground, drops) {
-    const iron = yard.of('iron'), reach = roof.long + roof.verge;
-    for (const s of [1, -1]) {
-        const out = s * (roof.half + roof.eave + 0.05), y = roof.eaves - roof.eave * roof.pitch - 0.06;
-        iron.bar(roof.point(out, -reach, y), roof.point(out, reach, y), 0.12, 0.09, TILE.iron);
-        // Out of the gutter, back under the eave to the wall, and down it.
-        const wall = s * (roof.half + 0.07);
-        for (const along of drops) {
-            iron.tube([roof.point(out, along, y), roof.point(out, along, y - 0.12), roof.point(wall, along, y - 0.12 - roof.eave * 0.9),
-                roof.point(wall, along, ground - 0.1)], 0.042, TILE.iron, { sides: 6 });
-        }
-    }
+// --- the chapel of rest and the lodge ------------------------------------------------
+
+// The chapel and the lodge are the forge's (tools/forge/models/churchyard.py, in the building kit), each standing on
+// its footprint with its sides to the compass. Until the kit has loaded each is an empty mesh, which is what the
+// yard is given to cast shadows with; then the model's walls and roof are put into it, and its small parts are
+// drawn beside it.
+const PIECES = { chapel: 'chapel_of_rest', lodge: 'sextons_lodge' };
+
+// Where the yard's lights go on the chapel: the cold room's door on the east wall, 4.5 m north of the middle, with
+// the lamp on its bracket over it (as the kit's chapel has them).
+function chapelPlaces(b) {
+    const [cx, cz] = b.at, ground = heightAt(cx, cz), x1 = cx + b.size[0] / 2, dz = cz + 4.5;
+    return { coldDoor: [x1 + 0.6, ground, dz], lamp: [x1 + 0.3, ground + 2.5, dz] };
 }
 
-// --- doors and windows ----------------------------------------------------------
-
-// A door or a window in a wall. The wall is not cut: the dressed stone round
-// the opening stands proud of it, as a doorcase does, and what fills the
-// opening lies on the wall's own face at the back of that.
-//   frame     { at, right, out }: the middle of the sill on the wall's face,
-//             the way the wall runs, the way it looks
-//   shape     which outline (outlines.js), `width` and `height` of the opening
-//   margin    how wide the dressed stone is; `proud`, how far it stands out
-//   fill      the surface in the opening, or null to leave it for the caller
-//   sill      true for a stone sill under it
-function opening(yard, frame, { shape, width, height, margin, proud, surround = 'limestone', fill = 'glass', sill = false }) {
-    const { at, right, out } = frame;
-    const place = ([x, y], d) => [at[0] + right[0] * x + out[0] * d, at[1] + y, at[2] + right[2] * x + out[2] * d];
-    const closed = shape === 'oculus';
-    const inner = OUTLINES[shape](width, height);
-    // The same shape, bigger by the margin all round: all round but
-    // underneath, unless it is a shape with no underneath.
-    const outer = OUTLINES[shape](width + 2 * margin, height + (closed ? 2 : 1) * margin, closed ? -margin : 0);
-    const stone = yard.of(surround), t = TILE[surround];
-    const middle = place([0, height / 2], 0);
-
-    for (let i = 0; i + 1 < inner.length; i++) {
-        const ring = [outer[i], outer[i + 1], inner[i + 1], inner[i]];
-        stone.face(ring.map((p) => place(p, proud)), out, ring.map(([x, y]) => [x / t, y / t]));
-        // The reveal looks into the opening and the stone's outside edge away from it.
-        for (const [a, b, sign] of [[inner[i], inner[i + 1], -1], [outer[i], outer[i + 1], 1]]) {
-            const mid = place([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], 0), length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-            stone.face([place(a, proud), place(b, proud), place(b, 0), place(a, 0)], mid.map((c, k) => (c - middle[k]) * sign),
-                [[0, 0], [length / t, 0], [length / t, proud / t], [0, proud / t]], { shade: sign < 0 ? 0.7 : 1 });
-        }
-    }
-    if (sill) {
-        const reach = width / 2 + margin + 0.05;
-        stone.bar(place([-reach, -0.06], proud / 2 + 0.03), place([reach, -0.06], proud / 2 + 0.03), proud + 0.06, 0.12, t);
-    }
-    if (fill) {
-        const pane = yard.of(fill), ft = TILE[fill];
-        const hub = [0, height / 2];
-        for (let i = 0; i < inner.length; i++) {
-            const wedge = [hub, inner[i], inner[(i + 1) % inner.length]];
-            pane.face(wedge.map((p) => place(p, 0.012)), out, wedge.map(([x, y]) => [x / ft, y / ft]), { shade: 0.85 });
-        }
-    }
+// The lodge's window with the light in it: the one south of the door on the avenue. Its glass is where the kit's
+// sash window has it, 0.19 m back in the wall, and the size of what is between the sashes' frames.
+function lodgePlaces(b) {
+    const [cx, cz] = b.at, ground = heightAt(cx, cz), x1 = cx + b.size[0] / 2;
+    return { window: { centre: [x1 - 0.19, ground + 1.5, cz - 1.9], size: [1.02, 1.06], normal: [1, 0, 0] } };
 }
 
-// Dressed corner stones, long and short by turns, up the corner at (x, z)
-// from `from` to `to`. `inX` and `inZ` say which way the building is from it.
-function quoins(yard, [x, z], [inX, inZ], from, to) {
-    const stone = yard.of('limestone'), course = 0.3, proud = 0.025;
-    for (let y = from, i = 0; y + course <= to; y += course + 0.015, i++) {
-        const [alongX, alongZ] = i % 2 ? [0.24, 0.46] : [0.46, 0.24];
-        const xs = [x - inX * proud, x + inX * alongX], zs = [z - inZ * proud, z + inZ * alongZ];
-        stone.box([Math.min(...xs), y, Math.min(...zs)], [Math.max(...xs), y + course, Math.max(...zs)], TILE.limestone);
-    }
+// The parts of the kit's buildings that throw the shadows: their walls and roofs. The rest (glass, frames, doors,
+// iron, pots) is small, and is drawn without.
+const SHELL = ['ashlar', 'brick', 'stone', 'slate'];
+
+function standIn(scene, name) {
+    const mesh = new BABYLON.Mesh(name, scene);
+    mesh.isPickable = true;
+    return mesh;
 }
 
-// --- the chapel of rest ----------------------------------------------------------
-
-// The bellcote on the south gable: two piers, a head over them, a little
-// roof of its own and the bell in the gap. `apex` is the top of the gable.
-function bellcote(yard, cx, z, apex) {
-    const stone = yard.of('ashlar'), t = TILE.ashlar, deep = [z, z + 0.5];
-    stone.box([cx - 0.62, apex - 0.9, deep[0]], [cx + 0.62, apex + 0.35, deep[1]], t);
-    for (const side of [-1, 1]) {
-        const xs = [cx + side * 0.36, cx + side * 0.62];
-        stone.box([Math.min(...xs), apex + 0.35, deep[0]], [Math.max(...xs), apex + 1.35, deep[1]], t);
-    }
-    yard.of('limestone').box([cx - 0.68, apex + 1.35, deep[0] - 0.05], [cx + 0.68, apex + 1.55, deep[1] + 0.05], TILE.limestone);
-    pitched(yard, [cx, z + 0.25], [1.36, 0.6], apex + 1.55, 0.6, 'z', 'limestone', { eave: 0.06, verge: 0.06 });
-    const hang = (y) => [cx, apex + y, z + 0.25];
-    yard.of('iron').tube([hang(1.34), hang(1.22), hang(1.1), hang(0.94), hang(0.8)], [0.025, 0.09, 0.14, 0.17, 0.24], TILE.iron, { sides: 10 });
-}
-
-function chapel(yard, b) {
-    const [cx, cz] = b.at, [w, d] = b.size;
-    const ground = heightAt(cx, cz), eaves = ground + 4.2, rise = 4.6;
-    const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
-    const stone = yard.of('ashlar'), dressed = yard.of('limestone'), t = TILE.ashlar, dt = TILE.limestone;
-    stone.box([x0, ground - 0.6, z0], [x1, eaves, z1], t, { skip: ['py', 'ny'], foot: 0.5 });
-    stone.box([x0 - 0.12, ground - 0.6, z0 - 0.12], [x1 + 0.12, ground + 0.55, z1 + 0.12], t, { skip: ['ny'], foot: 0.5 });
-    dressed.box([x0 - 0.14, ground + 0.55, z0 - 0.14], [x1 + 0.14, ground + 0.63, z1 + 0.14], dt, { skip: ['ny'] });
-
-    // The roof stops at the gables, which stand above it under their copings.
-    const roof = pitched(yard, b.at, b.size, eaves, rise, 'z', 'ashlar', { eave: 0.25, verge: 0 });
-    verges(yard, roof, 'limestone', { out: -0.2, wide: 0.46, deep: 0.17, lift: 0.1 });
-    for (const side of [-1, 1]) {
-        for (const end of [-1, 1]) {
-            // The kneeler: the block a coping starts from.
-            const x = cx + side * (w / 2 + 0.1), z = cz + end * (d / 2 - 0.2);
-            dressed.box([x - 0.24, eaves - 0.42, z - 0.25], [x + 0.24, eaves + 0.12, z + 0.25], dt);
+// The kit's chapel and lodge put where they stand: each one's shell into its stand-in, its parts one after another,
+// one sub-mesh each; the small parts of both, all of a material as one mesh, into `meshes`.
+async function raise(scene, standing: [BABYLON.Mesh, string, BABYLON.Matrix][], meshes: BABYLON.Mesh[]) {
+    const { pieces } = await kit(scene);
+    const small = new Map<BABYLON.Material, Batch>();
+    for (const [mesh, piece, at] of standing) {
+        const shell = new BABYLON.MultiMaterial(piece, scene), parts: Batch[] = [];
+        for (const { data, material } of pieces.get(piece).parts) {
+            if (!SHELL.includes(material.name)) {
+                if (!small.has(material)) small.set(material, new Batch());
+                small.get(material).add(data, at);
+                continue;
+            }
+            const part = new Batch();
+            part.add(data, at);
+            parts.push(part);
+            shell.subMaterials.push(material);
         }
-    }
-    dressed.bar(roof.point(0, -d / 2 + 0.45, eaves + rise + 0.04), roof.point(0, d / 2 - 0.45, eaves + rise + 0.04), 0.22, 0.1, dt);
-    gutters(yard, roof, ground, [-d / 2 + 1.3, d / 2 - 1.3]);
-
-    // Buttresses at the corners and twice down each long side, in two
-    // stages with a weathering on each.
-    for (const z of [z0 + 0.3, z0 + d / 3, z0 + 2 * d / 3, z1 - 0.3]) {
-        for (const side of [-1, 1]) {
-            const x = side < 0 ? x0 : x1, span = (deep) => [Math.min(x, x + side * deep), Math.max(x, x + side * deep)];
-            const [lowA, lowB] = span(0.7), [highA, highB] = span(0.45);
-            stone.box([lowA, ground - 0.6, z - 0.3], [lowB, ground + 2.9, z + 0.3], t, { foot: 0.5 });
-            dressed.box([lowA - 0.02, ground + 2.9, z - 0.32], [lowB + 0.02, ground + 3.02, z + 0.32], dt);
-            stone.box([highA, ground + 3.02, z - 0.3], [highB, ground + 3.6, z + 0.3], t);
-            dressed.box([highA - 0.02, ground + 3.6, z - 0.32], [highB + 0.02, ground + 3.7, z + 0.32], dt);
+        const whole = new Batch(), ranges = [];
+        for (const part of parts) {
+            const start = whole.positions.length / 3, first = whole.indices.length;
+            whole.positions.push(...part.positions);
+            whole.normals.push(...part.normals);
+            whole.uvs.push(...part.uvs);
+            whole.uvs2.push(...part.uvs2);
+            whole.indices.push(...part.indices.map((i) => i + start));
+            ranges.push([start, part.positions.length / 3, first, part.indices.length]);
         }
+        Object.assign(new BABYLON.VertexData(), whole).applyToMesh(mesh);
+        mesh.material = shell;
+        mesh.subMeshes = [];
+        ranges.forEach(([start, count, first, length], i) => new BABYLON.SubMesh(i, start, count, first, length, mesh));
+        mesh.refreshBoundingInfo();
     }
-
-    // Lancets down both sides.
-    for (const z of [z0 + d / 6 + 0.4, z0 + d / 2, z1 - d / 6 - 0.4]) {
-        for (const side of [-1, 1]) {
-            opening(yard, { at: [side < 0 ? x0 : x1, ground + 1.45, z], right: [0, 0, 1], out: [side, 0, 0] },
-                { shape: 'gothic', width: 0.62, height: 2.0, margin: 0.14, proud: 0.1, sill: true });
-        }
-    }
-
-    // The south front: the door in its doorcase on two steps, a round
-    // window over it, and the bellcote on the gable.
-    const south = { right: [1, 0, 0], out: [0, 0, -1] };
-    opening(yard, { ...south, at: [cx, ground + 0.3, z0] }, { shape: 'gothic', width: 1.8, height: 3.2, margin: 0.32, proud: 0.28, fill: 'coffin' });
-    const iron = yard.of('iron');
-    iron.box([cx - 0.012, ground + 0.3, z0 - 0.03], [cx + 0.012, ground + 3.4, z0 - 0.012], TILE.iron);
-    for (const y of [0.75, 1.55]) {
-        for (const side of [-1, 1]) {
-            const xs = [cx + side * 0.2, cx + side * 0.88];
-            iron.box([Math.min(...xs), ground + y, z0 - 0.034], [Math.max(...xs), ground + y + 0.07, z0 - 0.012], TILE.iron);
-        }
-    }
-    yard.of('flags').box([cx - 1.9, ground - 0.3, z0 - 1.4], [cx + 1.9, ground + 0.15, z0], TILE.flags, { foot: 0.6 });
-    yard.of('flags').box([cx - 1.6, ground + 0.15, z0 - 0.9], [cx + 1.6, ground + 0.3, z0], TILE.flags);
-    opening(yard, { ...south, at: [cx, eaves + 1.0, z0] }, { shape: 'oculus', width: 1.1, height: 1.1, margin: 0.17, proud: 0.1 });
-    bellcote(yard, cx, z0, eaves + rise);
-    // A cross on the north gable.
-    const cross = [cx, eaves + rise, z1 - 0.2];
-    dressed.bar([cross[0], cross[1] + 0.1, cross[2]], [cross[0], cross[1] + 1.0, cross[2]], 0.12, 0.12, dt, { up: [0, 0, 1] });
-    dressed.bar([cross[0] - 0.28, cross[1] + 0.7, cross[2]], [cross[0] + 0.28, cross[1] + 0.7, cross[2]], 0.12, 0.12, dt);
-
-    // The cold room's own door, on the east side, plain, with a lamp on a
-    // bracket over it.
-    const dz = cz + 4.5, lamp = [x1 + 0.3, ground + 2.5, dz];
-    opening(yard, { at: [x1, ground + 0.12, dz], right: [0, 0, 1], out: [1, 0, 0] },
-        { shape: 'square', width: 1.0, height: 2.05, margin: 0.12, proud: 0.08, fill: 'post' });
-    yard.of('flags').box([x1, ground - 0.3, dz - 0.8], [x1 + 0.9, ground + 0.12, dz + 0.8], TILE.flags, { foot: 0.6 });
-    iron.bar([x1, lamp[1] + 0.2, dz], [lamp[0], lamp[1] + 0.2, dz], 0.03, 0.03, TILE.iron);
-    iron.tube([[lamp[0], lamp[1] + 0.2, dz], [lamp[0], lamp[1] + 0.12, dz], [lamp[0], lamp[1] + 0.02, dz]], [0.02, 0.05, 0.15], TILE.iron, { sides: 10 });
-    return { coldDoor: [x1 + 0.6, ground, dz], lamp };
-}
-
-// --- the lodge and the store -------------------------------------------------------
-
-function lodge(yard, b) {
-    const [cx, cz] = b.at, [w, d] = b.size;
-    const ground = heightAt(cx, cz), eaves = ground + 2.7, rise = 2.5;
-    const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
-    const brick = yard.of('brick'), t = TILE.brick;
-    brick.box([x0, ground - 0.5, z0], [x1, eaves, z1], t, { skip: ['py', 'ny'], foot: 0.55 });
-    brick.box([x0 - 0.05, ground - 0.5, z0 - 0.05], [x1 + 0.05, ground + 0.4, z1 + 0.05], t, { skip: ['ny'], foot: 0.55 });
-    for (const [corner, inward] of [[[x0, z0], [1, 1]], [[x1, z0], [-1, 1]], [[x0, z1], [1, -1]], [[x1, z1], [-1, -1]]] as [number, number][][]) {
-        quoins(yard, corner, inward, ground + 0.4, eaves - 0.05);
-    }
-
-    const roof = pitched(yard, b.at, b.size, eaves, rise, 'x', 'brick', { eave: 0.35, verge: 0.35 });
-    verges(yard, roof, 'post', { out: 0.33, wide: 0.045, deep: 0.2, lift: -0.11 });
-    gutters(yard, roof, ground, [-w / 2 + 0.4, w / 2 - 0.4]);
-
-    // The chimney: its stack, a stone cap, two pots.
-    const stack = [x0 + 1.0, x0 + 1.7], top = eaves + rise + 1.1;
-    brick.box([stack[0], eaves + 1.2, cz - 0.35], [stack[1], top, cz + 0.35], t);
-    yard.of('limestone').box([stack[0] - 0.06, top, cz - 0.41], [stack[1] + 0.06, top + 0.12, cz + 0.41], TILE.limestone);
-    for (const z of [cz - 0.16, cz + 0.16]) {
-        const x = (stack[0] + stack[1]) / 2;
-        brick.tube([[x, top + 0.12, z], [x, top + 0.5, z]], [0.11, 0.09], t, { sides: 8 });
-    }
-
-    // On the avenue side: the door, south of it the window with the light
-    // in it, north of it a dark one. Another dark one looks at the gate.
-    const east = { right: [0, 0, 1], out: [1, 0, 0] }, pane = { shape: 'square', margin: 0.1, proud: 0.06, sill: true };
-    opening(yard, { ...east, at: [x1, ground + 0.1, cz] }, { shape: 'square', width: 0.9, height: 1.95, margin: 0.1, proud: 0.06, fill: 'coffin' });
-    yard.of('flags').box([x1, ground - 0.3, cz - 0.7], [x1 + 0.7, ground + 0.1, cz + 0.7], TILE.flags, { foot: 0.6 });
-    const lit = { centre: [x1 + 0.015, ground + 1.5, cz - 1.9], size: [1.15, 1.2], normal: [1, 0, 0] };
-    opening(yard, { ...east, at: [x1, ground + 0.9, cz - 1.9] }, { ...pane, width: lit.size[0], height: lit.size[1], fill: null });
-    opening(yard, { ...east, at: [x1, ground + 0.9, cz + 1.9] }, { ...pane, width: 1.15, height: 1.2 });
-    opening(yard, { at: [x0 + 2.75, ground + 0.95, z0], right: [1, 0, 0], out: [0, 0, -1] }, { ...pane, width: 1.1, height: 1.15 });
-    return { window: lit };
+    for (const [material, batch] of small) meshes.push(batch.mesh(scene, `built ${material.name}`, material));
 }
 
 function store(yard, b) {
@@ -360,24 +225,27 @@ function lychGate(yard, gate) {
     oak.bar(on(-half, 0.3), on(half, 1.05), 0.05, 0.07, t);
 }
 
-// Everything built, as meshes. `glass` is a material for dark panes. Returns
-// the meshes and the places the yard's lights and doors need to know.
-export function buildBuilt(scene, surfaces, glass) {
+// Everything built, as meshes: the procedural ones, and the chapel and the lodge (filled when the kit has loaded,
+// `ready`). `_glass` was for their windows, which the kit brings. Returns the meshes and the places the yard's
+// lights and doors need to know.
+export function buildBuilt(scene, surfaces, _glass) {
     const yard = new Yard();
     boundary(yard);
-    const places: Record<string, any> = {};
+    const places: Record<string, any> = {}, meshes = [], kitted: [BABYLON.Mesh, string, BABYLON.Matrix][] = [];
     for (const b of BUILDINGS) {
-        if (b.id === 'chapel') places.chapel = chapel(yard, b);
-        else if (b.id === 'lodge') places.lodge = lodge(yard, b);
-        else store(yard, b);
+        if (b.id in PIECES) {
+            places[b.id] = b.id === 'chapel' ? chapelPlaces(b) : lodgePlaces(b);
+            const mesh = standIn(scene, 'built_' + b.id);
+            kitted.push([mesh, PIECES[b.id], standing(b.at[0], b.at[1], Math.PI)]);
+            meshes.push(mesh);
+        } else store(yard, b);
     }
     lychGate(yard, GATES.find((g) => g.kind === 'lych'));
 
-    const meshes = [];
     for (const [surface, buf] of yard.bufs) {
-        const mesh = buf.toMesh('built_' + surface, scene, surface === 'glass' ? glass : surfaces.material(surface, LOOKS[surface]));
+        const mesh = buf.toMesh('built_' + surface, scene, surfaces.material(surface, LOOKS[surface]));
         mesh.isPickable = true;
         meshes.push(mesh);
     }
-    return { meshes, places };
+    return { meshes, places, ready: raise(scene, kitted, meshes) };
 }

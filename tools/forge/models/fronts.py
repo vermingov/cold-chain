@@ -8,6 +8,7 @@ from mathutils import Vector
 
 from shape import Frame, UP
 import joinery
+import surfaces
 
 BAY = {'depth': 0.6, 'base': 0.75, 'sill': 0.83, 'head': 2.45, 'fascia': 2.7, 'cornice': 2.8, 'pitch': 0.6}
 POST = 0.07
@@ -79,10 +80,11 @@ def bay(shape, panes, x0, x1):
 SHOP = {'riser': 0.55, 'cill': 0.63, 'transom': 2.45, 'head': 2.95, 'fascia': (3.0, 3.5), 'recess': (0.88, 2.4, 1.0)}
 
 
-def shopfront(shape, panes, front, paint='paint_shop'):
+def shopfront(shape, panes, signs, front, paint='paint_shop', row=0):
     """A shop front across the ground floor: pilasters with consoles, a fascia and cornice, a panelled stall riser
     under a display window of three lights with transom lights over, and a glazed door at the back of a recessed
-    entrance. Returns its hole in the wall."""
+    entrance; the sign painted on the fascia (row `row` of the signs' picture) goes in `signs`. Returns its hole in
+    the wall."""
     s = SHOP
     for side in (-1, 1):
         x = sorted((side * 2.4, side * 2.7))
@@ -91,6 +93,9 @@ def shopfront(shape, panes, front, paint='paint_shop'):
         shape.block(front, (x[0] + 0.02, x[1] - 0.02), (2.75, s['fascia'][0]), (0, 0.22), paint, skip=('back',))
     shape.block(front, (-2.7, 2.7), s['fascia'], (0, 0.18), paint, skip=('back',))
     shape.extrude(front, [(0, 3.5), (0.24, 3.5), (0.3, 3.56), (0.3, 3.6), (0, 3.68)], -2.72, 2.72, paint)
+    board = [(-2.62, 3.03), (2.62, 3.03), (2.62, 3.47), (-2.62, 3.47)]
+    signs.append(([front.at(x, y, 0.182) for x, y in board],
+                  [surfaces.sign_uv(row, (x + 2.62) / 5.24, (y - 3.03) / 0.44) for x, y in board]))
 
     rx0, rx1, deep = s['recess']
     riser = front.moved(d=0.06)

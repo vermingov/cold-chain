@@ -51,7 +51,7 @@ QUICK = '--quick' in args
 WANTED = [a for a in args if not a.startswith('--')]
 
 BURY = 0.15             # how far below the ground a stone goes (stones.js sinks 0.3; its tilts lift a foot ~2 cm)
-FINE = 0.006 if QUICK else 0.0025       # voxel of the detailed stone
+FINE = 0.004 if QUICK else 0.0025       # voxel of the detailed stone
 COARSE = 0.008          # voxel the game's stone is decimated from
 THREADS = 6             # other forges share the machine
 
@@ -196,10 +196,17 @@ STONES = {
                       wave=0.003, flakes=0.0, fresh=(1.05, 1.03, 1.0), rough=(0.78, 0.93)),
     'granite': dict(granite=True, relief=0.0, wave=0.0, flakes=0.0, rough=(0.16, 0.2), rustic='tiger_rock'),
     'marble': dict(marble=True, relief=0.0004, wave=0.0008, flakes=0.0, rough=(0.35, 0.55)),
-    'iron': dict(surface='iron', size=0.6, tint=(0.9, 0.85, 0.82), sat=1.0, relief=0.0008, wave=0.0006, flakes=0.0,
+    'iron': dict(surface='iron', size=0.6, tint=(0.5, 0.4, 0.34), sat=1.0, relief=0.0008, wave=0.0006, flakes=0.0,
                  rough=(0.7, 0.95)),
     'oak': dict(surface='post', size=1.0, tint=(0.8, 0.78, 0.74), sat=0.7, relief=0.0015, wave=0.001, flakes=0.0,
-                rough=(0.75, 0.95)),
+                rough=(0.75, 0.95), checks=0.004),
+    # What is not stone: a fresh heap of soil, turf gone over a settled one, and the chippings inside a kerb.
+    'soil': dict(surface='soil', size=1.3, tint=(0.62, 0.55, 0.48), sat=0.6, relief=0.008, wave=0.0, flakes=0.0,
+                 rough=(0.8, 0.97), lumps=(14, 0.007), clean=True),
+    'turf': dict(surface='grass', size=1.6, tint=(0.62, 0.7, 0.5), sat=0.9, relief=0.005, wave=0.0, flakes=0.0,
+                 rough=(0.75, 0.95), lumps=(6, 0.005), clean=True),
+    'chippings': dict(surface='gravel', size=0.9, tint=(1.15, 1.15, 1.12), sat=0.4, relief=0.009, wave=0.0, flakes=0.0,
+                      rough=(0.55, 0.85), lumps=(70, 0.003), clean=True),
 }
 
 # Ground: what a mound is made of and what is splashed onto a stone's foot.
@@ -384,6 +391,9 @@ def wear(obj, stone, shape, seed):
     d = np.zeros(len(p))
     if stone.get('wave'):
         d += np.clip(fbm(p, 2.5, 3, seed), -2, 2) * stone['wave'] * shape.get('age', 1.0)
+    if stone.get('lumps'):
+        scale, amp = stone['lumps']
+        d += np.clip(fbm(p, scale, 3, seed + 5), -2.5, 2.5) * amp * (0.3 + 0.7 * np.clip(n[:, 2], 0, 1))
     if shape.get('rustic'):
         # Polished face, the rest split off with a pitching tool: big shallow conchoidal facets.
         side = 1 - smooth(0.6, 0.9, -n[:, 1])
@@ -413,26 +423,34 @@ def weather(obj, stone, shape, seed, images):
         f = fbm(p, 5, 4, seed + 11) + exposure * age
         fresh = smooth(1.55, 1.7, f)
         d -= fresh * stone['flakes'] * (1 + 0.4 * fbm(p, 40, 2, seed + 12).clip(-1, 1))
+    # Oak splits along its grain as it dries and wets: long thin checks.
+    if stone.get('checks'):
+        grain = np.abs(fbm(p * np.array([1, 1, 0.06]), 40, 2, seed + 14))
+        d -= smooth(0.12, 0.0, grain) * stone['checks'] * (1 - np.abs(n[:, 2]))
     # The mason's incised line, a few centimetres in from the edge of the face.
     if shape.get('border'):
-        inset, half, deep = shape['border'], 0.0035, 0.0028
-        front = (n[:, 1] < -0.75) & (p[:, 1] < -shape['d'] / 2 + 0.006)
+        inset, half, deep = shape['border'], 0.0045, 0.0035
+        front = (n[:, 1] < -0.75) & (p[:, 1] < -shape['d'] / 2 + 0.015)
         dist = distance_to_outline(p[:, 0], z, shape['outline'])
         cut = np.clip(1 - np.abs(dist - inset) / half, 0, 1) * front * (z > 0.05)
         d -= cut * deep * (1 - 0.6 * age * smooth(1.0, 2.0, fbm(p, 8, 2, seed + 13)))
     move(obj, p + n * d[:, None])
 
+    if stone.get('clean'):
+        colour = np.zeros((len(p), 4), np.float32)
+        obj.data.color_attributes.new('weather', 'FLOAT_COLOR', 'POINT').data.foreach_set('color', colour.ravel())
+        return
     # The weather, as colour. Yellow lichen (Xanthoria) in small rosettes, most on the head and its top edge;
     # grey crust lichen in wider patches, more on what faces up and on the oldest stones; grime in runs from the top
     # and splashed up from the ground; below the ground, soil.
     rosettes = fbm(p, 24, 3, seed + 21) + 0.9 * up + 0.7 * z / top - 1.4 * (1 - age)
-    lichen_y = smooth(1.75, 2.05, rosettes) * smooth(0.08, 0.3, z) * min(1.0, age)
+    lichen_y = smooth(2.2, 2.8, rosettes) * smooth(0.08, 0.3, z) * min(1.0, age)
     crust = fbm(p, 7, 4, seed + 22) + 1.1 * up + 0.5 * smooth(top * 0.75, top, z) + 0.5 * smooth(0.2, 0.0, z)
-    lichen_g = smooth(1.0, 1.35, crust - 1.6 * (1 - age)) * smooth(-0.02, 0.06, z) * min(1.0, age)
+    lichen_g = smooth(0.45, 1.45, crust - 1.6 * (1 - age)) * smooth(-0.02, 0.06, z) * min(1.0, age)
     streak_field = fbm(p * np.array([1, 1, 0.12]), 20, 3, seed + 23)
-    runs = smooth(0.8, 1.8, streak_field) * (0.25 + 0.75 * smooth(top * 0.3, top, z)) * (1 - up)
+    runs = smooth(0.3, 1.5, streak_field) * (0.25 + 0.75 * smooth(top * 0.3, top, z)) * (1 - up)
     splash = smooth(0.22, 0.0, z) * (0.55 + 0.45 * smooth(-1, 1, fbm(p, 14, 3, seed + 24)))
-    grime = np.clip(runs * 0.6 * (0.3 + 0.7 * age) + splash + (z < 0) * 1.0, 0, 1)
+    grime = np.clip(runs * 0.85 * (0.25 + 0.75 * age) + splash + (z < 0) * 1.0, 0, 1)
     colour = np.stack([lichen_y, lichen_g * (1 - lichen_y), grime, fresh], 1).astype(np.float32)
     attr = obj.data.color_attributes.new('weather', 'FLOAT_COLOR', 'POINT')
     attr.data.foreach_set('color', colour.ravel())
@@ -455,11 +473,6 @@ class Nodes:
 
     def link(self, out, socket):
         self.tree.links.new(out, socket)
-
-    def value(self, v):
-        n = self.node('ShaderNodeValue')
-        n.outputs[0].default_value = v
-        return n.outputs[0]
 
     def math(self, op, a, b=None, clamp=False):
         n = self.node('ShaderNodeMath', operation=op, use_clamp=clamp)
@@ -560,15 +573,14 @@ def stone_material(name, stone, images, lichens):
     if stone.get('granite'):
         # Grey granite: black mica and hornblende, grey quartz, white and pinkish feldspar, a few millimetres each.
         grains = nd.node('ShaderNodeTexVoronoi')
-        grains.inputs['Scale'].default_value = 260
+        grains.inputs['Scale'].default_value = 520
         grains.inputs['Randomness'].default_value = 1.0
         nd.link(nd.coord.outputs['Object'], grains.inputs['Vector'])
         hue = nd.node('ShaderNodeSeparateColor')
         nd.link(grains.outputs['Color'], hue.inputs[0])
-        speckle = nd.ramp(hue.outputs[0], [(0.0, stone['dark']), (0.48, stone['dark']), (0.5, stone['mid']),
-                                          (0.82, stone['mid']), (0.84, stone['light'])], 'CONSTANT')
+        speckle = nd.ramp(hue.outputs[0], [(0.0, stone['dark']), (0.58, stone['mid']), (0.9, stone['light'])], 'CONSTANT')
         mottle = nd.noise(14, 3).outputs[0]
-        base = nd.mix(nd.math('MULTIPLY', mottle, 0.35), speckle, stone['dark'])
+        base = nd.mix(nd.math('MULTIPLY', mottle, 0.5), speckle, stone['dark'])
         rough_base = nd.math('ADD', nd.math('MULTIPLY', nd.noise(40, 2).outputs[0], hi - lo), lo)
         if images.get('rustic'):
             # The split sides are matt and lighter, their crystals broken open.
@@ -586,8 +598,8 @@ def stone_material(name, stone, images, lichens):
         wave.inputs['Detail'].default_value = 6.0
         wave.inputs['Detail Scale'].default_value = 1.6
         nd.link(nd.coord.outputs['Object'], wave.inputs['Vector'])
-        veins = nd.ramp(wave.outputs[1], [(0.0, (0.42, 0.43, 0.44)), (0.06, (0.72, 0.72, 0.71)), (0.2, (0.86, 0.85, 0.82)),
-                                         (1.0, (0.88, 0.87, 0.84))])
+        veins = nd.ramp(wave.outputs[1], [(0.0, (0.66, 0.66, 0.66)), (0.05, (0.76, 0.76, 0.75)), (0.25, (0.84, 0.83, 0.8)),
+                                         (1.0, (0.86, 0.85, 0.82))])
         cloud = nd.noise(6, 5, 0.6).outputs[0]
         base = nd.mix(nd.math('MULTIPLY', cloud, 0.25), veins, (0.7, 0.69, 0.66))
         rough_base = nd.math('ADD', nd.math('MULTIPLY', nd.noise(25, 3).outputs[0], hi - lo), lo)
@@ -598,25 +610,30 @@ def stone_material(name, stone, images, lichens):
         nd.link(diff, sat.inputs['Color'])
         base = nd.mix(1.0, sat.outputs[0], stone['tint'], 'MULTIPLY')
         # Beds in the stone and the years: broad patches a little lighter or darker.
-        base = nd.mix(nd.math('MULTIPLY', nd.noise(1.8, 3).outputs[0], 0.6), base, (0.12, 0.115, 0.1), 'LINEAR_LIGHT')
+        base = nd.mix(1.0, base, nd.ramp(nd.noise(1.8, 3).outputs[0], [(0.3, (0.8, 0.8, 0.8)), (0.7, (1.08, 1.07, 1.05))]), 'MULTIPLY')
         rough_scan = nd.grey(nd.tri(images['rough'], stone['size']))
         rough_base = nd.math('ADD', nd.math('MULTIPLY', rough_scan, hi - lo), lo)
         # Where a flake came away the stone under it is clean and warmer.
-        base = nd.mix(fresh, base, nd.mix(1.0, base, stone['fresh'], 'MULTIPLY'))
+        base = nd.mix(fresh, base, nd.mix(1.0, base, stone.get('fresh', (1, 1, 1)), 'MULTIPLY'))
 
     # Grime: soot and algae run down from the top, the soil splashed up at the foot.
-    grime_tone = nd.mix(nd.noise(9, 3).outputs[0], (0.035, 0.034, 0.03), SOIL)
-    base = nd.mix(nd.math('MULTIPLY', grime, 0.82), base, grime_tone)
-    # Grey crust lichen, pale and a little green, its texture from the lichen scan; moss in the wettest of it.
-    crust = nd.grey(nd.tri(lichens['crust'], 0.9))
-    crust_tone = nd.ramp(crust, [(0.0, (0.2, 0.21, 0.19)), (0.35, (0.42, 0.44, 0.39)), (1.0, (0.62, 0.63, 0.58))])
-    moss = nd.mix(1.0, nd.tri(lichens['moss'], 1.2), (0.55, 0.6, 0.45), 'MULTIPLY')
-    green = nd.mix(nd.math('GREATER_THAN', nd.noise(4, 2).outputs[0], 0.6), crust_tone, moss)
-    edge = nd.math('MULTIPLY', lichen_g, nd.math('ADD', 0.55, nd.math('MULTIPLY', nd.noise(70, 2).outputs[0], 0.7)), clamp=True)
-    base = nd.mix(nd.math('POWER', edge, 0.7), base, green)
-    # Yellow-orange crust lichen in rosettes, duller at the edge of a patch.
-    tone = nd.ramp(nd.noise(40, 3).outputs[0], [(0.3, (0.36, 0.27, 0.08)), (0.7, (0.5, 0.38, 0.1))])
-    lumpy = nd.math('MULTIPLY', lichen_y, nd.math('ADD', 0.35, nd.noise(120, 2).outputs[0]), clamp=True)
+    grime_tone = nd.mix(nd.noise(9, 3).outputs[0], (0.04, 0.04, 0.037), SOIL)
+    # Green algae where it stays wet, at the foot.
+    wet = nd.node('ShaderNodeSeparateXYZ')
+    nd.link(nd.coord.outputs['Object'], wet.inputs[0])
+    low_down = nd.math('MULTIPLY', nd.math('LESS_THAN', wet.outputs[2], 0.3), nd.noise(5, 3).outputs[0])
+    grime_tone = nd.mix(low_down, grime_tone, (0.06, 0.075, 0.03))
+    base = nd.mix(nd.math('MULTIPLY', grime, 0.7), base, grime_tone)
+    # Grey crust lichen, pale and a little green, its grain from the lichen scan, soft at its edges; a little moss in it.
+    grain = nd.grey(nd.tri(lichens['crust'], 0.9))
+    crust_tone = nd.ramp(grain, [(0.0, (0.34, 0.36, 0.31)), (0.4, (0.52, 0.55, 0.48)), (1.0, (0.66, 0.68, 0.62))])
+    moss = nd.mix(1.0, nd.tri(lichens['moss'], 1.2), (0.6, 0.65, 0.5), 'MULTIPLY')
+    green = nd.mix(nd.math('GREATER_THAN', nd.noise(4, 2).outputs[0], 0.62), crust_tone, moss)
+    cover = nd.math('MULTIPLY', lichen_g, nd.math('ADD', 0.3, nd.math('MULTIPLY', grain, 0.6)), clamp=True)
+    base = nd.mix(cover, base, green)
+    # Yellow-orange crust lichen in small rosettes.
+    tone = nd.ramp(nd.noise(40, 3).outputs[0], [(0.3, (0.32, 0.26, 0.11)), (0.7, (0.42, 0.34, 0.13))])
+    lumpy = nd.math('MULTIPLY', lichen_y, nd.math('ADD', 0.3, nd.noise(120, 2).outputs[0]), clamp=True)
     base = nd.mix(lumpy, base, tone)
     # Dirt settles in every hollow.
     ao = nd.node('ShaderNodeAmbientOcclusion', samples=12, only_local=True)
@@ -656,7 +673,7 @@ def on_base(inner, base_w, base_d, base_h):
     def build(bm, shape, rng):
         inner['build'](bm, shape, rng)
         box(bm, (-base_w / 2, -base_d / 2, -BURY), (base_w / 2, base_d / 2, base_h))
-    return dict(inner, build=build, face_z=base_h + 0.02)
+    return dict(inner, build=build, w=base_w, face=('front', -inner['d'] / 2, base_h + 0.02), size_d=base_d)
 
 
 def cross_latin(bm, shape, rng):
@@ -710,6 +727,62 @@ def chest_panels(obj, shape):
     bpy.data.objects.remove(cutter)
 
 
+def heap(length, width, height, power):
+    """A grave's mound: an ellipse of earth in plan, a flattened dome in section, its skirt going into the ground;
+    closed underneath. Long axis along y."""
+    def build(bm, shape, rng):
+        nx, ny = 26, 52
+        grid = {}
+        for i in range(nx + 1):
+            for j in range(ny + 1):
+                u, v = i / nx * 2 - 1, j / ny * 2 - 1
+                r = math.hypot(u, v)
+                z = height * max(0.0, 1 - r ** 2) ** power - 0.04 * min(1.0, max(0.0, r - 0.95) / 0.3)
+                grid[i, j] = bm.verts.new((u * width / 2 * 1.25, v * length / 2 * 1.25, z))
+        for i in range(nx):
+            for j in range(ny):
+                bm.faces.new((grid[i, j], grid[i + 1, j], grid[i + 1, j + 1], grid[i, j + 1]))
+        edge = [e for e in bm.edges if e.is_boundary]
+        new = bmesh.ops.extrude_edge_only(bm, edges=edge)['geom']
+        for v in (g for g in new if isinstance(g, bmesh.types.BMVert)):
+            v.co.z = -BURY
+        bmesh.ops.contextual_create(bm, geom=[g for g in new if isinstance(g, bmesh.types.BMEdge)])
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return dict(build=build, w=width, h=height, d=length)
+
+
+def marker(bm, shape, rng):
+    # A cast-iron stake with a plate on its front for the row and the number.
+    box(bm, (-0.012, -0.012, -BURY), (0.012, 0.012, 0.42))
+    box(bm, (-0.075, -0.021, 0.29), (0.075, -0.011, 0.42))
+    box(bm, (-0.06, 0.008, 0.36), (0.06, 0.016, 0.385))        # the lug it is cast with, behind
+
+
+def post(top):
+    def build(bm, shape, rng):
+        prism(bm, [(0.05, -BURY), *top, (-0.05, -BURY)], -0.05, 0.05)
+    return build
+
+
+def ledger(bm, shape, rng):
+    # A slab lying on the grave, on a low course of stone. Long axis along y, its head at +y.
+    box(bm, (-0.45, -1.0, -0.1), (0.45, 1.0, 0.04))
+    box(bm, (-0.42, -0.97, 0.0), (0.42, 0.97, 0.13))
+
+
+def kerbed(bm, shape, rng):
+    # A headstone on its base, and kerbs round the grave in front of it (-y), all granite.
+    prism(bm, outline('lawn', 0.6, 0.8), -0.04, 0.04)
+    box(bm, (-0.42, -0.13, -BURY), (0.42, 0.11, 0.1))
+    box(bm, (0.34, -2.05, -0.1), (0.42, -0.12, 0.13))
+    box(bm, (-0.42, -2.05, -0.1), (-0.34, -0.12, 0.13))
+    box(bm, (-0.42, -2.05, -0.1), (0.42, -1.97, 0.13))
+
+
+def chippings(bm, shape, rng):
+    box(bm, (-0.345, -1.975, -0.1), (0.345, -0.125, 0.065))
+
+
 KINDS = {
     'tallRound': dict(stone='sandstone', size=1024, tris=1400, shapes=[
         dict(upright('round', 0.62, 1.35, 0.11), age=1.0, chips=(7, 0.035), border=0.035, panel=(0.74, 0.5)),
@@ -752,6 +825,25 @@ KINDS = {
         dict(upright('square', 0.46, 0.46, 0.09), age=0.15, chips=(0, 0), panel=(0.25, 0.4)),
         dict(upright('lawn', 0.5, 0.5, 0.09), age=0.15, chips=(0, 0), rustic=True, panel=(0.26, 0.4)),
     ]),
+    'ledger': dict(stone='sandstone', size=1024, tris=1200, shapes=[
+        dict(build=ledger, w=0.9, h=0.13, d=2.0, age=1.0, chips=(12, 0.04), face=('top', 0.1), panel=(0.3, 0.6)),
+        dict(build=ledger, w=0.9, h=0.13, d=2.0, age=1.2, chips=(22, 0.05), face=('top', 0.1), panel=(0.3, 0.6), stone='limestone'),
+    ]),
+    'kerb': dict(stone='granite', size=1024, tris=1600, shapes=[
+        dict(build=kerbed, w=0.84, h=0.8, d=2.16, age=0.4, chips=(3, 0.02), face=('front', -0.04, 0.12),
+             panel=(0.5, 0.44), parts=[dict(stone='chippings', build=chippings, tris=160)]),
+    ]),
+    'mound': dict(stone='soil', size=1024, tris=1600, coarse=0.015, cage=(0.04, 0.1), from_above=True, shapes=[
+        dict(heap(2.1, 1.0, 0.24, 0.55), age=0.0),
+        dict(heap(2.0, 0.95, 0.11, 0.8), age=0.0, stone='turf'),
+    ]),
+    'marker': dict(stone='iron', size=256, tris=220, fine=0.0012, coarse=0.003, shapes=[
+        dict(build=marker, w=0.15, h=0.42, d=0.04, age=0.5, chips=(0, 0), face=('front', -0.021, 0.28), panel=(0.36, 0.13)),
+    ]),
+    'post': dict(stone='oak', size=512, tris=300, fine=0.002, coarse=0.005, shapes=[
+        dict(build=post([(0.05, 0.52), (0, 0.56), (-0.05, 0.52)]), w=0.1, h=0.56, d=0.1, age=0.6, chips=(4, 0.02)),
+        dict(build=post([(0.05, 0.5), (-0.05, 0.55)]), w=0.1, h=0.55, d=0.1, age=0.8, chips=(5, 0.025)),
+    ]),
     'lawnMarble': dict(stone='marble', size=512, tris=700, shapes=[
         dict(upright('lawn', 0.42, 0.4, 0.08), age=0.2, chips=(0, 0), panel=(0.21, 0.37)),
         dict(upright('segment', 0.44, 0.42, 0.08), age=0.25, chips=(1, 0.015), panel=(0.22, 0.38)),
@@ -763,14 +855,14 @@ ORDER = list(KINDS)
 
 # --- one kind -------------------------------------------------------------------------------------------------------
 
-def make_shape(kind_name, kind, letter, shape, stone, images, seed):
+def make_shape(name, kind, shape, stone, images, seed):
+    """The detailed and the game's version of one shape (or of one part of it), weathered."""
     rng = np.random.default_rng(seed)
-    name = f'{kind_name}_{letter}'
-    fine = kind.get('fine', FINE) if not QUICK else FINE
+    fine = FINE if QUICK else kind.get('fine', FINE)
     bm = bmesh.new()
     shape['build'](bm, shape, rng)
     count, size = shape.get('chips', (0, 0))
-    chips = edge_chips(bm, rng, count, size, shape['h'])
+    chips = edge_chips(bm, rng, count, size, shape.get('h', 1.0))
     solid = new_object(name + '_high', bm)
     remesh(solid, fine)            # one solid of overlapping parts
     if shape.get('panels'):
@@ -784,14 +876,41 @@ def make_shape(kind_name, kind, letter, shape, stone, images, seed):
     low.data = solid.data.copy()
     low.name = name
     scene.collection.objects.link(low)
-    remesh(low, COARSE)
+    remesh(low, kind.get('coarse', COARSE))
     m = low.modifiers.new('decimate', 'DECIMATE')
     m.decimate_type, m.use_collapse_triangulate = 'COLLAPSE', True
-    m.ratio = min(1.0, kind['tris'] / max(1, len(low.data.polygons) * 2))
+    m.ratio = min(1.0, shape.get('tris', kind['tris']) / max(1, len(low.data.polygons) * 2))
     apply(low)
     cut_below(low, -BURY + 0.004)
     weather(solid, stone, shape, seed, images)
     return solid, low
+
+
+def stone_of(name):
+    """A stone's recipe and its pictures."""
+    stone = dict(STONES[name])
+    images = scan(stone['scan']) if 'scan' in stone else surface(stone['surface']) if 'surface' in stone else {}
+    if stone.get('rustic'):
+        images['rustic'] = scan(stone['rustic'])['disp']
+    if stone.get('granite'):
+        stone.update(dark=(0.02, 0.02, 0.022), mid=(0.045, 0.045, 0.048), light=(0.11, 0.107, 0.104))
+    return stone, images
+
+
+def merge(low, part):
+    """Fold a part's game mesh into the shape's."""
+    bm = bmesh.new()
+    bm.from_mesh(low.data)
+    bm.from_mesh(part.data)
+    bm.to_mesh(low.data)
+    bm.free()
+    discard(part)
+
+
+def discard(obj):
+    mesh = obj.data
+    bpy.data.objects.remove(obj)
+    bpy.data.meshes.remove(mesh)
 
 
 def smooth_edges(obj, shape):
@@ -812,19 +931,30 @@ def cut_below(obj, z):
     bm.free()
 
 
-def unwrap(lows):
+def unwrap(lows, from_above=False):
+    """One UV layout for all the shapes of a kind. A heap is laid out as seen from above, each its strip of the
+    picture; anything else is cut into islands by Smart UV Project and packed."""
     bpy.ops.object.select_all(action='DESELECT')
     for low in lows:
         low.select_set(True)
         low.data.uv_layers.new(name='UVMap')
-    bpy.context.view_layer.objects.active = lows[0]
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.uv.smart_project(angle_limit=math.radians(62), island_margin=0.004, area_weight=0.0, correct_aspect=True,
-                             scale_to_bounds=False)
-    bpy.ops.uv.average_islands_scale()
-    bpy.ops.uv.pack_islands(margin=0.006, rotate=True)
-    bpy.ops.object.mode_set(mode='OBJECT')
+    if from_above:
+        for i, low in enumerate(lows):
+            co = np.array([v.co[:2] for v in low.data.vertices])
+            lo, span = co.min(0), np.ptp(co, 0)
+            uv = (co - lo) / span * 0.97 + 0.015
+            uv[:, 0] = (uv[:, 0] + i) / len(lows)
+            loops = np.array([loop.vertex_index for loop in low.data.loops])
+            low.data.uv_layers['UVMap'].data.foreach_set('uv', uv[loops].ravel())
+    else:
+        bpy.context.view_layer.objects.active = lows[0]
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.smart_project(angle_limit=math.radians(62), island_margin=0.004, area_weight=0.0,
+                                 correct_aspect=True, scale_to_bounds=False)
+        bpy.ops.uv.average_islands_scale()
+        bpy.ops.uv.pack_islands(margin=0.006, rotate=True)
+        bpy.ops.object.mode_set(mode='OBJECT')
     for low in lows:
         bpy.context.view_layer.objects.active = low
         bpy.ops.object.shade_smooth_by_angle(angle=math.radians(60))
@@ -843,8 +973,9 @@ def ground_plane():
 def bake_kind(name, kind, pairs, size):
     """Bake the detailed shapes onto the game's, all into one set of pictures. The shapes are set apart in x for it
     so none shades another, and baked as one joined copy, so the margins are Blender's own."""
-    for i, (high, low) in enumerate(pairs):
-        high.location.x = low.location.x = i * 4.0
+    for i, (highs, low) in enumerate(pairs):
+        for obj in highs + [low]:
+            obj.location.x = i * 4.0
     bpy.ops.object.select_all(action='DESELECT')
     copies = []
     for _, low in pairs:
@@ -872,28 +1003,29 @@ def bake_kind(name, kind, pairs, size):
     scene.world = world
     world.light_settings.distance = 0.5
 
-    if os.environ.get('GRAVES_KEEP'):
-        bpy.ops.wm.save_as_mainfile(filepath=str(WORK / f'{name}.blend'))
     pictures = {}
     passes = [('base', 'DIFFUSE', {'COLOR'}, 'sRGB', 1), ('rough', 'ROUGHNESS', set(), 'Non-Color', 1),
-              ('normal', 'NORMAL', set(), 'Non-Color', 4), ('ao', 'AO', set(), 'Non-Color', 16 if QUICK else 96)]
+              ('normal', 'NORMAL', set(), 'Non-Color', 4), ('ao', 'AO', set(), 'Non-Color', 16 if QUICK else 64)]
     for key, kind_of, filt, space, samples in passes:
         image = bpy.data.images.new(f'{name}_{key}_bake', size, size, alpha=False, float_buffer=key == 'normal')
         image.colorspace_settings.name = space
         node.image = image
         scene.cycles.samples = samples
         bpy.ops.object.select_all(action='DESELECT')
-        for high, _ in pairs:
-            high.select_set(True)
+        for highs, _ in pairs:
+            for high in highs:
+                high.select_set(True)
         joined.select_set(True)
         bpy.context.view_layer.objects.active = joined
-        bpy.ops.object.bake(type=kind_of, pass_filter=filt, use_selected_to_active=True, cage_extrusion=0.02,
-                            max_ray_distance=0.05, margin=8, use_clear=True, normal_space='TANGENT')
+        extrusion, reach = kind.get('cage', (0.02, 0.05))
+        bpy.ops.object.bake(type=kind_of, pass_filter=filt, use_selected_to_active=True, cage_extrusion=extrusion,
+                            max_ray_distance=reach, margin=8, use_clear=True, normal_space='TANGENT')
         pictures[key] = image
         print('baked', name, key)
     bpy.data.objects.remove(joined)
-    for high, low in pairs:
-        high.location.x = low.location.x = 0.0
+    for highs, low in pairs:
+        for obj in highs + [low]:
+            obj.location.x = 0.0
     return pictures
 
 
@@ -968,51 +1100,60 @@ def gltf_output_group():
 
 
 def mark_face(low, shape):
-    """The flat front that the lettering goes on: material slot 1, `<kind>_face`."""
+    """The flat face the lettering goes on: material slot 1, `<kind>_face`. `face` is ('front', its y, lowest z) for
+    a face looking along -y, ('top', lowest z) for one looking up; an upright's is its front above the ground."""
+    face = shape.get('face') or ('front', -shape['d'] / 2, 0.03)
     for poly in low.data.polygons:
-        poly.material_index = 0
-        if shape.get('panel') and poly.normal.y < -0.93 and poly.center.z > shape.get('face_z', 0.03) and poly.center.y < -shape['d'] / 2 + 0.03:
-            poly.material_index = 1
+        n, c = poly.normal, poly.center
+        if face[0] == 'top':
+            on = n.z > 0.93 and c.z > face[1]
+        else:
+            on = n.y < -0.93 and c.z > face[2] and abs(c.y - face[1]) < 0.03
+        poly.material_index = 1 if shape.get('panel') and on else 0
 
 
 def make_kind(name):
     kind = KINDS[name]
-    stone = STONES[kind['stone']]
-    images = scan(stone['scan']) if 'scan' in stone else surface(stone['surface']) if 'surface' in stone else {}
-    if stone.get('rustic'):
-        images['rustic'] = scan(stone['rustic'])['disp']
     lichens = {'crust': scan(LICHEN_SCAN)['diff'], 'moss': scan(MOSS_SCAN)['diff']}
-    if stone.get('granite'):
-        stone = dict(stone, dark=(0.025, 0.025, 0.027), mid=(0.11, 0.11, 0.115), light=(0.3, 0.29, 0.28))
     pairs = []
     for i, shape in enumerate(kind['shapes']):
         letter = 'abcdefgh'[i]
-        own = dict(stone)
-        shape_images = dict(images)
-        if not shape.get('rustic'):
-            shape_images.pop('rustic', None)
-        high, low = make_shape(name, kind, letter, shape, own, shape_images, seed=zlib.crc32(f'{name}{i}'.encode()) % 10007)
-        high.data.materials.clear()     # (a boolean leaves its cutter's empty slot behind)
-        high.data.materials.append(stone_material(f'{name}_{letter}_stone', own, shape_images, lichens))
-        pairs.append((high, low))
-        print(name, letter, 'high', len(high.data.polygons), 'low', len(low.data.polygons))
+        highs, low = [], None
+        for j, part in enumerate([shape] + shape.get('parts', [])):
+            stone, images = stone_of(part.get('stone', kind['stone']))
+            if not shape.get('rustic'):
+                images.pop('rustic', None)
+            if part is not shape:
+                part = dict(shape, **part, chips=(0, 0), border=None, panels=False, rustic=False)
+            high, part_low = make_shape(f'{name}_{letter}' + (f'_{j}' if j else ''), kind, part, stone, images,
+                                        seed=zlib.crc32(f'{name}{i}{j}'.encode()) % 10007)
+            high.data.materials.clear()     # (a boolean leaves its cutter's empty slot behind)
+            high.data.materials.append(stone_material(f'{name}_{letter}_{j}_stone', stone, images, lichens))
+            highs.append(high)
+            if low is None:
+                low = part_low
+            else:
+                merge(low, part_low)
+        pairs.append((highs, low))
+        print(name, letter, 'high', sum(len(h.data.polygons) for h in highs), 'low', len(low.data.polygons))
     lows = [low for _, low in pairs]
-    unwrap(lows)
+    unwrap(lows, kind.get('from_above', False))
     ground = ground_plane()
-    size = 256 if QUICK else kind['size']
+    size = 512 if QUICK else kind['size']
     pictures = save_pictures(name, bake_kind(name, kind, pairs, size), size)
     bpy.data.objects.remove(ground)
     body, face = game_material(name, pictures), game_material(name + '_face', pictures)
-    for (high, low), shape in zip(pairs, kind['shapes']):
+    for (highs, low), shape in zip(pairs, kind['shapes']):
         low.data.materials.clear()
         low.data.materials.append(body)
         low.data.materials.append(face)
         mark_face(low, shape)
         low.data.name = low.name
-        low['size'] = [round(v, 3) for v in (shape['w'], shape['d'], shape['h'])]
+        low['size'] = [round(v, 3) for v in (shape['w'], shape.get('size_d', shape['d']), shape['h'])]
         if shape.get('panel'):
             low['panel'] = list(shape['panel'])
-        bpy.data.meshes.remove(high.data)
+        for high in highs:
+            discard(high)
     OUT.mkdir(parents=True, exist_ok=True)
     bpy.ops.object.select_all(action='DESELECT')
     for low in lows:
@@ -1022,7 +1163,7 @@ def make_kind(name):
                               export_tangents=True, export_extras=True, export_image_format='WEBP',
                               export_image_quality=90, export_materials='EXPORT', export_yup=True)
     for low in lows:
-        bpy.data.meshes.remove(low.data)
+        discard(low)
     print('wrote', path, os.path.getsize(path) // 1024, 'KiB')
 
 
