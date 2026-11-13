@@ -168,6 +168,8 @@ export class Behaviour {
         this.touching = [];
         this.strength = { trunk: 1, neck: 1, armL: 1, armR: 1, legL: 1, legR: 1 };
         this.pushes = [];
+        this._guarded = new Set();
+        this._cradle = '';
         this._measure();
     }
 
@@ -301,7 +303,7 @@ export class Behaviour {
                 if (!v.paralysed.arms) this.strength['arm' + k] = 0.6;
             }
         }
-        this.muscles.follow(pose, this.strength);
+        this.muscles.follow(pose, this.strength, this._guard(dt), dt);
         rd.limp = this.state !== 'stand';
         npc.down = rd.limp;
     }
@@ -318,6 +320,36 @@ export class Behaviour {
         s.trunk = s.neck = w;
         s.armL = s.armR = v.paralysed.arms ? 0 : w;
         s.legL = s.legR = v.paralysed.legs ? 0 : w;
+    }
+
+    // The limbs with a broken bone in them, which are kept still (motor.ts `follow`): a broken arm is not put up to
+    // guard, braced with or swung, a broken leg not drawn up or kicked; only an arm the hurt arm's cradle is holding in
+    // (_tend) is moved, gently. Every movement at a break grates the ends on each other, and hurts.
+    _guard(dt) {
+        const rd = this.rd, v = this.npc.vitals, out = this._guarded;
+        out.clear();
+        for (const side of ['L', 'R']) {
+            if (this._broken('arm', side) && this._cradle !== side) out.add('arm' + side);
+            if (this._broken('leg', side)) out.add('leg' + side);
+        }
+        for (const seg of rd.attached) {
+            if (!seg.broken || !seg.joint?.lock) continue;
+            seg.body.getAngularVelocityToRef(_v);
+            seg.parent.body.getAngularVelocityToRef(_t);
+            v.pain = Math.min(1, v.pain + 0.04 * _v.subtractInPlace(_t).length() * dt * this.will);
+        }
+        return out;
+    }
+    declare _guarded: Set<string>;
+    declare _cradle: string;
+
+    // Whether limb `kind` ('arm' or 'leg') on `side` has a bone broken in it: a shaft or joint let go at a mid joint or a
+    // joint (ragdoll `loose` at its far end), or a bone of the foot, hand or wrist.
+    _broken(kind: 'arm' | 'leg', side: string) {
+        const rd = this.rd;
+        if (rd.loose(rd.byName.get((kind === 'arm' ? 'hand' : 'foot') + side))) return true;
+        const keys = kind === 'arm' ? /^(humerus|radius|ulna|scaphoid|carpal|metacarpal)$/ : /^(femur|tibia|fibula|calcaneus|tarsal|metatarsal|kneecap)$/;
+        return !!this.npc.bones?.breaks.some((b) => b.side === side && keys.test(b.key));
     }
 
     _canStand() {
@@ -391,6 +423,11 @@ export class Behaviour {
         // On one foot mid-step, the leg holds the hips up under the pelvis as it is, and leaves its lean alone: levelling
         // it through the one planted leg pushed the body on over that foot, toward the way it was already falling.
         this._tend(pose, dt);
+        // A broken bone in a foot that still lets them stand (a toe's long bone, the fibula alone): the weight kept off it.
+        for (const side of ['L', 'R']) if (this._broken('leg', side)) {
+            this.favour = { side: side === 'L' ? 'R' : 'L', how: 1 };
+            this.strength['leg' + side] *= 0.5;
+        }
         // Dazed, the weight wanders and is caught late; just up off the floor, they stand braced a moment first. Hurt in
         // a leg, it is carried over the other foot.
         this.settle = Math.max(0, this.settle - dt);
@@ -573,6 +610,7 @@ export class Behaviour {
         this.favour = null;
         this.hunch = 0;
         this.holding = {};
+        this._cradle = '';
         if (!w) return;
         // A wound on a piece since cut off is tended where the piece was cut from: the stump, held at its end (the hand
         // went after the arm lying on the floor).
@@ -613,6 +651,7 @@ export class Behaviour {
                 for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
                 pose['curl' + side] = 35;
                 this.strength['arm' + side] *= 1 - 0.5 * e;
+                this._cradle = side;
             }
             if (this._free(other)) this._hold(other, on, out, e, pose);
             more({ spineFlex: 8, neckFlex: 14 });
@@ -654,7 +693,7 @@ export class Behaviour {
     // Whether hand `side` can hold anything: an arm with strength in it, not hurt (hit()), broken above the hand or cut off.
     _free(side) {
         const rd = this.rd, hand = rd.byName.get('hand' + side);
-        return this.strength['arm' + side] >= 0.05 && !this.hurt[side] && !rd.loose(hand) && !rd.cutOff(hand);
+        return this.strength['arm' + side] >= 0.05 && !this.hurt[side] && !this._broken('arm', side) && !rd.cutOff(hand);
     }
 
     // Hand `side` put on `at` (world, just off the skin, which faces `out`): the arm's joints posed to reach it (_armTo),
@@ -807,7 +846,7 @@ export class Behaviour {
         if (will > 0.3) {
             for (const side of ['L', 'R']) {
                 const hand = rd.byName.get('hand' + side), arm = s['arm' + side];
-                if (!arm || rd.loose(hand)) continue;
+                if (!arm || this._broken('arm', side)) continue;
                 const spot = this.com.add(going.scale(0.5)).add(right.scale((side === 'R' ? 0.22 : -0.22)));
                 spot.y = this.floor + 0.08;
                 this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, spot, 120, 3, 70 * arm * will, _t), [chest], dt));
@@ -1024,7 +1063,7 @@ export class Behaviour {
         const limbs = this._limbsDown();
         for (const side of ['L', 'R']) {
             const hand = rd.byName.get('hand' + side), arm = s['arm' + side];
-            if (!arm || rd.loose(hand)) continue;
+            if (!arm || this._broken('arm', side)) continue;
             const reaching = Math.cos(this.phase) * (side === 'L' ? 1 : -1);
             if (reaching > 0) {
                 const spot = chest.node.position.add(f.scale(0.62)).add(new V3(f.z, 0, -f.x).scale(side === 'R' ? 0.2 : -0.2));

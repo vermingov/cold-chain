@@ -25,11 +25,13 @@ const PART = (name: string) => /^(belly|chest)$/.test(name) ? 'trunk' : name ===
 
 export type Strength = { trunk: number; neck: number; armL: number; armR: number; legL: number; legR: number };
 
-const _q = new Q(), _q2 = new Q(), _local = new Q(), _v = new V3(), _w = new V3(), _a = new V3();
+const _q = new Q(), _q2 = new Q(), _local = new Q(), _v = new V3(), _w = new V3(), _a = new V3(), _now = [0, 0, 0];
+const NONE = new Set<string>();
+const GUARD = 0.8;          // s: how slowly a guarded limb's aim follows where it lies
 
 export class Muscles {
     declare ragdoll: Ragdoll;
-    declare joints: { seg: any; part: string; bones: any[][]; target: number[]; q: BABYLON.Quaternion }[];
+    declare joints: { seg: any; part: string; bones: any[][]; target: number[]; q: BABYLON.Quaternion; still?: number[] | null }[];
     declare fingers: { bone: BABYLON.Bone; turns: any[]; hand: any }[];
     declare _curl: string;
     declare _hands: string[];
@@ -76,11 +78,21 @@ export class Muscles {
     }
 
     // Every joint pulled toward `pose` with the strength of its part of the body (0 to 1); a joint below a broken bone
-    // is left to hang.
-    follow(pose, strength: Strength) {
+    // is left to hang. The parts in `guarded` (a broken limb) are not posed at all: their muscles hold them where they
+    // lie, braced against being moved, and let them settle where the floor and their weight put them (an aim that
+    // follows the joint over GUARD seconds): moved by the pose, the half above a break swung the half below it about.
+    follow(pose, strength: Strength, guarded: Set<string> = NONE, dt = 0) {
         const rd = this.ragdoll;
         for (const j of this.joints) {
             const s = rd.loose(j.seg) ? 0 : strength[j.part];
+            if (s > 0.004 && guarded.has(j.part)) {
+                const now = rd.angles(j.seg, _now);
+                j.still ??= [...now];
+                for (let i = 0; i < 3; i++) j.still[i] += (now[i] - j.still[i]) * Math.min(1, dt / GUARD);
+                rd.hold(j.seg, j.still, s * 0.35);
+                continue;
+            }
+            j.still = null;
             if (s > 0.004) rd.hold(j.seg, jointAngles(this._turn(j.bones, pose, j.q).multiplyInPlace(j.seg.unneutral), j.seg.frame, j.target), s);
             else rd.hold(j.seg, j.target, 0);
         }

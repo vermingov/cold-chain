@@ -661,7 +661,8 @@ export class Bones {
             }
             case 'calcaneus':
             case 'tarsal':
-                if (br.how === 'fall') npc.legGone = true;
+                // A broken heel or talus takes no weight, whatever broke it (a shot through it as much as a fall on it).
+                npc.legGone = true;
                 return;
         }
         if (/vertebra/.test(br.key)) this._spine(br);

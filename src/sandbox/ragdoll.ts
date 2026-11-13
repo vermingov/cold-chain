@@ -139,6 +139,13 @@ const LIMBS = 8;                // the rest of the arms and legs
 const THIN = 0.95;
 const GARMENT = 0.015;          // m: the most a segment's shape is grown for the clothes over it
 const TONE = { alive: 18, out: 5, dead: 1.2 };      // Nm of resistance in every joint: muscle with a mind behind it, without, and none
+// A muscle as a spring (hold): N m per radian off its aim for each N m it has (all of it at a fifth of a radian off), and
+// its damping, of critical for what the joint swings (`swing`, kg m2, everything past the joint about it).
+const STIFF = 5, DAMP = 0.8;
+const AXIS_SHARE = [1, 0.6, 0.8];   // hinge, twist, side: the muscle across each
+// A broken shaft's two ends grating on each other in the flesh, N m per kg the far half weighs: it hangs and swings at
+// the break, catching a little, whatever the muscles above are doing (the tone is the joints', not the break's).
+const GRATE = 0.25;
 
 // A turn `q` (in a joint's parent's frame) as the joint's three angles. Havok's 6DoF joint reads a turn as about its
 // first axis, then its second, then its third, each about the axis as already turned (measured: a motor target of
@@ -214,6 +221,15 @@ export class Ragdoll {
             this.byName.set(name, seg);
         }
         for (const seg of this.segments) if (seg.joint) seg.parent = this.byName.get(seg.joint.parent);
+        // What each joint swings: everything past it, about it, as the body stands at rest.
+        for (const seg of this.segments) {
+            seg.swing = 0.002;
+            for (const d of this.segments) {
+                let at = d;
+                while (at && at !== seg) at = at.parent;
+                if (at) seg.swing += d.mass * V3.DistanceSquared(d.head.add(d.centre), seg.head);
+            }
+        }
         this.attached = this.segments;
         this._cuts = [];
         this._chains();
@@ -485,16 +501,25 @@ export class Ragdoll {
     angles(seg, out: number[]) { return jointAngles(this.relative(seg, _q).multiplyInPlace(seg.unneutral), seg.frame, out); }
 
     // Muscle on a joint: its motors pull it toward `target` (hinge, twist, side, radians) with up to `strength` (0 to
-    // 1) of what its muscles have. Havok's motor is a servo that reaches its target within the force it is allowed,
-    // so how hard is all there is to say about it; nothing is sent that has not changed.
+    // 1) of what its muscles have. A muscle is a spring with give, not a servo: it pulls harder the further the joint is
+    // from where it is aimed (STIFF of its most per radian, stiffness growing with how hard it works), damped like a limb
+    // (DAMP of critical, for what the joint swings), and never past its most. (Havok's POSITION motor reaches its target
+    // within one step whatever is in the way, up to its force: a hand or a foot held to an angle against a contact, or
+    // against a target worked out each frame from where the body had just been shaken to, was driven back and forth at
+    // the step rate, 1 to 9 rad/s with the body still.) Havok's SPRING_FORCE motor, which Babylon's plugin does not name
+    // (its own `HP_Constraint_SetAxisMotorStiffness` / `...Damping` / `...PositionTarget`, HavokPhysics.d.ts 1.3.14).
+    // Nothing is sent that has not changed.
     hold(seg, target: number[], strength: number) {
         const c = seg.constraint, m = seg.motor;
         const on = strength > 0.004 && !seg.locked;
+        const hk = (this.scene.getPhysicsEngine().getPhysicsPlugin() as any), hp = hk._hknp;
+        const each = (fn) => { for (const id of c._pluginData) for (let i = 0; i < 3; i++) fn(id, hk._constraintAxisToNative(ANGULAR[i]), i); };
         if (on !== m.on) {
             // A muscle lets go by its motors losing their force, not the motors: Havok (1.3.10 to 1.3.14) frees memory
             // it still uses when a position motor is set back to NONE, and a later motor call traps (memory access out of
-            // bounds, every frame after it failing). A motor of no force swings a joint as none does (to 1e-7 m).
-            if (on && !m.made) for (const axis of ANGULAR) c.setAxisMotorType(axis, BABYLON.PhysicsConstraintMotorType.POSITION);
+            // bounds, every frame after it failing). A motor of no force swings a joint as none does (to 1e-7 m). The
+            // motor's kind is set once and never changed.
+            if (on && !m.made) each((id, axis) => hp.HP_Constraint_SetAxisMotorType(id, axis, hp.ConstraintMotorType.SPRING_FORCE));
             m.made ||= on;
             m.on = on;
             m.f = -1;
@@ -502,16 +527,21 @@ export class Ragdoll {
         }
         if (!m.made) return;
         const f = on ? strength * seg.muscle : 0;
-        if (Math.abs(f - m.f) > 0.03 * m.f + 0.2) {
-            c.setAxisMotorMaxForce(AXIS.ANGULAR_X, f);
-            c.setAxisMotorMaxForce(AXIS.ANGULAR_Y, f * 0.6);
-            c.setAxisMotorMaxForce(AXIS.ANGULAR_Z, f * 0.8);
+        if (Math.abs(f - m.f) > 0.03 * m.f + 0.2 || (f === 0 && m.f !== 0)) {
+            // (Twist and the side bend have less muscle across them than the main bend.)
+            const k = f * STIFF, d = 2 * DAMP * Math.sqrt(k * seg.swing);
+            each((id, axis, i) => {
+                const share = AXIS_SHARE[i];
+                hp.HP_Constraint_SetAxisMotorMaxForce(id, axis, f * share);
+                hp.HP_Constraint_SetAxisMotorStiffness(id, axis, k * share);
+                hp.HP_Constraint_SetAxisMotorDamping(id, axis, d * Math.sqrt(share));
+            });
             m.f = f;
         }
         if (!on) return;
         for (let i = 0; i < 3; i++) {
             const t = Math.max(seg.lo[i] + 0.02, Math.min(seg.hi[i] - 0.02, target[i]));
-            if (!(Math.abs(t - m.t[i]) < 0.002)) { c.setAxisMotorTarget(ANGULAR[i], t); m.t[i] = t; }
+            if (!(Math.abs(t - m.t[i]) < 0.002)) { each((id, axis, j) => j === i && hp.HP_Constraint_SetAxisMotorPositionTarget(id, axis, t)); m.t[i] = t; }
         }
     }
 
@@ -567,8 +597,10 @@ export class Ragdoll {
         this._toned = true;
         for (const seg of this.segments) {
             if (!seg.constraint || seg.locked) continue;
+            // (A broken shaft's mid joint keeps its grating, breakAt's: given the tone, a broken shin was held at the break
+            // by 4.5 N m while awake and let go when they passed out.)
             const k = this.cutOff(seg) ? TONE.dead : this.tone;
-            for (const axis of ANGULAR) seg.constraint.setAxisFriction(axis, k * seg.mass / 6);
+            for (const axis of ANGULAR) seg.constraint.setAxisFriction(axis, seg.joint.lock ? GRATE * seg.mass : k * seg.mass / 6);
         }
     }
     declare _toned: boolean;
@@ -585,7 +617,7 @@ export class Ragdoll {
             c.setAxisMode(axis, LIMIT.LIMITED);
             c.setAxisMinLimit(axis, -most);
             c.setAxisMaxLimit(axis, most);
-            c.setAxisFriction(axis, 0.4);
+            c.setAxisFriction(axis, GRATE * seg.mass);
         }
         return true;
     }
