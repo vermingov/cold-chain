@@ -1,0 +1,729 @@
+{
+ "anchors": {
+  "floor": "stands on y = 0, centred in x and z, front facing +Z",
+  "wall": "hangs on a wall whose surface is the plane z = 0 and sticks out toward +Z; centred in x, and in y on its own middle",
+  "ceiling": "hangs down from y = 0, centred in x and z"
+ },
+ "models": {
+  "Television_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.3,
+     0,
+     -0.2354
+    ],
+    "max": [
+     0.3,
+     0.4568,
+     0.2354
+    ]
+   },
+   "bytes": 211264,
+   "file": "Television_01.bin",
+   "size": [
+    0.6,
+    0.4568,
+    0.4708
+   ],
+   "sourceTriangles": 1918,
+   "triangles": 1918
+  },
+  "cardboard_box_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.1934,
+     0,
+     -0.2579
+    ],
+    "max": [
+     0.1934,
+     0.3418,
+     0.2579
+    ]
+   },
+   "bytes": 235702,
+   "file": "cardboard_box_01.bin",
+   "size": [
+    0.3868,
+    0.3418,
+    0.5158
+   ],
+   "sourceTriangles": 16952,
+   "triangles": 3500
+  },
+  "concrete_cat_statue": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.0762,
+     0,
+     -0.1248
+    ],
+    "max": [
+     0.0762,
+     0.283,
+     0.1248
+    ]
+   },
+   "bytes": 275552,
+   "file": "concrete_cat_statue.bin",
+   "size": [
+    0.1524,
+    0.283,
+    0.2496
+   ],
+   "sourceTriangles": 11950,
+   "triangles": 1200
+  },
+  "covered_car": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.8942,
+     0,
+     -2.1901
+    ],
+    "max": [
+     0.8942,
+     1.4102,
+     2.1901
+    ]
+   },
+   "bytes": 734659,
+   "file": "covered_car.bin",
+   "size": [
+    1.7884,
+    1.4102,
+    4.3802
+   ],
+   "sourceTriangles": 12592,
+   "triangles": 5999
+  },
+  "crowbar_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.0202,
+     0,
+     -0.0638
+    ],
+    "max": [
+     0.0202,
+     0.5554,
+     0.0638
+    ]
+   },
+   "bytes": 184693,
+   "file": "crowbar_01.bin",
+   "size": [
+    0.0404,
+    0.5554,
+    0.1276
+   ],
+   "sourceTriangles": 2300,
+   "triangles": 2300
+  },
+  "dining_chair_02": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.2157,
+     0,
+     -0.2879
+    ],
+    "max": [
+     0.2157,
+     0.9733,
+     0.2879
+    ]
+   },
+   "bytes": 221170,
+   "file": "dining_chair_02.bin",
+   "size": [
+    0.4314,
+    0.9733,
+    0.5758
+   ],
+   "sourceTriangles": 22013,
+   "triangles": 3500
+  },
+  "dining_table": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -1.1279,
+     0,
+     -0.6951
+    ],
+    "max": [
+     1.1279,
+     0.877,
+     0.6951
+    ]
+   },
+   "bytes": 684003,
+   "file": "dining_table.bin",
+   "size": [
+    2.2558,
+    0.877,
+    1.3902
+   ],
+   "sourceTriangles": 1048,
+   "triangles": 1048
+  },
+  "drawer_cabinet": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.5705,
+     0,
+     -0.244
+    ],
+    "max": [
+     0.5705,
+     1.8775,
+     0.244
+    ]
+   },
+   "bytes": 577894,
+   "file": "drawer_cabinet.bin",
+   "size": [
+    1.141,
+    1.8775,
+    0.488
+   ],
+   "sourceTriangles": 26406,
+   "triangles": 6000
+  },
+  "gothic_statue": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.7363,
+     0,
+     -0.7819
+    ],
+    "max": [
+     0.7363,
+     1.7399,
+     0.7819
+    ]
+   },
+   "bytes": 1273111,
+   "file": "gothic_statue.bin",
+   "size": [
+    1.4726,
+    1.7399,
+    1.5638
+   ],
+   "sourceTriangles": 27739,
+   "triangles": 6000
+  },
+  "hand_truck": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.2966,
+     0,
+     -0.3454
+    ],
+    "max": [
+     0.2966,
+     1.4022,
+     0.3454
+    ]
+   },
+   "bytes": 1104863,
+   "file": "hand_truck.bin",
+   "size": [
+    0.5932,
+    1.4022,
+    0.6908
+   ],
+   "sourceTriangles": 13220,
+   "triangles": 6000
+  },
+  "large_iron_gate": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -1.475,
+     0,
+     -0.0461
+    ],
+    "max": [
+     1.475,
+     2.9265,
+     0.0461
+    ]
+   },
+   "bytes": 774806,
+   "file": "large_iron_gate.bin",
+   "size": [
+    2.95,
+    2.9265,
+    0.0922
+   ],
+   "sourceTriangles": 38140,
+   "triangles": 5998
+  },
+  "medical_box": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.2627,
+     0,
+     -0.1751
+    ],
+    "max": [
+     0.2627,
+     0.0975,
+     0.1751
+    ]
+   },
+   "bytes": 279186,
+   "file": "medical_box.bin",
+   "size": [
+    0.5254,
+    0.0975,
+    0.3502
+   ],
+   "sourceTriangles": 3718,
+   "triangles": 3500
+  },
+  "metal_toolbox": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.2,
+     0,
+     -0.1348
+    ],
+    "max": [
+     0.2,
+     0.3036,
+     0.1348
+    ]
+   },
+   "bytes": 221682,
+   "file": "metal_toolbox.bin",
+   "size": [
+    0.4,
+    0.3036,
+    0.2696
+   ],
+   "sourceTriangles": 14228,
+   "triangles": 1196
+  },
+  "metal_trash_can": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.3858,
+     0,
+     -0.2745
+    ],
+    "max": [
+     0.3858,
+     0.9061,
+     0.2745
+    ]
+   },
+   "bytes": 292559,
+   "file": "metal_trash_can.bin",
+   "size": [
+    0.7716,
+    0.9061,
+    0.549
+   ],
+   "sourceTriangles": 7532,
+   "triangles": 3500
+  },
+  "painted_wooden_bench": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.5825,
+     0,
+     -0.2483
+    ],
+    "max": [
+     0.5825,
+     0.8893,
+     0.2483
+    ]
+   },
+   "bytes": 561626,
+   "file": "painted_wooden_bench.bin",
+   "size": [
+    1.165,
+    0.8893,
+    0.4966
+   ],
+   "sourceTriangles": 630,
+   "triangles": 630
+  },
+  "picke_dirty_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.2748,
+     0,
+     -0.0346
+    ],
+    "max": [
+     0.2748,
+     1.1155,
+     0.0346
+    ]
+   },
+   "bytes": 688311,
+   "file": "picke_dirty_01.bin",
+   "size": [
+    0.5496,
+    1.1155,
+    0.0692
+   ],
+   "sourceTriangles": 6196,
+   "triangles": 3500
+  },
+  "pull_chain_light_socket": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.0551,
+     0,
+     -0.0551
+    ],
+    "max": [
+     0.0551,
+     0.1654,
+     0.0551
+    ]
+   },
+   "bytes": 202007,
+   "file": "pull_chain_light_socket.bin",
+   "size": [
+    0.1102,
+    0.1654,
+    0.1102
+   ],
+   "sourceTriangles": 10902,
+   "triangles": 1039
+  },
+  "rusted_spade_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.0841,
+     0,
+     -0.0227
+    ],
+    "max": [
+     0.0841,
+     1.1008,
+     0.0227
+    ]
+   },
+   "bytes": 703183,
+   "file": "rusted_spade_01.bin",
+   "size": [
+    0.1682,
+    1.1008,
+    0.0454
+   ],
+   "sourceTriangles": 11436,
+   "triangles": 3500
+  },
+  "shrub_02": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -3.0149,
+     0,
+     -1.1425
+    ],
+    "max": [
+     3.0149,
+     1.6988,
+     1.1425
+    ]
+   },
+   "bytes": 558733,
+   "file": "shrub_02.bin",
+   "size": [
+    6.0298,
+    1.6988,
+    2.285
+   ],
+   "sourceTriangles": 27254,
+   "triangles": 5994
+  },
+  "shrub_03": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.6835,
+     0,
+     -0.0756
+    ],
+    "max": [
+     0.6835,
+     0.4028,
+     0.0756
+    ]
+   },
+   "bytes": 594822,
+   "file": "shrub_03.bin",
+   "size": [
+    1.367,
+    0.4028,
+    0.1512
+   ],
+   "sourceTriangles": 8287,
+   "triangles": 6000
+  },
+  "sofa_02": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.9036,
+     0,
+     -0.4089
+    ],
+    "max": [
+     0.9036,
+     0.7095,
+     0.4089
+    ]
+   },
+   "bytes": 428216,
+   "file": "sofa_02.bin",
+   "size": [
+    1.8072,
+    0.7095,
+    0.8178
+   ],
+   "sourceTriangles": 2728,
+   "triangles": 2728
+  },
+  "street_lamp_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.3507,
+     0,
+     -0.1932
+    ],
+    "max": [
+     0.3507,
+     3.8699,
+     0.1932
+    ]
+   },
+   "bytes": 537360,
+   "file": "street_lamp_01.bin",
+   "size": [
+    0.7014,
+    3.8699,
+    0.3864
+   ],
+   "sourceTriangles": 30610,
+   "triangles": 5998
+  },
+  "tree_stump_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.7128,
+     0,
+     -0.7937
+    ],
+    "max": [
+     0.7128,
+     0.5694,
+     0.7937
+    ]
+   },
+   "bytes": 1132904,
+   "file": "tree_stump_01.bin",
+   "size": [
+    1.4256,
+    0.5694,
+    1.5874
+   ],
+   "sourceTriangles": 41046,
+   "triangles": 6000
+  },
+  "vintage_electric_kettle": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.1595,
+     0,
+     -0.1243
+    ],
+    "max": [
+     0.1595,
+     0.3032,
+     0.1243
+    ]
+   },
+   "bytes": 222815,
+   "file": "vintage_electric_kettle.bin",
+   "size": [
+    0.319,
+    0.3032,
+    0.2486
+   ],
+   "sourceTriangles": 14838,
+   "triangles": 1198
+  },
+  "vintage_flashlight": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.0477,
+     0,
+     -0.1527
+    ],
+    "max": [
+     0.0477,
+     0.1438,
+     0.1527
+    ]
+   },
+   "bytes": 173304,
+   "file": "vintage_flashlight.bin",
+   "size": [
+    0.0954,
+    0.1438,
+    0.3054
+   ],
+   "sourceTriangles": 10562,
+   "triangles": 1190
+  },
+  "vintage_oil_lamp": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.11,
+     0,
+     -0.11
+    ],
+    "max": [
+     0.11,
+     0.8016,
+     0.11
+    ]
+   },
+   "bytes": 275364,
+   "file": "vintage_oil_lamp.bin",
+   "size": [
+    0.22,
+    0.8016,
+    0.22
+   ],
+   "sourceTriangles": 7208,
+   "triangles": 3497
+  },
+  "wall_clock": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.1599,
+     0,
+     -0.0235
+    ],
+    "max": [
+     0.1599,
+     0.3205,
+     0.0235
+    ]
+   },
+   "bytes": 180096,
+   "file": "wall_clock.bin",
+   "size": [
+    0.3198,
+    0.3205,
+    0.047
+   ],
+   "sourceTriangles": 3658,
+   "triangles": 1198
+  },
+  "watering_can_metal_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.0952,
+     0,
+     -0.2252
+    ],
+    "max": [
+     0.0952,
+     0.1965,
+     0.2252
+    ]
+   },
+   "bytes": 234284,
+   "file": "watering_can_metal_01.bin",
+   "size": [
+    0.1904,
+    0.1965,
+    0.4504
+   ],
+   "sourceTriangles": 11837,
+   "triangles": 1199
+  },
+  "wooden_bucket_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.1835,
+     0,
+     -0.1711
+    ],
+    "max": [
+     0.1835,
+     0.5499,
+     0.1711
+    ]
+   },
+   "bytes": 286444,
+   "file": "wooden_bucket_01.bin",
+   "size": [
+    0.367,
+    0.5499,
+    0.3422
+   ],
+   "sourceTriangles": 5116,
+   "triangles": 3499
+  },
+  "wooden_lantern_01": {
+   "anchor": "floor",
+   "bounds": {
+    "min": [
+     -0.1104,
+     0,
+     -0.1166
+    ],
+    "max": [
+     0.1104,
+     0.5301,
+     0.1166
+    ]
+   },
+   "bytes": 369258,
+   "file": "wooden_lantern_01.bin",
+   "size": [
+    0.2208,
+    0.5301,
+    0.2332
+   ],
+   "sourceTriangles": 8321,
+   "triangles": 3499
+  }
+ }
+}
