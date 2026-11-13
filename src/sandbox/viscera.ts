@@ -548,7 +548,7 @@ export class Viscera {
     // --- every frame ------------------------------------------------------------------------
 
     update(dt: number) {
-        if (this._stale && this.openings.length) this._organs();
+        if (this._stale && this.openings.length) { this._organs(); for (const l of this.loops) l.bloodied(); }
         this._stale = false;
         if (!this.loops.length) return;
         const npc = this.npc, rd = npc.ragdoll, v = npc.vitals;
@@ -662,6 +662,19 @@ class Loop {
             this.q.set([p.x, p.y, p.z], i * 3);
         }
         this._build();
+        this.bloodied();
+    }
+
+    // Blood on it where it lies in the belly as on the organs round it (Viscera._bloodAt): round the opening, and where
+    // what made it went through it or past it. (Without it what lay behind a shotgun's hole was the one clean, pale thing
+    // in a bloody cavity.)
+    bloodied() {
+        const toRest = this.v.npc.restToWorld(this.o.owner).clone().invert(), at = new V3();
+        for (let i = 0; i < this.count; i++) {
+            V3.TransformCoordinatesFromFloatsToRef(this.p[i * 3], this.p[i * 3 + 1], this.p[i * 3 + 2], toRest, at);
+            this.gore[i] = Math.max(this.gore[i], this.v._bloodAt(at.x, at.y, at.z));
+        }
+        this._bloody = true;
     }
 
     at(i: number) { return new V3(this.p[i * 3], this.p[i * 3 + 1], this.p[i * 3 + 2]); }

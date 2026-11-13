@@ -13,7 +13,7 @@ export default defineConfig({
     build: {
         target: 'es2022',
         assetsDir: 'build',
-        rollupOptions: { input: ['index.html', 'play.html', 'story.html', 'dev/yard.html', 'dev/table.html', 'dev/people.html', 'dev/listen.html'] },
+        rollupOptions: { input: ['index.html', 'play.html', 'dev/people.html', 'dev/listen.html'] },
     },
     optimizeDeps: { exclude: ['@babylonjs/havok'] },
 });

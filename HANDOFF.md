@@ -1,12 +1,12 @@
 # Cold Chain: handoff to the cloud session (2026-11-13)
 
-Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. `DESIGN.md` is the older
-story design; the game is now a sandbox.
+Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
 ## What it is
 
 A realistic ragdoll / vitals / blood sandbox in first person, Babylon.js 9.27.1 + Havok, TypeScript 7 built with Vite 8.
-Played at `play.html`; code in `src/sandbox/`. The old grave-robbing story is kept at `story.html` (untouched).
+Played at `play.html`; code in `src/sandbox/`. The old grave-robbing story and the table were removed in 0.8.19 (git
+history has them); only `src/table/arm.ts` stays, as the player's first-person arm.
 You walk a hall with four people (MakeHuman bodies with real anatomy: organs, bones, layers of skin/fat/muscle), take
 weapons off an arsenal board (pistol, knife, sword, bat, AK, M4, shotgun, rifle, grenade, things to throw, fists) and
 hurt them: wounds, bleeding, blood on floor/clothes, fractures, dismemberment, evisceration, bruising, vitals.
