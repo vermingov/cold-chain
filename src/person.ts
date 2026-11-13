@@ -137,7 +137,8 @@ const KINDS = {
     deadSkin: { rough: 0.62, specular: 0.35, tint: [0.74, 0.77, 0.7] },
     eyes: { rough: 0.08, specular: 1.0, blend: true },
     teeth: { rough: 0.3, specular: 0.6, blend: true, tint: [0.62, 0.6, 0.5] },
-    tongue: { rough: 0.35, specular: 0.5 },
+    // (Inside a mouth the lips, cheeks and teeth shade the tongue, and nothing here draws that shade: it is in its colour.)
+    tongue: { rough: 0.35, specular: 0.5, tint: [0.55, 0.42, 0.42] },
     brows: { rough: 0.8, specular: 0.1, blend: true },
     lashes: { rough: 0.8, specular: 0.1, blend: true },
     hair: { rough: 0.6, specular: 0.25, cut: 0.35, twoSided: true },

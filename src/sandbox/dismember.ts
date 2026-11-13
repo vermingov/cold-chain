@@ -318,6 +318,10 @@ export class Dismember {
             }
             return changed;
         };
+        // (The piece starts from the body's weights as they are before this cut: the file's would carry the corners round
+        // an earlier cut lower down, the hand's at the wrist, by the bones of the piece that cut took, and they were
+        // stretched from this piece to that one across the floor.)
+        const before = mi.slice(), beforeW = mw.slice();
         const kept = new Uint8Array(vertices);
         for (let i = 0; i < drawn.length; i += 3) if (drawn[i] !== drawn[i + 1] || drawn[i] !== drawn[i + 2]) kept[drawn[i]] = kept[drawn[i + 1]] = kept[drawn[i + 2]] = 1;
         for (let v = 0; v < vertices; v++) {
@@ -335,8 +339,7 @@ export class Dismember {
         list.forEach((v, k) => {
             for (let q = 0; q < 3; q++) { P[k * 3 + q] = pos[v * 3 + q]; N[k * 3 + q] = arrays.normal[v * 3 + q]; }
             U[k * 2] = arrays.uv[v * 2]; U[k * 2 + 1] = arrays.uv[v * 2 + 1];
-            // (The piece's weights are the file's, the body's own having been changed at earlier cuts.)
-            for (let q = 0; q < 4; q++) { J[k * 4 + q] = arrays.joints[v * 4 + q]; W[k * 4 + q] = arrays.weights[v * 4 + q] / 255; }
+            for (let q = 0; q < 4; q++) { J[k * 4 + q] = before[v * 4 + q]; W[k * 4 + q] = beforeW[v * 4 + q]; }
             reweigh(v, (bn) => !gone[bn], rootIndex, W, J, k * 4);
         });
         const index: number[] = [], ranges: { part: number; start: number; count: number }[] = [];

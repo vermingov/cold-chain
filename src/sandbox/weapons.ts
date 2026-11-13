@@ -16,8 +16,15 @@ import { blast } from './dismember.ts';
 import * as viscera from './viscera.ts';
 import { Fist } from './fist.ts';
 import { Medic, buildKit } from './dressing.ts';
+import { GAMMA, RHO, volume } from './fluid.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const FRAGMENTS = 1000;      // an M67's body breaks into roughly this many that can wound
+
+// Blood a blade brings out of a wound (dev/research/stab-wounds.md sec. 2). Nobody has measured it. Pulled out of a pool
+// at 1 m/s a plate keeps a film 0.34 mm thick (Landau-Levich), but the skin's edges wipe the blade on its way out: taken
+// as 0.03 mm over both faces of what went in, of which 0.01 mm stays on as a smear that nothing shakes off (estimates).
+const FILM = 0.00003, SMEAR = 0.00001;
+const DRIES = 300;          // seconds for blood on the blade to go from wet red to dull brown (a thin film: an estimate)
 
 type Gun = Missile & { rounds: number; every: number; pellets: number; spread: number; kick: number; sound: string; reload: number; speed: number; auto?: boolean };
 
@@ -38,9 +45,9 @@ const HELD = {
 
 export const ARMS = [
     { key: 'knife', name: 'Knife', kind: 'blade', reach: 1.0, swing: 0.32,
-        stab: { energy: 70, mass: 0.2, calibre: 0.02, channel: 0.006, soft: 1.4, hard: 40, reach: 0.17, blade: true } as Missile, cut: 0.022 },
+        stab: { energy: 70, mass: 0.2, calibre: 0.02, channel: 0.006, soft: 1.4, hard: 40, reach: 0.17, blade: true, edges: 1, taper: 0.04 } as Missile, cut: 0.022 },
     { key: 'sword', name: 'Sword', kind: 'blade', reach: 1.65, swing: 0.5,
-        stab: { energy: 150, mass: 1.2, calibre: 0.03, channel: 0.01, soft: 1.2, hard: 40, reach: 0.75, blade: true } as Missile, cut: 0.055 },
+        stab: { energy: 150, mass: 1.2, calibre: 0.03, channel: 0.01, soft: 1.2, hard: 40, reach: 0.75, blade: true, edges: 2, taper: 0.25 } as Missile, cut: 0.055 },
     { key: 'bat', name: 'Baseball bat', kind: 'blunt', reach: 1.25, swing: 0.55, mass: 0.79, speed: 15.5 },  // a man's full swing at head height: about 110 J (dev/research/blunt-trauma.md)
     { key: 'pistol', name: 'Pistol', kind: 'gun', gun: { energy: 480, mass: 0.008, speed: 360, calibre: 0.009, channel: 0.006, soft: 12, hard: 110, rounds: 15, every: 0.13,
         pellets: 1, spread: 0.004, kick: 0.035, sound: 'shot-pistol', reload: 1.6 } as Gun },
@@ -95,6 +102,7 @@ export class Weapons {
     declare flashAt: number;
     declare fist: Fist | null;
     declare medic: Medic;
+    declare blades: Map<string, { wet: number; held: number; age: number; at: BABYLON.Vector3 | null; v: BABYLON.Vector3 | null; looks: any[] }>;
 
     constructor(world) {
         this.world = world;
@@ -107,6 +115,7 @@ export class Weapons {
         this.grenades = [];
         this.fist = null;
         this.medic = new Medic(this);
+        this.blades = new Map();
         const { scene, camera } = world;
         this.hand = new BABYLON.TransformNode('hand', scene);
         this.hand.parent = camera;
@@ -187,7 +196,19 @@ export class Weapons {
             this.models.set(key, align);
             // Where the muzzle and the port are, in the hand's frame.
             const local = (a) => (a ? p(a).applyRotationQuaternion(turn).add(align.position) : null);
-            this._anchors.set(key, { tip: local(j.tip), ejection: local(j.ejection), eject: j.ejectDir ? V3.FromArray(j.ejectDir) : V3.Right() });
+            // (And for a blade, which way across it its edge is: weapons.json's `up` is its back.)
+            const edge = j.up ? local(j.grip.map((x, i) => x - j.up[i])).subtract(local(j.grip)).normalize() : null;
+            this._anchors.set(key, { tip: local(j.tip), ejection: local(j.ejection), eject: j.ejectDir ? V3.FromArray(j.ejectDir) : V3.Right(), edge });
+            // The blood on a blade, and the blade's own material to show it on (the knife's blade is a mesh of its own; the
+            // estoc is one mesh with its hilt, which would redden too, so its blood is not drawn).
+            if (ARMS.find((a) => a.key === key)?.kind === 'blade') {
+                const looks = root.getChildMeshes().filter((m) => /blade/.test(m.name) || /blade/.test(m.parent?.name ?? '')).map((mesh) => {
+                    const own = (mesh.material as BABYLON.PBRMaterial).clone(`${mesh.material.name}_bloody`);
+                    mesh.material = own;
+                    return { material: own, albedo: own.albedoColor.clone(), metallic: own.metallic ?? 1, roughness: own.roughness ?? 1 };
+                });
+                this.blades.set(key, { wet: 0, held: 0, age: 0, at: null, v: null, looks });
+            }
         }));
         // The arm a punch is thrown with: a working man's, in the sleeve of his jacket.
         if (this.world.people) this.fist = new Fist(this.world.people, 'sexton', this.world.camera, (m) => this.world.shadows?.addShadowCaster(m));
@@ -210,6 +231,7 @@ export class Weapons {
         this.action = null;
         this.reloading = 0;
         for (const [key, node] of this.models) node.setEnabled(key === this.arm.key);
+        for (const blade of this.blades.values()) blade.at = blade.v = null;
         const held = HELD[this.arm.key];
         if (held) {
             this.hand.position.set(held.at[0], held.at[1], held.at[2]);
@@ -414,7 +436,11 @@ export class Weapons {
             const skin = person.npc.surface(eye, ahead, arm.reach).find((h) => h.kind === 'skin');
             if (!skin) return;
             setTimeout(() => {
-                pierce(person.npc, eye, ahead, arm.stab, arm.reach + arm.stab.reach);
+                const edge = this._anchors.get(arm.key)?.edge;
+                const across = edge ? V3.TransformNormal(edge, this.hand.getWorldMatrix()).normalize() : undefined;
+                const res = pierce(person.npc, eye, ahead, { ...arm.stab, across }, arm.reach + arm.stab.reach);
+                // The blade comes out with blood over what went in, both faces, about as wide as it is.
+                if (res.hit && res.enter) this._bloody(arm.key, Math.min(arm.stab.reach, res.at ? V3.Distance(res.enter.point, res.at) : arm.stab.reach) * arm.stab.calibre);
                 this.world.sound?.shot('stab', { at: skin.point.asArray() });
             }, 90);
         }
@@ -451,7 +477,9 @@ export class Weapons {
         // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).
         if (!a.hits.has(npc)) { a.hits.set(npc, []); this.world.sound?.shot('skin', { at: res.enter.point.asArray(), gain: 0.9 }); }
         a.hits.get(npc).push(res.enter);
-        this.world.blood.spray(res.enter.point, res.enter.normal.add(dir.scale(-0.6)).normalize(), 1.5, arm.key === 'sword' ? 6 : 2, 0.4);
+        // Nothing is thrown out of the cut as it is made (no pressure behind it); the blade picks blood up as it goes
+        // through, a few centimetres of its edge in the flesh at a time (an estimate), and casts it off as it swings (_shed).
+        this._bloody(arm.key, arm.cut * 0.03);
     }
 
     // --- hands: picking a body up and dragging it -------------------------------------------
@@ -723,6 +751,56 @@ export class Weapons {
             if (this.flash.intensity < 1 || age > 0.12) { this.flash.intensity = 0; this.flashCard.setEnabled(false); }
         }
         this._animate(dt);
+        this._shed(dt);
+    }
+
+    // Blood onto blade `key`: a film over `area` square metres of it, both faces.
+    _bloody(key, area) {
+        const blade = this.blades.get(key);
+        if (!blade) return;
+        blade.wet += 2 * area * FILM * 1e6;
+        // (The smear is a film over the blade, as thick however often it has been in: it does not pile up.)
+        blade.held = Math.min(blade.wet, Math.max(blade.held, 2 * area * SMEAR * 1e6));
+        blade.age = 0;
+    }
+
+    // The blood on the blade in hand, every frame (dev/research/stab-wounds.md sec. 2). It feels gravity less the blade's
+    // own acceleration, and a drop d across stays on only while surface tension can hold it there, rho (pi d^3 / 6) a <
+    // pi sigma d: so whatever is more than the smear that stays, and makes drops of d = sqrt(6 sigma / (rho a)) or more,
+    // leaves, at the tip's speed and on along its path (Williams et al. 2019: cast-off drops leave tangent to the
+    // weapon's path at its speed, not flung out from its middle). Held still it drips (a = g: drops of 5.7 mm); a sharp
+    // stop or turn sheds a line of smaller ones. Its first stab's way back out is the first that can (none before it).
+    _shed(dt) {
+        const blade = this.blades.get(this.arm.key), tip = this._anchors.get(this.arm.key)?.tip;
+        if (!blade || !tip || dt <= 0) return;
+        if (blade.wet > 0) this._stain(blade, dt);
+        const at = V3.TransformCoordinates(tip, this.hand.computeWorldMatrix(true));
+        const v = blade.at ? at.subtract(blade.at).scale(1 / dt) : null;
+        const a = v && blade.v ? v.subtract(blade.v).scale(1 / dt) : null;
+        blade.at = at;
+        blade.v = v;
+        // (While a stab's blade is still in the wound, the wound holds what is on it: its animation brings the point back
+        // out of the skin about three quarters of the way through.)
+        const free = blade.wet - blade.held, inside = this.action?.how === 'stab' && this.action.t < this.action.length * 0.75;
+        if (!a || free <= 0 || inside) return;
+        const d = Math.sqrt((6 * GAMMA) / (RHO * Math.hypot(a.x, a.y + 9.81, a.z))), each = volume(d);
+        if (free < each) return;
+        const ml = Math.floor(free / each) * each, speed = v.length();
+        blade.wet -= ml;
+        this.world.blood.spray(at, speed > 0.05 ? v.scale(1 / speed) : V3.Down(), speed, ml, 0.05, d / 0.0016);
+    }
+
+    // The blade reddened by the blood on it, wet and glossy, going dull and brown as it dries.
+    _stain(blade, dt) {
+        blade.age += dt;
+        const cover = Math.min(1, blade.wet / 0.03), dry = Math.min(1, blade.age / DRIES);
+        const blood = BABYLON.Color3.Lerp(new BABYLON.Color3(0.3, 0.02, 0.018), new BABYLON.Color3(0.17, 0.07, 0.05), dry);
+        for (const look of blade.looks) {
+            const m = look.material as BABYLON.PBRMaterial;
+            BABYLON.Color3.LerpToRef(look.albedo, blood, cover, m.albedoColor);
+            m.metallic = look.metallic * (1 - cover);
+            m.roughness = look.roughness + (0.15 + 0.55 * dry - look.roughness) * cover;
+        }
     }
 
     // The hand: kicked back by a shot, swung through a cut, lowered while reloading.

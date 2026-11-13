@@ -14,6 +14,8 @@
 // once it is full the rest runs out from under it (runs.ts).
 
 import * as BABYLON from '@babylonjs/core';
+import { convexHull } from './behaviour.ts';
+import { BruiseLayer } from './bruise.ts';
 const V3 = BABYLON.Vector3;
 
 // What a dressing leaves of a vessel's flow, by kind of bleeding.
@@ -24,6 +26,9 @@ const GAUZE = { pad: 0.15, wrap: 0.08 };
 const SECONDS = 4;          // to put one on: a game's few seconds for what takes a minute with pressure held
 const REACH = 1.9;          // metres from the eye to a wound that can be reached (one on the floor, kneeling down to it)
 const SIDE = 0.05;          // half a 10 cm pad
+const FACE = 0.035;         // half the 7 cm pad put on a face or a neck
+const BAND = 0.07;          // the roller bandage wound round a head is 7 cm wide
+const BENDS = 0.05;         // m: a pad's gauze bends no tighter than this over what it lies on (it bridges an eye's hollow)
 const ROLL = 0.1;           // the gauze roll is 10 cm wide
 const PX = 512;             // each dressing's picture
 
@@ -154,6 +159,10 @@ class Dressing {
     declare base: HTMLCanvasElement;
     declare covers: (rest: BABYLON.Vector3) => boolean;
     declare kind: 'pad' | 'wrap' | 'stump';
+    declare side: number;
+    declare area: number;
+    declare band: { at: BABYLON.Vector3; axis: BABYLON.Vector3; r: number } | null;
+    declare rider: any;
     declare layout: { Tu: number; Tv: number; x0: number; y0: number; top: number };
     declare per: number;
     declare capacity: number;
@@ -179,6 +188,9 @@ class Dressing {
         this._mesh(built);
         this._picture();
         this._clothes(mark);
+        // Swelling under it (bruise.ts) lifts it, at once where it lies on the skin, and it presses the swelling back.
+        new BruiseLayer(this.material, npc.bruise, false);
+        this.rider = npc.bruise.ride(this.mesh, this.rest, 0, 1);
     }
 
     // The patch of skin it lies on, lifted off it: corners (the skin's own, for their bones), positions, normals, and
@@ -189,6 +201,10 @@ class Dressing {
         const P = (v) => new V3(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]), N = (v) => new V3(nor[v * 3], nor[v * 3 + 1], nor[v * 3 + 2]);
         const lift = 0.0028 + layer * 0.003;
         const cut = mark.corners?.length ? null : npc.dismember.cuts.find((c) => c.prox === mark.owner && V3.Distance(c.c, mark.rest) < 0.2);
+        this.side = SIDE;
+        this.band = null;
+        const region = cut ? null : this._region(mark);
+        if (region) return this._head(mark, lift, region);
         const limb = !cut && /upperarm|lowerarm|upperleg|lowerleg/.test(mark.owner.bone.name);
         // Each corner of the skin: on it (with its x, y and lifted place), or null.
         let place: (v: number) => { x: number; y: number; at: BABYLON.Vector3; n: BABYLON.Vector3 } | null;
@@ -306,6 +322,191 @@ class Dressing {
         return out;
     }
 
+    // Where on the head or neck a wound is, for what is put on it: 'face' (below the brows, in front: a pad taped on),
+    // 'scalp' (the forehead above the brows, the temples, the crown, the back: a pad held by a roller bandage wound round
+    // the head), 'neck' (a pad taped on: nothing is wound round a neck), or null off the head and neck.
+    _region(mark): 'face' | 'scalp' | 'neck' | null {
+        const bones = this.npc.person.header.bones;
+        for (let at = mark.owner.index; at >= 0; at = bones[at].parent) {
+            const name = bones[at].name;
+            if (/^neck0\d$/.test(name)) return 'neck';
+            if (name === 'head') {
+                const eye = this.npc.person.byName['eye.L'].head;
+                return mark.rest.y < eye.y + 0.025 && mark.restNormal.z > -0.2 ? 'face' : 'scalp';
+            }
+            if (/^spine/.test(name)) return null;
+        }
+        return null;
+    }
+
+    // A dressing on the head or neck, made as gauze lies and not as a copy of the skin under it (which, over a nose, an
+    // eye and a cheek, came apart into scraps where the skin turned away). A pad is a sheet laid over the skin round the
+    // wound that bends no tighter than gauze does: it rests on the nose and the cheekbone and bridges the eye's hollow,
+    // with clean edges and tape over two of them. Round the head, a band: the roller bandage's turns, taut over the skull
+    // and the hair as a bandage pulled round it is (the convex outline of the head across each line of it), through the
+    // wound and round the back below the occiput, or across the forehead above the brows for one at the back, with the
+    // pad under it over the wound. Carried by the head's bone (a neck pad by the neck's, as the skin under it is).
+    _head(mark, lift: number, region: 'face' | 'scalp' | 'neck') {
+        const npc = this.npc, person = npc.person, { header, arrays } = bodyOf(npc), bones = header.bones;
+        const pos = arrays.position;
+        const P = (v) => new V3(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+        const mi = npc.dismember._mi, mw = npc.dismember._mw;
+        const joint = (v, k) => (mi ? mi[v * 4 + k] : arrays.joints[v * 4 + k]), weight = (v, k) => (mw ? mw[v * 4 + k] : arrays.weights[v * 4 + k] / 255);
+        // A corner of the dressing moves with the bones the skin under it moves with, the face's own little ones (a lid, a
+        // lip) given to the head they hang from: the gauze does not follow a lid.
+        const keep = (b) => { while (b >= 0 && !/^(head|jaw|neck0\d|spine0\d|clavicle\.[LR]|root)$/.test(bones[b].name)) b = bones[b].parent; return Math.max(0, b); };
+        const skinOf = (v) => {
+            const js = [0, 0, 0, 0], ws = [0, 0, 0, 0];
+            for (let k = 0; k < 4; k++) {
+                const b = keep(joint(v, k)), w = weight(v, k);
+                if (w <= 0) continue;
+                const slot = js.indexOf(b) >= 0 && ws[js.indexOf(b)] > 0 ? js.indexOf(b) : ws.indexOf(0);
+                js[slot] = b; ws[slot] += w;
+            }
+            return { js, ws };
+        };
+        const near = (kinds: string[], test: (p: BABYLON.Vector3) => boolean) => {
+            const list: number[] = [];
+            for (const part of header.parts) {
+                if (!kinds.includes(part.kind)) continue;
+                for (let v = part.vertexStart; v < part.vertexStart + part.vertexCount; v++) if (test(P(v))) list.push(v);
+            }
+            return list;
+        };
+        const out = { P: [], N: [], U: [], J: [], W: [], rest: [], verts: [] };
+        // A grid of corners `rows` x `cols` (each { at, rest, x, y, v, js, ws }) as triangles, its normals from the grid.
+        const sheet = (grid, rows: number, cols: number) => {
+            const at = (i, j) => grid[i * cols + j];
+            const normal = (i, j) => {
+                const a = at(Math.min(rows - 1, i + 1), j) ?? at(i, j), b = at(Math.max(0, i - 1), j) ?? at(i, j);
+                const c = at(i, Math.min(cols - 1, j + 1)) ?? at(i, j), d = at(i, Math.max(0, j - 1)) ?? at(i, j);
+                return V3.Cross(a.at.subtract(b.at), c.at.subtract(d.at)).normalize();
+            };
+            const L = this.layout;
+            for (let i = 0; i + 1 < rows; i++) {
+                for (let j = 0; j + 1 < cols; j++) {
+                    const quad = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
+                    if (quad.some(([a, b]) => !at(a, b))) continue;
+                    for (const tri of [[0, 1, 2], [0, 2, 3]]) {
+                        for (const q of tri) {
+                            const [a, b] = quad[q], g = at(a, b);
+                            let n = normal(a, b);
+                            if (V3.Dot(n, g.out) < 0) n = n.scale(-1);
+                            out.P.push(g.at.x, g.at.y, g.at.z); out.N.push(n.x, n.y, n.z);
+                            out.U.push((g.x - L.x0) / L.Tu, (g.y - L.y0) / L.Tv);
+                            out.J.push(...g.js); out.W.push(...g.ws);
+                            out.rest.push(g.rest.x, g.rest.y, g.rest.z);
+                            out.verts.push(g.v);
+                        }
+                    }
+                }
+            }
+        };
+
+        if (region !== 'scalp') {
+            this.kind = 'pad';
+            const side = (this.side = FACE), H = side * 1.6, G = 25;
+            const c = mark.rest, n = mark.restNormal, { ex, ey } = frame(n);
+            this.layout = { Tu: 2 * H, Tv: 2 * H, x0: -H, y0: -H, top: 0 };
+            this.area = 4 * side * side;
+            this.covers = (r) => { const d = r.subtract(c); return Math.abs(V3.Dot(d, ex)) < side + 0.01 && Math.abs(V3.Dot(d, ey)) < side + 0.01 && Math.abs(V3.Dot(d, n)) < 0.03; };
+            // The skin (and the eyes in it) round the wound, in the pad's own terms: across, up, and how high off it.
+            const pts = near(['skin', 'eyes'], (p) => { const d = p.subtract(c); return Math.abs(V3.Dot(d, ex)) < H + 0.03 && Math.abs(V3.Dot(d, ey)) < H + 0.03 && V3.Dot(d, n) > -0.06; })
+                .map((v) => { const d = P(v).subtract(c); return [V3.Dot(d, ex), V3.Dot(d, ey), V3.Dot(d, n), v]; });
+            const skin = new Set(near(['skin'], () => true).filter((v) => pts.some((p) => p[3] === v)));
+            const grid = [];
+            for (let i = 0; i <= G; i++) {
+                for (let j = 0; j <= G; j++) {
+                    const x = -H + (2 * H * j) / G, y = -H + (2 * H * i) / G;
+                    // As high as the skin anywhere near, less how far gauze bends down from there.
+                    let h = -Infinity, best = Infinity, v = -1;
+                    for (const [px, py, ph, pv] of pts) {
+                        const d2 = (px - x) ** 2 + (py - y) ** 2;
+                        if (d2 > 0.0009) continue;
+                        h = Math.max(h, ph - d2 / (2 * BENDS));
+                    }
+                    if (h === -Infinity) { grid.push(null); continue; }
+                    // (Moved by the skin under it: the nearest corner of skin on top, not one under the nose's other side.)
+                    for (const [px, py, ph, pv] of pts) {
+                        const d2 = (px - x) ** 2 + (py - y) ** 2;
+                        if (ph > h - 0.012 && d2 < best && skin.has(pv)) { best = d2; v = pv; }
+                    }
+                    if (v < 0) { grid.push(null); continue; }
+                    const pad = Math.abs(x) < side && Math.abs(y) < side ? 0.002 + 0.003 * Math.exp(-(x * x + y * y) / (side * side * 0.36)) : 0;
+                    const rest = c.add(ex.scale(x)).addInPlace(ey.scale(y)).addInPlace(n.scale(h));
+                    grid.push({ at: rest.add(n.scale(lift + pad)), rest, out: n, x, y, v, ...skinOf(v) });
+                }
+            }
+            sheet(grid, G + 1, G + 1);
+        } else {
+            this.kind = 'wrap';
+            // The skull's middle and the head's own up, forward and across, at rest.
+            const head = person.byName['head'], rd = npc.ragdoll.byName.get('head');
+            const o = rd.geo.c.add(rd.head), up = head.tail.subtract(head.head).normalize();
+            const fwd = new V3(0, 0, 1).subtract(up.scale(up.z)).normalize(), eye = person.byName['eye.L'].head;
+            const c = mark.rest, way = c.subtract(o).subtract(up.scale(V3.Dot(c.subtract(o), up))).normalize();
+            // The turns pass through the wound and, on the far side of the head, above the brows in front, above the ears at
+            // the side, under the bump of the occiput at the back (where they hold without sliding up off it).
+            const f = -V3.Dot(way, fwd), rise = f > 0 ? 0.02 + 0.015 * f : 0.02 + 0.03 * f;
+            const anchor = o.subtract(way.scale(0.09));
+            anchor.addInPlace(up.scale(eye.y + rise - anchor.y));
+            const across = V3.Cross(up, way).normalize();
+            let m = V3.Cross(c.subtract(anchor), across).normalize();
+            if (V3.Dot(m, up) < 0) m = m.scale(-1);
+            const mid = o.subtract(m.scale(V3.Dot(o.subtract(c), m)));
+            const e0 = c.subtract(mid).normalize(), e1 = V3.Cross(m, e0).normalize();
+            const skull = near(['skin', 'hair', 'eyes', 'brows'], (p) => V3.Distance(p, o) < 0.17 && p.y > person.byName['neck02'].head.y);
+            // Across each line of the band, the outline of the head (and hair) there, and how far out it is each way round.
+            const ROWS = 9, COLS = 72, wide = BAND / 2 + 0.012;
+            const radius = (s: number) => {
+                const flat = [];
+                for (const v of skull) {
+                    const d = P(v).subtract(mid);
+                    if (Math.abs(V3.Dot(d, m) - s) < 0.007) flat.push([V3.Dot(d, e0), V3.Dot(d, e1)]);
+                }
+                if (flat.length < 8) return null;
+                const hull = convexHull(flat);
+                return Array.from({ length: COLS }, (_, k) => {
+                    const th = (k / COLS) * Math.PI * 2, dx = Math.cos(th), dy = Math.sin(th);
+                    let far = 0;
+                    for (let q = 0; q < hull.length; q++) {
+                        const [ax, ay] = hull[q], [bx, by] = hull[(q + 1) % hull.length];
+                        const ex2 = bx - ax, ey2 = by - ay, den = dx * ey2 - dy * ex2;
+                        if (Math.abs(den) < 1e-12) continue;
+                        const t = (ax * ey2 - ay * ex2) / den, u = (ax * dy - ay * dx) / den;
+                        if (t > 0 && u >= 0 && u <= 1) far = Math.max(far, t);
+                    }
+                    return far;
+                });
+            };
+            const rows = Array.from({ length: ROWS }, (_, i) => -wide + (2 * wide * i) / (ROWS - 1));
+            const rings = rows.map(radius);
+            const middle = rings[(ROWS - 1) / 2];
+            if (!middle) return null;
+            const round = middle.reduce((a, r, k) => a + Math.hypot(r * Math.cos((2 * Math.PI) / COLS) - middle[(k + 1) % COLS], r * Math.sin((2 * Math.PI) / COLS)), 0);
+            this.layout = { Tu: round, Tv: BAND + 0.03, x0: -round / 2, y0: -BAND / 2 - 0.015, top: 0 };
+            this.area = round * BAND;
+            this.band = { at: mid, axis: m, r: Math.max(...middle) + 0.03 };
+            this.covers = (r) => Math.abs(V3.Dot(r.subtract(mid), m)) < BAND / 2 + 0.01 && V3.Distance(r, o) < 0.16;
+            const bone = head.index, grid = [];
+            for (let i = 0; i < ROWS; i++) {
+                for (let k = 0; k <= COLS; k++) {
+                    const ring = rings[i], th = (k / COLS) * Math.PI * 2, r = ring?.[k % COLS];
+                    if (!r) { grid.push(null); continue; }
+                    // The pad under the turns, over the wound.
+                    // (x runs on from the wound all the way round, so the picture, repeating, meets itself where the ring closes.)
+                    const x = (k / COLS) * round, y = rows[i], off = k <= COLS / 2 ? x : x - round;
+                    const pad = 0.004 * Math.exp(-(off * off + y * y) / 0.0009);
+                    const dir = e0.scale(Math.cos(th)).addInPlace(e1.scale(Math.sin(th)));
+                    const rest = mid.add(m.scale(y)).addInPlace(dir.scale(r));
+                    grid.push({ at: rest.add(dir.scale(lift + pad)), rest, out: dir, x, y, v: -1, js: [bone, 0, 0, 0], ws: [1, 0, 0, 0] });
+                }
+            }
+            sheet(grid, ROWS, COLS + 1);
+        }
+        return out.P.length < 9 ? null : out;
+    }
+
     _mesh(b) {
         const npc = this.npc, person = npc.person, scene = npc.world.scene;
         const mesh = new BABYLON.Mesh(`dressing_${person.mesh.name}`, scene);
@@ -327,7 +528,7 @@ class Dressing {
         this.verts = Int32Array.from(b.verts);
         const L = this.layout;
         this.per = this.kind === 'pad' ? GAUZE.pad : GAUZE.wrap;
-        this.capacity = (this.kind === 'pad' ? 4 * SIDE * SIDE : L.Tu * ROLL) * 1e4 * this.per;
+        this.capacity = (this.area ?? (this.kind === 'pad' ? 4 * SIDE * SIDE : L.Tu * ROLL)) * 1e4 * this.per;
 
         const texture = new BABYLON.DynamicTexture(`dressing_${person.mesh.name}`, { width: PX, height: PX }, scene, true);
         texture.hasAlpha = true;
@@ -368,6 +569,7 @@ class Dressing {
             }
         };
         if (this.kind === 'pad') {
+            const SIDE = this.side, k = SIDE / 0.05;
             // The pad: folded gauze, its weave in a 1.5 mm grid, the fold lines a third of the way in.
             g.fillStyle = 'rgb(236,234,227)';
             g.beginPath();
@@ -385,16 +587,16 @@ class Dressing {
             g.strokeRect(-SIDE + 0.003, -SIDE + 0.003, SIDE * 2 - 0.006, SIDE * 2 - 0.006);
             speckle(-SIDE, -SIDE, SIDE * 2, SIDE * 2, 2500);
             // Two strips of tape over its top and bottom edges, torn off the roll at their ends.
-            for (const y of [SIDE - 0.012, -SIDE - 0.012]) {
-                const ends = (x) => [0, 1, 2, 3, 4].map((k) => [x + (k % 2 ? 0.002 : -0.002) * Math.sign(x), y + k * 0.006] as [number, number]);
+            for (const y of [SIDE - 0.012 * k, -SIDE - 0.012 * k]) {
+                const ends = (x) => [0, 1, 2, 3, 4].map((j) => [x + (j % 2 ? 0.002 : -0.002) * Math.sign(x), y + j * 0.006 * k] as [number, number]);
                 g.fillStyle = 'rgb(226,221,206)';
                 g.beginPath();
-                for (const [x, yy] of ends(-0.074)) g.lineTo(x, yy);
-                for (const [x, yy] of ends(0.074).reverse()) g.lineTo(x, yy);
+                for (const [x, yy] of ends(-0.074 * k)) g.lineTo(x, yy);
+                for (const [x, yy] of ends(0.074 * k).reverse()) g.lineTo(x, yy);
                 g.closePath();
                 g.fill();
                 g.fillStyle = 'rgba(160,150,130,0.25)';
-                for (let x = -0.07; x < 0.07; x += 0.003) g.fillRect(x, y + 0.0115, 0.0012, 0.0008);
+                for (let x = -0.07 * k; x < 0.07 * k; x += 0.003) g.fillRect(x, y + 0.0115 * k, 0.0012, 0.0008);
             }
         } else {
             // The roll: wound round with each turn half over the last, so the edge of a turn crosses the band on a slant
@@ -497,7 +699,8 @@ class Dressing {
         for (let i = 0; i < this.rest.length; i += 3) center.addInPlace(new V3(this.rest[i], this.rest[i + 1], this.rest[i + 2]));
         center.scaleInPlace(3 / this.rest.length);
         let at: BABYLON.Vector3, ey: BABYLON.Vector3, r: number;
-        if (this.kind === 'pad') { at = mark.rest; ey = mark.restNormal; r = SIDE * 1.55; }
+        if (this.band) ({ at, axis: ey, r } = this.band);
+        else if (this.kind === 'pad') { at = mark.rest; ey = mark.restNormal; r = this.side * 1.55; }
         else {
             // A band of the sleeve or trouser leg the width of the roll: an opening round the limb's line, as wide as the limb.
             const owner = mark.owner, cut = this.kind === 'stump';
@@ -512,7 +715,7 @@ class Dressing {
         }
         const { ex } = frame(ey);
         for (const h of npc.clothHiders) h.add({ at, ex, ey, half: [r, r] });
-        for (const h of npc.underHiders) h.window(at, ey, r, this.kind === 'pad' ? 0.06 : ROLL / 2 + 0.01);
+        for (const h of npc.underHiders) h.window(at, ey, r, this.band ? BAND / 2 + 0.01 : this.kind === 'pad' ? 0.06 : ROLL / 2 + 0.01);
         npc.world.sound?.shot('snip', { at: npc.worldOf(mark.rest, mark.owner).at.asArray(), gain: 0.6 });
     }
 
@@ -577,6 +780,7 @@ class Dressing {
         for (const b of this.npc.vitals.bleeds) if (b.dressing === this) { delete b.dressing; delete b.dressed; }
         const list = this.npc.dressings;
         if (list?.includes(this)) list.splice(list.indexOf(this), 1);
+        this.npc.bruise?.unride(this.rider);
         this.mesh.dispose();
         this.material.dispose();
         this.texture.dispose();

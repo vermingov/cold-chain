@@ -868,16 +868,23 @@ class Loop {
         this.mesh = mesh;
         this._pos = pos;
         this._nor = new Float32Array(pos.length);
+        this._drawn = new Float32Array(this.p.length).fill(NaN);
         this._line = new Float32Array(rings * 3);
-        this._index = index;
+        this._index = Uint32Array.from(index);
         this._along = along;
     }
     declare _line: Float32Array;
-    declare _index: number[];
+    declare _drawn: Float32Array;
+    declare _index: Uint32Array;
     declare _along: number;
 
     draw() {
         const n = this.count, p = this.p, pos = this._pos, nor = this._nor, line = this._line, rings = (n - 1) * SPLIT + 1, R = this.r;
+        // Not a point moved since it was last drawn (it has come to rest, on a body lying still): the shape is the same.
+        let same = 0;
+        if (!this._bloody) while (same < p.length && p[same] === this._drawn[same]) same++;
+        if (same === p.length) return;
+        this._drawn.set(p);
         // A smooth curve through the points (Catmull and Rom), SPLIT pieces to each step.
         for (let i = 0; i + 1 < n; i++) {
             const i0 = Math.max(0, i - 1), i2 = i + 1, i3 = Math.min(n - 1, i + 2);
@@ -935,7 +942,7 @@ class Loop {
             }
         }
         // Normals from the shape itself (it is not round), the seam where the picture wraps made one.
-        BABYLON.VertexData.ComputeNormals(pos, this._index, nor);
+        normals(pos, this._index, nor);
         for (let i = 0; i < rings; i++) {
             const a = i * SIDES * 3, b = (i * SIDES + SIDES - 1) * 3;
             for (let j = 0; j < 3; j++) nor[a + j] = nor[b + j] = (nor[a + j] + nor[b + j]) / 2;
@@ -956,6 +963,30 @@ class Loop {
 
     dispose() {
         this.mesh.dispose();
+    }
+}
+
+// Each corner's normal the mean of its triangles' (Babylon's VertexData.ComputeNormals, the same sums in the same order,
+// so the same numbers). Its own copy, seeing only these typed arrays: Babylon's is shared with every mesh built from
+// plain arrays, and ran at half the speed on the loops, the dearest thing in a frame with bellies open.
+function normals(pos: Float32Array, index: Uint32Array, nor: Float32Array) {
+    nor.fill(0);
+    for (let f = 0; f < index.length; f += 3) {
+        const a = index[f] * 3, b = index[f + 1] * 3, c = index[f + 2] * 3;
+        const ux = pos[a] - pos[b], uy = pos[a + 1] - pos[b + 1], uz = pos[a + 2] - pos[b + 2];
+        const vx = pos[c] - pos[b], vy = pos[c + 1] - pos[b + 1], vz = pos[c + 2] - pos[b + 2];
+        let x = uy * vz - uz * vy, y = uz * vx - ux * vz, z = ux * vy - uy * vx, l = Math.sqrt(x * x + y * y + z * z);
+        l = l === 0 ? 1 : l;
+        x /= l; y /= l; z /= l;
+        nor[a] += x; nor[a + 1] += y; nor[a + 2] += z;
+        nor[b] += x; nor[b + 1] += y; nor[b + 2] += z;
+        nor[c] += x; nor[c + 1] += y; nor[c + 2] += z;
+    }
+    for (let i = 0; i < nor.length; i += 3) {
+        const x = nor[i], y = nor[i + 1], z = nor[i + 2];
+        let l = Math.sqrt(x * x + y * y + z * z);
+        l = l === 0 ? 1 : l;
+        nor[i] = x / l; nor[i + 1] = y / l; nor[i + 2] = z / l;
     }
 }
 

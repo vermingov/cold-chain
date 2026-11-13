@@ -148,14 +148,35 @@ export class Marks {
         });
     }
 
-    // A blade's way in: a slit up to 2 mm shorter than the blade is wide, gaping a little, deep in the middle.
-    stab(hit, wide, turn = Math.random() * Math.PI) {
-        this._open(hit, (g, x, y, px) => {
-            const half = px(Math.max(0.004, wide - 0.002) / 2), dx = Math.cos(turn) * half, dy = Math.sin(turn) * half;
-            g.lineCap = 'round';
-            for (const [w, c] of [[px(0.005), 'rgb(70,60,0)'], [px(0.0028), 'rgb(170,140,0)'], [px(0.0012), 'rgb(250,200,0)']]) {
-                g.lineWidth = w; g.strokeStyle = c;
-                g.beginPath(); g.moveTo(x - dx, y - dy); g.lineTo(x + dx, y + dy); g.stroke();
+    // A blade's way in (dev/research/stab-wounds.md sec. 3): a slit from skin crossing `back` to `edge` (where the blade's
+    // back and edge went in), opened `gape` metres either side at its middle. Clean-edged, no scraped ring. The edge's end
+    // is sharp; the back's is squared off, as wide as the blade's back is thick, unless the blade is sharp both sides
+    // (`double`), when both ends are. Deepest along its middle; its cut lips shallow, so the skin's edge shows round it.
+    stab(back, edge, gape: number, double = false) {
+        if (Math.hypot(back.uv[0] - edge.uv[0], back.uv[1] - edge.uv[1]) > 0.04) return;
+        this._open(back, (g, x, y, px) => {
+            const x2 = edge.uv[0] * SIZE, y2 = (1 - edge.uv[1]) * SIZE, len = Math.hypot(x2 - x, y2 - y) || 1;
+            const ux = (x2 - x) / len, uy = (y2 - y) / len;
+            // (The knife's back is about 3 mm thick: weapons.json's blade, measured.)
+            const open = px(gape), end = double ? 0 : Math.max(open, px(0.0015));
+            const width = (t: number) => (double ? open * Math.pow(Math.sin(Math.PI * t), 0.6) : Math.max(end * (1 - t), open * Math.pow(Math.max(0, 1 - t * t), 0.6)));
+            // The band of cut lip round it narrows to nothing at a sharp end and keeps its width round a squared one.
+            const rim = (t: number) => (!double && t < 0.5 ? 1 : Math.sqrt(Math.sin(Math.PI * t)));
+            g.filter = 'blur(0.5px)';
+            for (const [grow, c] of [[px(0.0012), 'rgb(70,60,0)'], [px(0.0005), 'rgb(170,140,0)'], [0, 'rgb(250,200,0)']] as [number, string][]) {
+                const scale = grow ? 1 : 0.5;
+                g.fillStyle = c;
+                g.beginPath();
+                for (let k = 0; k <= 16; k++) {
+                    const t = k / 16, w = Math.max(0.5, width(t) * scale + grow * rim(t));
+                    g.lineTo(x + ux * len * t - uy * w, y + uy * len * t + ux * w);
+                }
+                for (let k = 16; k >= 0; k--) {
+                    const t = k / 16, w = Math.max(0.5, width(t) * scale + grow * rim(t));
+                    g.lineTo(x + ux * len * t + uy * w, y + uy * len * t - ux * w);
+                }
+                g.closePath();
+                g.fill();
             }
         });
     }

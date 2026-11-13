@@ -11,7 +11,9 @@ export async function makeEngine(canvas: HTMLCanvasElement): Promise<BABYLON.Abs
         await engine.initAsync();
         return engine;
     }
-    return new BABYLON.Engine(canvas, true);
+    // No multisampling on the canvas: the scene is drawn into the picture's own targets (picture.ts) and smoothed there
+    // (FXAA), and all the canvas gets is that, one full-screen quad, which multisampling only made a resolve longer.
+    return new BABYLON.Engine(canvas, false);
 }
 
 // The rig's scripts reach Babylon from the page while the game runs under the dev server.

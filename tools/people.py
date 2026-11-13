@@ -12,7 +12,7 @@ the base mesh, so they follow whatever body they are put on.
     uv run --with numpy --with pillow tools/people.py <makehuman data> <base assets>
 
 `<makehuman data>` is `makehuman/data` from github.com/makehumancommunity/
-makehuman (3dobjs, rigs, targets/macrodetails). `<base assets>` is a mirror of
+makehuman (3dobjs, rigs, targets/macrodetails, poseunits). `<base assets>` is a mirror of
 download.tuxfamily.org/makehuman/assets/1.2/base (skins, clothes, hair, eyes,
 eyebrows, eyelashes, teeth, tongue).
 
@@ -81,17 +81,39 @@ CAST = {
 
 # --- skeleton ---------------------------------------------------------------
 #
-# MakeHuman's default rig has 163 bones. The game animates about eighty: the
+# MakeHuman's default rig has 163 bones. The game animates about 130: the
 # spine, limbs and fingers (with the four metacarpals, whose ring and little
-# ones bend at their base to cup the palm), the jaw, the eyes and eyelids, and
-# the two muscles that pull the corners of the mouth. Every other bone hands its
-# weights up to its nearest kept ancestor.
+# ones bend at their base to cup the palm), and the whole face (FACE). Every
+# other bone hands its weights up to its nearest kept ancestor.
+#
+# The face is every bone under the head but the two that only hold an eye and
+# its lids in place (special05, special06: no pose unit turns them, and the
+# eyes and lids hang from the head as before). That is what MakeHuman's own
+# expressions move: its face pose units (`poseunits/face-poseunits.bvh`, CC0),
+# sixty unit poses of those bones, one muscle's pull each (brow lowerer, inner
+# and outer brow raisers, upper lid raiser and closer, lower lid up, eyes
+# turned, cheek raiser, nose wrinkler, nasolabial deepener, upper lip raiser,
+# lip corners up, out, down, platysma, lips pressed, pushed out, puckered,
+# jaw dropped, tongue). They go into the file as each moved bone's turn
+# (`face` in the header, read by src/sandbox/face.ts, which blends them as
+# MakeHuman does). Brows, lashes and the rest of the proxies hang from the
+# skin's vertices and so carry the same bones (`fit`).
+
+FACE_SKIP = {'special05.L', 'special05.R', 'special06.L', 'special06.R'}
+
+
+def face_bones(rig):
+    """The face's bones in MakeHuman's rig, every parent before its children."""
+    out, at = [], ['head']
+    while at:
+        at = [n for n, b in rig.items() if b['parent'] in at]
+        out += at
+    return [n for n in out if n not in FACE_SKIP]
+
 
 KEEP = [
     'root', 'spine05', 'spine04', 'spine03', 'spine02', 'spine01',
-    'neck01', 'neck02', 'neck03', 'head', 'jaw',
-    'eye.L', 'eye.R', 'orbicularis03.L', 'orbicularis03.R',
-    'orbicularis04.L', 'orbicularis04.R', 'risorius03.L', 'risorius03.R',
+    'neck01', 'neck02', 'neck03', 'head',
 ]
 for s in ('L', 'R'):
     KEEP += [f'{b}.{s}' for b in (
@@ -201,6 +223,54 @@ def read_proxy(path):
     return {'obj': folder / settings['obj_file'], 'scales': scales, 'binds': binds, 'delete': delete, 'texture': texture}
 
 
+def read_face_units(bvh, names, bones):
+    """MakeHuman's face pose units: for each unit, each of `bones` it turns and by how much, as a quaternion [x, y, z, w]
+    in the game's frame. Read as MakeHuman's own shared/bvh.py reads them: the file is Z-up, so a Y rotation becomes
+    minus that about Z and a Z rotation one about Y, the channels taken in the file's order with the first applied
+    last (its `euler_matrix(..., axes='s' + order)`). Each is a turn about world-aligned axes at the bone's head, which
+    is what the game's bones are at rest (only positions are written), so it applies as it stands, mirrored in X with
+    everything else (to_game): a turn's axis is a pseudovector, so y and z change sign and x does not."""
+    def turn(axis, degrees):
+        c, s = np.cos(np.radians(degrees)), np.sin(np.radians(degrees))
+        i = 'xyz'.index(axis)
+        j, k = (i + 1) % 3, (i + 2) % 3
+        m = np.eye(3)
+        m[j, j], m[j, k], m[k, j], m[k, k] = c, -s, s, c
+        return m
+
+    lines = Path(bvh).read_text().split('\n')
+    joints, channels = [], []
+    at = 0
+    while not lines[at].strip().startswith('MOTION'):
+        words = lines[at].split()
+        if words and words[0] in ('ROOT', 'JOINT'):
+            joints.append(words[1])
+        if words and words[0] == 'CHANNELS':
+            channels.append(words[2:])
+        at += 1
+    frames = [[float(x) for x in lines[at + 3 + f].split()] for f in range(int(lines[at + 1].split()[1]))]
+    if len(frames) != len(names):
+        raise SystemExit(f'{bvh}: {len(frames)} frames for {len(names)} unit names')
+    units = {}
+    for name, frame in zip(names, frames):
+        k, unit = 0, {}
+        for joint, ch in zip(joints, channels):
+            m = np.eye(3)
+            for c, v in zip(ch, frame[k:k + len(ch)]):
+                if c.endswith('rotation'):
+                    m = m @ {'X': turn('x', v), 'Y': turn('z', -v), 'Z': turn('y', v)}[c[0]]
+            k += len(ch)
+            w = np.sqrt(max(0.0, 1 + np.trace(m))) / 2
+            # (a turn under a tenth of a degree is the file's noise: its rest frame has them everywhere)
+            if joint not in bones or w > np.cos(np.radians(0.05)):
+                continue
+            q = np.array([m[2, 1] - m[1, 2], m[0, 2] - m[2, 0], m[1, 0] - m[0, 1]]) / (4 * w)
+            unit[joint] = [round(float(x), 5) for x in (q[0], -q[1], -q[2], w)]
+        if unit:
+            units[name] = unit
+    return units
+
+
 # --- MakeHuman's macro modifier, reduced to what the cast uses -----------------
 
 def ramp3(v):
@@ -258,14 +328,16 @@ def build_body(verts, targets_dir, spec, cache):
 def skeleton(skel, verts):
     joints = {k: verts[v].mean(axis=0) for k, v in skel['joints'].items()}
     bones = skel['bones']
+    at = KEEP.index('head') + 1
+    keep = KEEP[:at] + face_bones(bones) + KEEP[at:]
 
     def kept_ancestor(name):
-        while name is not None and name not in KEEP:
+        while name is not None and name not in keep:
             name = bones[name]['parent']
         return name
 
     out = []
-    for name in KEEP:
+    for name in keep:
         b = bones[name]
         out.append({'name': name, 'parent': kept_ancestor(b['parent']),
                     'head': joints[b['head']], 'tail': joints[b['tail']]})
@@ -656,7 +728,8 @@ def build(name, spec, base, data, assets, cache, textures):
             'tail': [round(float(x), 5) for x in (to_game(b['tail']) - [0, floor, 0])],
         } for b in bones],
         'height': round(float(height), 4),
-        'source': 'MakeHuman base mesh, skeleton, weights and base assets (CC0)',
+        'face': cache['face'],
+        'source': 'MakeHuman base mesh, skeleton, weights, face pose units and base assets (CC0)',
     }
     out = OUT / f'{name}.bin'
     write(out, header, [
@@ -679,6 +752,9 @@ def main():
         'skel': json.loads((data / 'rigs' / 'default.mhskel').read_text()),
         'weights': json.loads((data / 'rigs' / 'default_weights.mhw').read_text())['weights'],
     }
+    units = data / 'poseunits'
+    cache['face'] = read_face_units(units / 'face-poseunits.bvh', json.loads((units / 'face-poseunits.json').read_text())['framemapping'],
+                                    face_bones(cache['skel']['bones']))
     OUT.mkdir(parents=True, exist_ok=True)
     textures = {}
     for name, spec in CAST.items():

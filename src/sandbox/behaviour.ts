@@ -595,11 +595,21 @@ export class Behaviour {
         const side = limb ? name.slice(-1) : w.local.x > 0 ? 'R' : 'L', other = side === 'L' ? 'R' : 'L';
         const more = (changes) => { if (!lying) for (const [k, a] of Object.entries(changes)) pose[k] = (pose[k] || 0) + (a as number) * e; };
         if (/^(upperarm|forearm|hand)/.test(name)) {
+            // The hurt arm hugged to the body, the forearm across the front of the belly toward the other side, and held
+            // there gently: its reach worked out round the body (_armTo), so that it lies on the belly and is not pulled
+            // into it (posed by hand, the forearm went into the belly and the arm shook against it). There the other hand
+            // holds it.
+            const hand = this.rd.byName.get('hand' + side);
+            if (!lying && !this.rd.cutOff(hand)) {
+                const belly = this.rd.byName.get('belly'), g = belly.geo;
+                const cradle = this.rd.worldPoint(belly, new V3(g.c.x + (side === 'L' ? 0.07 : -0.07), g.c.y + g.h.y * 0.5, g.c.z + g.h.z + 0.05), new V3());
+                const reach = this._armTo(side, cradle), all = smooth(e * 2.5);
+                for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
+                pose['curl' + side] = 35;
+                this.strength['arm' + side] *= 1 - 0.5 * e;
+            }
             if (this._free(other)) this._hold(other, on, out, e, pose);
-            // The hurt arm held against the belly, the forearm across it (turned in at the shoulder: positive is in for the
-            // right arm), where the other hand can hold it.
-            more({ ['elbow' + side]: 85, ['shoulderFlex' + side]: 18, ['shoulderTwist' + side]: side === 'R' ? 45 : -45, ['shoulderAbduct' + side]: -6,
-                ['curl' + side]: 35, spineFlex: 8, neckFlex: 14 });
+            more({ spineFlex: 8, neckFlex: 14 });
         } else if (/^(thigh|shin|foot)/.test(name)) {
             // A hand to a thigh, which it reaches standing (the one on its side, or the other if that one cannot); lower
             // down only lying, curled up to it.
@@ -669,6 +679,9 @@ export class Behaviour {
         const all = smooth(how * 2.5);
         for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
         pose['curl' + side] = 25;
+        // On it, or held up on the way, the arm lets the hand lie where it is, its muscles easing off rather than driving
+        // it on into what stopped it.
+        if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.35 : 0.7;
         if (g.hold) return;
         const chest = rd.byName.get('chest');
         if (touching) {

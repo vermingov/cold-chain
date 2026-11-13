@@ -448,8 +448,17 @@ export class Blood {
         const speed = vel.length();
         this.onLand?.(at, speed);
         const floor = normal.y > 0.9 && at.y < 0.01;
-        // Into blood already there: it joins it.
-        if (floor && this.floor.depth(at.x, at.z) > 0.0004) { this.floor.add(at.x, at.z, ml); return; }
+        // Into blood still liquid: it merges with it and leaves no mark of its own, the pool only gaining what it brought.
+        // Hard enough (We over 400) it throws a crown whose satellite droplets land round about, more the harder and the
+        // more drops have fallen there (Boos et al. 2019, drip patterns; dev/research/stab-wounds.md sec. 2). What goes
+        // into the satellites, their size and speed are estimates: a twentieth of it, half-millimetre droplets at a third
+        // of the speed it came in at, thrown up and out. A dried pool is a floor like any other: the drop leaves a stain.
+        if (floor && this.floor.liquid(at.x, at.z)) {
+            const thrown = splashes(d, speed) ? 0.05 : 0;
+            this.floor.pour(at.x, at.z, ml * (1 - thrown));
+            if (thrown) this.spray(at.add(new V3(0, 0.002, 0)), V3.UpReadOnly, speed * 0.33, ml * thrown, 1.0, 0.3);
+            return;
+        }
         if (normal.y > 0.9 && !floor && this._top(at, normal, ml)) return;
         const into = speed > 1e-4 ? Math.max(0.05, -V3.Dot(vel, normal) / speed) : 1;
         const kind = into < 0.72 ? 8 + Math.floor(Math.random() * 4) : (splashes(d, speed) ? 4 : 0) + Math.floor(Math.random() * 4);

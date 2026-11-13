@@ -128,7 +128,7 @@ export class Npc {
         this.marks = new Marks(world.scene, this);
         for (const m of this.skinMaterials) new Gore(m, this.marks.depth);
         this.runs = new Runs(this);
-        this.face = new Face(this.person);
+        this.face = new Face(this);
         // What blows do to the skin over minutes: redness, bruising, swelling (bruise.ts), drawn by the skin's own material.
         this.bruise = new Bruise(this);
         for (const m of this.skinMaterials) new BruiseLayer(m, this.bruise);
@@ -291,17 +291,23 @@ export class Npc {
         this.behaviour.hit(seg, impulse, point, jolt);
     }
 
-    // Blood thrown out where a shot went in and, more of it, where it came out. Back out of the way in (back spatter):
-    // a fraction of a millilitre of mist, drops of a few tenths of a millimetre that the air stops within a metre. Out
-    // of the way out, forward: millilitres, mist and drops up to a couple of millimetres, a cone that marks the floor
-    // and walls metres behind. More of both the more energy the bullet left in the body.
-    spatter(enter, dir, exitAt, m, exited) {
+    // Blood thrown out where a shot went in and where it came out (dev/research/gunshot-blood.md sec. 1). Back out of the
+    // way in, in earnest only from the head and from close: calves shot in the head with a 9 mm from 10 cm or nearer threw
+    // 31 to 324 stains over half a millimetre (and more finer ones) over a half-circle, most within half a metre, none past
+    // 1.2 m (Karger 1996); the jets left at 6 to 45 m/s from 5 cm and further, up to 330 m/s at contact (Schyma 2021).
+    // Three hundred drops of half a millimetre is about 0.02 ml. From the trunk at a distance next to none (DiMaio 1999,
+    // Betz: none on the hand in six contact wounds of the chest), here a tenth of that. Out of the way out, forward with
+    // the bullet: more, finer, and bits of tissue among it, all of it in the first instant, more the more energy the
+    // bullet left in the body (nobody has measured those volumes: estimates). `range`: metres from the muzzle.
+    spatter(enter, dir, exitAt, m, exited, range = Infinity) {
         const blood = this.world.blood;
         const power = Math.min(1, m.energy / 2000);
-        blood.spray(enter.point.add(enter.normal.scale(0.004)), enter.normal.add(dir.scale(-0.4)).normalize(), 5 + power * 6, 0.15 + power * 0.8, 0.6, 0.25);
+        const head = this.ragdoll.nearest(enter.point).seg?.name === 'head', close = range < 0.1;
+        const back = (head ? 1 : 0.1) * (close ? 2 : 1) * (0.02 + power * 0.03);
+        blood.spray(enter.point.add(enter.normal.scale(0.004)), enter.normal, close ? 40 : 15, back, Math.PI / 2, 0.3);
         if (exited && exitAt) {
-            blood.spray(exitAt, dir, 9 + power * 16, 0.8 + power * 5, 0.4, 0.4);
-            blood.spray(exitAt, dir, 4 + power * 7, 1 + power * 5, 0.3, 1.1);
+            blood.spray(exitAt, dir, 9 + power * 16, 0.5 + power * 2.5, 0.4, 0.4);
+            blood.spray(exitAt, dir, 4 + power * 7, 0.2 + power * 1.5, 0.3, 2);
         }
     }
 
@@ -328,16 +334,9 @@ export class Npc {
     update(dt: number) {
         const v = this.vitals;
         v.update(dt);
-        const conscious = v.conscious;
-        const person = this.person;
         // The muscles do what the body can (behaviour.ts), the physics moves it, and the skeleton follows the bodies.
         this.behaviour.update(dt);
         this.ragdoll.drive();
-        // Eyes: open and blinking while awake, half shut out cold, still once dead.
-        person.blinks = conscious > 0.35;
-        if (!person.blinks) person.blink = v.dead ? 0.35 : 0.75;
-        person.tick(dt);
-        person._face();
         this.dismember.update(dt);
         this.face.update(dt, this.vitals, this._crying, (this as any).bones?.jawHangs ?? 0);
         this.bruise.update(dt);
@@ -351,10 +350,22 @@ export class Npc {
     // throws it as a stream; anything else comes out into the clothes over the wound, or onto the skin, and runs.
     _bleed(dt) {
         const v = this.vitals, blood = this.world.blood;
+        // Bleeding inside the body gets out through a wound in its wall only once enough has gathered in there to reach
+        // the hole, and then the more the wound faces down: a small hole is held shut by the tissue round it, and blood
+        // leaks from wounds on the lowest side (dev/research/gunshot-blood.md sec. 2, stab-wounds.md sec. 1, DiMaio 1999
+        // ch. 9). At most the twelfth it always let out. How much has to gather first is an estimate: half a litre.
+        let inside = 0;
+        for (const b of v.bleeds) if (b.internal) inside += b.lost;
+        const filled = Math.min(1, inside / 0.5), facing = new Map();
         for (const b of v.bleeds) {
             const mark = b.source?.mark;
             if (!mark) continue;
-            const flow = (b.flow ?? 0) * (b.internal ? 0.08 : 1);
+            let share = 1;
+            if (b.internal) {
+                if (!facing.has(mark)) facing.set(mark, filled > 0 ? Math.max(0, -this.worldOf(mark.rest, mark.owner, mark.restNormal).normal.y) : 0);
+                share = 0.08 * filled * (0.15 + 0.85 * facing.get(mark));
+            }
+            const flow = (b.flow ?? 0) * share;
             if (flow < 1e-6) continue;
             const ml = flow * dt * 1000;
             // Under a dressing it goes into the gauze, and out from under it once that is full (dressing.ts).
@@ -426,10 +437,10 @@ export class Npc {
         this.clothHiders = cloths;
     }
 
-    // A wound made at `hit` (a crossing from surface()): 'in' (a bullet's way in), 'out' (its way out), 'stab'. `size`
-    // is the bullet or blade across, in metres. On skin it opens the flesh there (marks.ts, drawn by Gore); on clothes
-    // it is a hole in them. False if the clothes have as many holes as can be drawn.
-    wound(hit, kind: 'in' | 'out' | 'stab', size: number) {
+    // A wound made at `hit` (a crossing from surface()): 'in' (a bullet's way in), 'out' (its way out). `size` is the
+    // bullet across, in metres. On skin it opens the flesh there (marks.ts, drawn by Gore); on clothes it is a hole in
+    // them. False if the clothes have as many holes as can be drawn. (A blade's slit is wounds.ts's.)
+    wound(hit, kind: 'in' | 'out', size: number) {
         if (hit.kind === 'cloth') {
             const r = size * (kind === 'out' ? 0.9 : 0.55);
             const hole = { at: hit.rest, ex: tangent(hit.restNormal), ey: hit.restNormal, half: [r, -1] };
@@ -437,8 +448,7 @@ export class Npc {
             return this.clothHiders.map((h) => h.add(hole)).every(Boolean);
         }
         if (kind === 'in') this.marks.entry(hit, size);
-        else if (kind === 'out') this.marks.exit(hit, size);
-        else this.marks.stab(hit, size);
+        else this.marks.exit(hit, size);
         return true;
     }
 
@@ -486,7 +496,7 @@ export class Npc {
         if (!over && now < this._said.until) return;
         this._said.until = now + (kind === 'yell' ? 0.8 : kind === 'scream' || kind === 'cry' ? 3 : 2.2);
         const playing = this.world.sound?.shot(`${kind}-${this.voice}`, { follow: () => this.ragdoll.byName.get('head').node.position.asArray(), gain });
-        if (playing) this.face.speak(playing, this.world.sound.now);
+        if (playing) this.face.speak(playing, this.world.sound.now, kind);
         this._crying = kind === 'cry' || (this._crying && kind !== 'scream' && kind !== 'yell');
     }
 
@@ -519,6 +529,7 @@ export class Npc {
         this.bruise.dispose();
         this.film.dispose();
         this.soak.dispose();
+        this.face.dispose();
         for (const d of [...(this.dressings ?? [])]) d.dispose();
         this.clothes.dispose();
         this.person.dispose();

@@ -1,7 +1,8 @@
 # The people
 
 Built by tools/people.py from MakeHuman (makehumancommunity/makehuman, CC0): the base mesh, its targets, skeleton and
-weights, and the base assets (skins, eyes, brows, lashes, teeth, tongue, hair, the suits and shoes). The irises are
+weights, its face rig and face pose units (`data/poseunits/face-poseunits.bvh`, CC0), and the base assets (skins, eyes,
+brows, lashes, teeth, tongue, hair, the suits and shoes). The irises are
 MakeHuman's with their saturation lowered (people.py, natural_iris).
 
 The man in a hood (`hood.bin`) also wears, from the MakeHuman community asset packs:

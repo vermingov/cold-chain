@@ -165,6 +165,27 @@ export class Floor {
         this._encode(c);
     }
 
+    // Whether blood at (x, z) is still a liquid a drop would fall into: standing at least `deep` metres and not yet
+    // dried to a skin (the card's wetness, _encode, above a third).
+    liquid(x: number, z: number, deep = 0.0004) {
+        const c = this._cell(x, z);
+        if (c < 0 || this.h[c] < deep) return false;
+        return Math.exp(-(this.clock - this.born[c]) / (200 + DRIES * Math.min(1, this.h[c] / STANDS))) > 0.33;
+    }
+
+    // `ml` of blood into the pool round (x, z): a drop falling into a pool merges with it and its surface levels out
+    // again within a moment, so it raises the liquid within `r` metres evenly instead of piling up in one cell (which
+    // the slow flow below then drew as a crater for minutes). Where none of it there is liquid, the one cell.
+    pour(x: number, z: number, ml: number, r = 0.04) {
+        const cells = [], k = Math.ceil(r / CELL);
+        for (let i = -k; i <= k; i++) for (let j = -k; j <= k; j++) {
+            if (i * i + j * j > k * k) continue;
+            if (this.liquid(x + i * CELL, z + j * CELL, STAYS)) cells.push([x + i * CELL, z + j * CELL]);
+        }
+        if (!cells.length) { this.add(x, z, ml); return; }
+        for (const [cx, cz] of cells) this.add(cx, cz, ml / cells.length);
+    }
+
     // How deep blood stands at (x, z), metres.
     depth(x: number, z: number) {
         const c = this._cell(x, z);

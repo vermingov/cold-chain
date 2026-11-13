@@ -30,7 +30,25 @@ export type Missile = {
     blade?: boolean;
     slash?: boolean;        // drawn across rather than driven in: no hole, the caller draws the cut
     name?: string;          // what it is, for the injury list ('fragment', 'pellet'); a bullet if none
+    speed?: number;         // m/s at the muzzle (a gun's)
+    // A blade's: which way across it its edge is (unit, world, from the back to the edge), how many edges it has, and
+    // how far from its point it reaches its full width (`calibre`).
+    across?: BABYLON.Vector3;
+    edges?: number;
+    taper?: number;
 };
+
+// A stab's slit gapes as the skin either side pulls it open (dev/research/stab-wounds.md sec. 3, tissue-mechanics.md
+// sec. 2): a slit 2a long in a skin under stress sigma opens by 4 sigma a / E at its middle, with sigma about 50 kPa along
+// the tension lines and 22 kPa across them (pre-strain 23:10, Deroy 2017) and E about 1.2 MPa (Ni Annaidh 2012). The fat
+// under it holds it to the lower part of that (x 0.6, an estimate).
+const STRESS_ALONG = 50e3, STRESS_ACROSS = 22e3, SKIN_E = 1.2e6, HELD_OPEN = 0.6;
+// A straight thrust leaves a slit up to 2 mm shorter than the blade is wide where it reached (the skin draws back:
+// forensicmed.co.uk on stab wounds, Hunt 2003).
+const SHRINKS = 0.002;
+// shortcut: a shot is followed from the eye, and the muzzle is about this far ahead of it (weapons.ts HELD plus the
+// barrel); pass the muzzle in with the missile if the range of a shot from elsewhere ever matters.
+const MUZZLE = 0.45;
 
 // How big an organ is, roughly, through: to say how much of it a path of a given length wrecks.
 const THROUGH = { heart: 0.1, lung: 0.16, liver: 0.15, spleen: 0.09, kidney: 0.07, brain: 0.14, stomach: 0.1, bowel: 0.2, colon: 0.15 };
@@ -62,12 +80,13 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     let energy = m.energy, stopAt = Infinity;
     const enter = skins[0];
     // Clothes before the skin are holed where it went in, and the blood from the wound soaks into them there.
-    for (const h of surface) if (h.kind === 'cloth' && h.t <= enter.t + 0.02) { npc.wound(h, 'in', m.calibre); enter.cloth = h; }
-    // The way in, opened in the flesh; round a bullet's, the ring of skin it scraped and bruised going in.
-    if (!m.slash && !m.blade) npc.marks.hole(enter, m.calibre, false, ((m as any).speed ?? 0) < 600);
-    // Blood on the skin round the way in, which is what a hole in a shirt over it shows.
-    if (!m.slash) npc.marks.smear(enter, 0.008 + m.calibre * 0.6, 0.55);
-    if (!m.slash) npc.wound(enter, m.blade ? 'stab' : 'in', m.blade ? m.calibre * 1.2 : m.calibre);
+    // (A blade's slit, in them and in the skin, is cut once how deep it went is known: below.)
+    const cloths = surface.filter((h) => h.kind === 'cloth' && h.t <= enter.t + 0.02);
+    for (const h of cloths) { if (!m.blade) npc.wound(h, 'in', m.calibre); enter.cloth = h; }
+    // The way in, opened in the flesh; round a bullet's, the ring of skin it scraped and bruised going in. Nothing more
+    // on the skin yet: the blood comes as the wound bleeds (dev/research/gunshot-blood.md sec. 2).
+    if (!m.slash && !m.blade) npc.marks.hole(enter, m.calibre, false, (m.speed ?? 0) < 600);
+    if (!m.slash && !m.blade) npc.wound(enter, 'in', m.calibre);
     // Where the path is inside the body: between each skin crossing and the next.
     const inside: [number, number][] = [];
     for (let k = 0; k < skins.length; k += 2) inside.push([skins[k].t, skins[k + 1]?.t ?? skins[k].t + 0.05]);
@@ -126,6 +145,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     for (const hit of vessels) if (hit.t < stopAt) vessel(npc, hit, m);
     // The flesh itself: skin, fat and muscle bleed a little from any wound.
     const deep = Math.min(stopAt, inside[0][1]) - enter.t;
+    if (m.blade && !m.slash) slit(npc, enter, cloths, dir, m, deep);
     v.bleed({ name: 'wound', rate: 0.00025 * (m.channel / 0.006) * Math.min(1, deep / 0.05 + 0.3), clots: 0.02, source: { mark: enter } });
     v.pain = Math.min(1, v.pain + 0.25 + (bones ? 0.25 : 0));
     const region = regionOf(npc, enter);
@@ -136,8 +156,9 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     let exitAt = null, exitHit = null;
     skins.forEach((h, k) => {
         if (k === 0 || h.t >= stopAt || m.slash) return;
-        const out = k % 2 === 1;
-        npc.wound(h, out ? 'out' : 'in', m.calibre * (out ? 1.6 + fragments : 1));
+        const out = k % 2 === 1, size = out ? exitSize(m, fragments) : m.calibre;
+        npc.wound(h, out ? 'out' : 'in', size);
+        if (out && !m.blade) tear(npc, h, size, npc.ragdoll.nearest(h.point).seg?.name === 'head');
         if (out) { exitAt = h.point; exitHit = h; h.open = true; }    // (open: a hole a dressing can go on, dressing.ts)
     });
     if (exited) for (const h of surface) if (h.kind === 'cloth' && h.t > skins[skins.length - 1].t) {
@@ -149,9 +170,13 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
         if (exitHit) v.bleed({ name: 'scalp', rate: 0.002, clots: 0.003, source: { mark: exitHit } });
     }
+    // At the moment it is made a wound holds its blood: a blade fills the track it cuts until it is drawn out, and a
+    // bullet's holes are small, clothed or raised, and the bleeding is mostly inside (stab-wounds.md sec. 1,
+    // gunshot-blood.md sec. 2). A little follows the blade out or wets the lips of a hole (an estimate); the rest comes
+    // as the wound bleeds (npc._bleed), welling over seconds.
     if (!m.slash) {
-        npc.welling(enter, m.blade ? 0.8 : 0.8 + m.energy / 1500);
-        npc.welling(exitHit, 2 + m.energy / 500);
+        npc.welling(enter, 0.1);
+        npc.welling(exitHit, 0.3);
     }
     // What bleeds comes out of the wound: the way out if there is one, it being the bigger.
     for (const b of v.bleeds.slice(first)) b.source = { ...b.source, mark: b.source?.mark ?? exitHit ?? enter };
@@ -159,7 +184,8 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     const share = m.energy > 0 ? (m.energy - energy) / m.energy : 1;
     const speed = Math.sqrt((2 * m.energy) / Math.max(1e-4, m.mass));
     npc.hit(enter.point, dir.scale(m.mass * speed * Math.sqrt(share)), m.blade ? 0.2 : 1);
-    if (!m.slash) npc.spatter(enter, dir, exitAt, m, exited);
+    // (No spatter from a blade: a stab or a cut throws nothing out of the wound; what flies comes off the blade, weapons.ts.)
+    if (!m.slash && !m.blade) npc.spatter(enter, dir, exitAt, m, exited, m.name ? Infinity : enter.t - MUZZLE);
     // A heavy edge may go right through a limb once the swing is through (npc.slash); a charge that is still one mass
     // (a shotgun's at contact range) may tear one off now.
     if (m.slash) edge(npc, m.energy, enter.point, dir);
@@ -254,6 +280,79 @@ function shards(npc, at: BABYLON.Vector3, dir: BABYLON.Vector3, count: number, e
         for (const hit of vessels) vessel(npc, hit, piece);
     }
     if (count > 2) npc.vitals.injure('Bone shattered into the flesh around it', 4);
+}
+
+// --- what a blade's way in and a bullet's way out look like ------------------------------------------------------
+
+// The slit a blade drawn `deep` metres into person `npc` along `dir` leaves in the skin at crossing `enter` and in the
+// clothes over it (`cloths`) (dev/research/stab-wounds.md sec. 3). It lies where the blade's plane meets the skin: with the
+// thrust along d, the blade's width along e and the skin's normal n, the blade's sides cross the skin at
+// +-(w/2)(e - d (e.n)/(d.n)), so a slanting thrust leaves a longer slit. w is the blade's width where it reached (its point
+// is narrower), less up to 2 mm as the skin draws back. Its edge end is sharp; its back end squared, if it has a back.
+function slit(npc, enter, cloths, dir: BABYLON.Vector3, m: Missile, deep: number) {
+    const n = enter.normal;
+    let e = m.across ?? V3.Cross(dir, Math.abs(dir.y) < 0.9 ? V3.Up() : V3.Right());
+    e = e.subtract(dir.scale(V3.Dot(e, dir))).normalize();
+    // (A thrust nearly along the skin would make a slit without end: no slant past about 70 degrees counts.)
+    const dn = Math.min(-0.35, V3.Dot(dir, n));
+    const w = m.calibre * Math.min(1, Math.max(0.15, deep / (m.taper ?? 0.01)));
+    const sides = e.subtract(dir.scale(V3.Dot(e, n) / dn)), long = sides.length() * w;
+    const half = sides.normalize().scale(Math.max(0.002, long - SHRINKS) / 2);     // world, from the middle to the edge end
+    // The skin at each end, found on the body at rest.
+    const toRest = npc.restToWorld(enter.owner).clone().invert();
+    const along = V3.TransformNormal(half, toRest);
+    const ends = [enter.rest.subtract(along), enter.rest.add(along)].map((p) => npc.runs.nearest(p, 0.02));
+    if (!ends.every((h) => h?.kind === 'skin')) return;
+    // How far it gapes: by its angle to the tension lines, which run round the bone it is on (across the trunk and neck,
+    // round a limb: stab-wounds.md sec. 3), give or take a third (Hunt 2003: the lines often fail to predict it).
+    const a = along.length(), axis = enter.owner.tail.subtract(enter.owner.head);
+    const line = V3.Cross(enter.restNormal, axis), flat = line.lengthSquared() > 1e-10 ? line.normalize() : along.normalize();
+    const c = V3.Dot(along.normalize(), flat), sin2 = 1 - c * c;
+    const open = (4 * (STRESS_ALONG * sin2 + STRESS_ACROSS * c * c) * a) / SKIN_E;
+    npc.marks.stab(ends[0], ends[1], (open / 2) * HELD_OPEN * (0.7 + Math.random() * 0.6), (m.edges ?? 1) > 1);
+    // The clothes are slit the same way, cleanly, and the skin under them shows through it.
+    for (const h of cloths) {
+        const ex = V3.TransformNormal(half, npc.restToWorld(h.owner).clone().invert()).normalize();
+        const hole = { at: h.rest, ex, ey: h.restNormal, half: [Math.max(0.002, long - SHRINKS) / 2 + 0.001, 0.0008] };
+        for (const hider of npc.clothHiders) hider.add(hole);
+        for (const hider of npc.underHiders) hider.window(h.rest, h.restNormal, hole.half[0] * 1.3);
+    }
+}
+
+// How big a bullet's way out is (dev/research/gunshot-blood.md sec. 3, DiMaio 1999 ch. 4 and 7): larger and more
+// irregular than the way in because the bullet yaws, tumbles and deforms in the body; a handgun's often a small slit,
+// sometimes smaller than its way in; a rifle's in the trunk mostly up to 25 mm, the largest DiMaio saw 75 x 40. Bigger
+// once it has broken up on bone (`fragments`). The spread within those ranges is a guess.
+function exitSize(m: Missile, fragments: number) {
+    if (m.name) return m.calibre * 1.2;
+    const rifle = (m.speed ?? 0) > 600;
+    return Math.min(0.075, m.calibre * (rifle ? 1.6 + Math.random() * 1.6 : 1 + Math.random() * 0.8) * fragments);
+}
+
+// A bullet's way out, torn right through the skin (not a picture on it): one slit (lax skin), two crossing (a star), or
+// three (a star over bone: the scalp), `size` across. The lips turned out, the fat showing in them, no scraped ring
+// (DiMaio 1999 ch. 4). Through the hole, the wound's track into the body (hider.ts draws the body's inside).
+function tear(npc, h, size: number, overBone: boolean) {
+    const n = h.restNormal, side = V3.Cross(n, Math.abs(n.y) < 0.9 ? V3.Up() : V3.Right()).normalize(), up = V3.Cross(n, side);
+    const arms = overBone ? 3 : size < 0.012 ? 1 : 1 + Math.floor(Math.random() * 2), turn = Math.random() * Math.PI;
+    for (let k = 0; k < arms; k++) {
+        const t = turn + (k / arms) * Math.PI + (Math.random() - 0.5) * 0.5;
+        const ex = side.scale(Math.cos(t)).add(up.scale(Math.sin(t)));
+        // Each split a lens, its middle open about a fifth of its length (an estimate).
+        const half = [(size / 2) * (0.75 + Math.random() * 0.5), size * (arms > 1 ? 0.12 : 0.2)];
+        for (const hider of [npc.skinHider, ...npc.underHiders]) { hider.add({ at: h.rest, ex, ey: n, half }); hider.opens(); }
+        // The lips all round it, turned out a millimetre or few: skin, and fat showing in them (an estimate of how wide).
+        const edge = [], lens = 0.5 + 0.5 * Math.min(1, Math.max(0, (half[0] / half[1] - 1) * 0.5));
+        const across = V3.Cross(n, ex);
+        for (let j = 0; j < 20; j++) {
+            const a = (j / 20) * Math.PI * 2, x = Math.cos(a) * half[0];
+            const y = Math.sign(Math.sin(a)) * half[1] * Math.pow(Math.max(0, 1 - (x / half[0]) ** 2), lens);
+            const w = npc.worldOf(h.rest.add(ex.scale(x)).add(across.scale(y)), h.owner, n);
+            const on = npc.surface(w.at.add(w.normal.scale(0.1)), w.normal.scale(-1), 0.2).find((s) => s.kind === 'skin');
+            if (on) edge.push(on);
+        }
+        if (edge.length > 2) npc.marks.lip(edge, 0.0015 + size * 0.04);
+    }
 }
 
 // Which part of the body a point of skin is on, in words.
