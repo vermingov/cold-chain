@@ -821,3 +821,24 @@ Checked headless on SwiftShader (frames stepped by hand, numbers read back); not
 
 Left: the dark smudge on chin and neck; K grows ~20 materials and 22 textures a reset (not dressing-related); the
 little-finger crease in a full fist; the X-ray hand bones don't cup; performance under carnage (next).
+
+## 0.8.20 (2026-11-13, cloud session): pushed to show progress, not fully verified
+Checked headless on SwiftShader where the machine allowed; nothing seen in real time on a GPU; the smoke test of K
+after heavy damage was skipped (a hang there was seen once in the rig, cause not traced).
+- Faces: MakeHuman's face rig and 60 CC0 pose units (people rebuilt), FACS-driven pain, fear, cries, breath, shock,
+  death; blinks, saccades, converging gaze, pupils, pallor (face.ts, dev/research/faces.md).
+- First person: both arms and hands hold every weapon (hands.ts), models turned along the bore, sway, bob, recoil about
+  the grip, keyframed swings, reloads done by the hands.
+- Stab and gunshot blood from the forensic record (dev/research/stab-wounds.md, gunshot-blood.md): no spatter from blades,
+  cast-off, no instant smear or fountain, small back spatter, real exit openings, slits along the blade, drips poured into
+  pools; wound edges with thin pale fat and blood over muscle.
+- Sound: voices and falls follow their source; distance through the room (reverb send equal to direct at 2.8 m) and
+  muffling behind the map's blocks; impact sounds from Havok contacts (thuds.ts), wall slams as blunt blows, ledge
+  landings counted; 43 new ElevenLabs takes (reloads, dressing, head hits, body slams, limb slaps, drag, variations).
+- Reactions: the other hand holds an arm wound, full self-collision except jointed neighbours, head and face dressings,
+  swelling carries clothes and dressings.
+- Dismemberment, stumps and severed pieces: fixes in progress at this commit.
+- Performance: per-person culling boxes and shadow casters culled to each lamp (no pixel changed in 72 views); organ
+  loops skip unchanged redraws, own normals, fewer allocations.
+Left for 0.8.21: active-ragdoll steadiness, feet and fractures (in progress), the K hang, the chin/neck smudge, the
+material leak on K.
