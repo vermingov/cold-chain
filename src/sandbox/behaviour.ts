@@ -63,11 +63,11 @@ function braced(way: 'ahead' | 'behind' | 'side', side: number, give: number) {
     // The knees go first: forward onto them, back into a sit, sideways onto the near hip.
     const legs = { hipFlexL: 45 * give, hipFlexR: 40 * give, kneeL: 80 * give, kneeR: 72 * give, ankleL: -15, ankleR: -15 };
     if (way === 'ahead') return add(P.RELAXED, { ...legs, shoulderFlexL: 95, shoulderFlexR: 95, shoulderAbductL: 22, shoulderAbductR: 22, elbowL: 22, elbowR: 22,
-        curlL: -45, curlR: -45, thumbL: -22, thumbR: -22, thumbBaseL: 10, thumbBaseR: 10, neckFlex: -25, spineFlex: -4 });
+        curlL: -45, curlR: -45, thumbL: -30, thumbR: -30, thumbBaseL: 30, thumbBaseR: 30, thumbInL: -25, thumbInR: -25, neckFlex: -25, spineFlex: -4 });
     if (way === 'behind') return add(P.RELAXED, { ...legs, hipFlexL: 80 * give, hipFlexR: 74 * give, kneeL: 100 * give, kneeR: 92 * give,
-        shoulderFlexL: -40, shoulderFlexR: -40, shoulderAbductL: 38, shoulderAbductR: 38, elbowL: 14, elbowR: 14, curlL: -45, curlR: -45, thumbL: -22, thumbR: -22, neckFlex: 40, spineFlex: 28 });
+        shoulderFlexL: -40, shoulderFlexR: -40, shoulderAbductL: 38, shoulderAbductR: 38, elbowL: 14, elbowR: 14, curlL: -45, curlR: -45, thumbL: -30, thumbR: -30, thumbBaseL: 30, thumbBaseR: 30, thumbInL: -25, thumbInR: -25, neckFlex: 40, spineFlex: 28 });
     const near = side > 0 ? 'R' : 'L', far = side > 0 ? 'L' : 'R';
-    return add(P.RELAXED, { ...legs, ['shoulderAbduct' + near]: 78, ['shoulderFlex' + near]: 22, ['elbow' + near]: 12, ['curl' + near]: -45, ['thumb' + near]: -22,
+    return add(P.RELAXED, { ...legs, ['shoulderAbduct' + near]: 78, ['shoulderFlex' + near]: 22, ['elbow' + near]: 12, ['curl' + near]: -45, ['thumb' + near]: -30, ['thumbBase' + near]: 30, ['thumbIn' + near]: -25,
         ['shoulderFlex' + far]: 55, ['shoulderAbduct' + far]: -20, ['elbow' + far]: 60, spineSide: -12 * side, neckFlex: 15 });
 }
 
@@ -541,7 +541,7 @@ export class Behaviour {
         } else if (r.kind === 'guard') {
             // Hands up in front of the face, closed, the thumbs in over the fingers, chin down.
             more({ shoulderFlexL: 75, shoulderFlexR: 75, shoulderAbductL: 8, shoulderAbductR: 8, elbowL: 115, elbowR: 115, curlL: 56, curlR: 60,
-                thumbL: 30, thumbR: 33, thumbBaseL: 30, thumbBaseR: 30, thumbInL: -28, thumbInR: -28, neckFlex: 14, spineFlex: 8 });
+                thumbL: 24, thumbR: 25, thumbBaseL: 52, thumbBaseR: 52, thumbInL: -55, thumbInR: -55, neckFlex: 14, spineFlex: 8 });
         } else if (r.kind === 'leg') {
             // A dead leg: it gives at the knee for a moment, and the balance has to cope.
             this.strength['leg' + r.side] *= 1 - 0.7 * e;

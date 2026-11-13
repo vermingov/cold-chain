@@ -424,13 +424,14 @@ export class Person {
         // the middle: they closed sideways, a splayed claw). The knuckle's line is taken square to the finger pulled
         // CONVERGE of the way into line with the middle finger, so that closing, the fingers come together and point
         // at the heel of the thumb (the scaphoid) as a real fist's do, instead of each folding down its own spread.
+        // How far each finger is turned out from the middle one (radians, about `palm`).
+        const spread = [2, 3, 4, 5].map((f) => {
+            const d = flat(along(b(`finger${f}-1`), b(`finger${f}-2`)));
+            return Math.atan2(V3.Dot(V3.Cross(d, middle), palm), V3.Dot(d, middle));
+        });
         const flexes = (f, k) => {
             const bone = b(`finger${f}-${k}`), d = along(bone, k < 3 ? b(`finger${f}-${k + 1}`) : null);
-            let square = d;
-            if (k === 1) {
-                const spread = flat(d), angle = Math.atan2(V3.Dot(V3.Cross(spread, middle), palm), V3.Dot(spread, middle));
-                square = d.applyRotationQuaternion(Q.RotationAxis(palm, angle * HAND.CONVERGE));
-            }
+            const square = k === 1 ? d.applyRotationQuaternion(Q.RotationAxis(palm, spread[f - 2] * HAND.CONVERGE)) : d;
             return toward(d, V3.Cross(square, palm).normalize());
         };
         const bones = [], axes = [];
@@ -439,13 +440,18 @@ export class Person {
         const cups = [b('metacarpal3'), b('metacarpal4')].filter(Boolean);
         const cupAxes = cups.map((m, i) => toward(along(m, b(`finger${i + 4}-1`)), V3.Cross(along(m, b(`finger${i + 4}-1`)), palm).normalize()));
         const vary = [0, 1, 2, 3].map(() => 1 + (Math.random() - 0.5) * HAND.VARY);
+        // (The MakeHuman hand lies with its fingers spread; closing, they come together, CONVERGE of the way to the
+        // middle finger by curl 30, in line with their knuckles' axes. Listed first, so that each finger is turned in
+        // before it bends: the other way round it was swung sideways once bent.)
+        const knuckles = [0, 3, 6, 9].map((k) => bones[k]);
         const curl = (deg, k) => {
-            if (k >= 12) return Math.max(0, deg) * HAND.CUP[k - 12];
-            const joint = k % 3, finger = (k - joint) / 3, [lo, hi] = HAND.RANGE[joint];
+            if (k < 4) return spread[k] / RAD * HAND.CONVERGE * Math.max(0, Math.min(1, deg / 30));
+            if (k >= 16) return Math.max(0, deg) * HAND.CUP[k - 16];
+            const joint = (k - 4) % 3, finger = (k - 4 - joint) / 3, [lo, hi] = HAND.RANGE[joint];
             const gain = (deg >= 0 ? HAND.GAIN[joint] : HAND.OPEN[joint]) * HAND.CASCADE[finger] * vary[finger];
             return Math.max(lo, Math.min(hi, deg * gain));
         };
-        this.hinges['curl' + side] = { bones: [...bones, ...cups], axis: axes[4], axes: [...axes, ...cupAxes], bend: curl, fingers: true };
+        this.hinges['curl' + side] = { bones: [...knuckles, ...bones, ...cups], axis: axes[4], axes: [palm, palm, palm, palm, ...axes, ...cupAxes], bend: curl, fingers: true };
         FINGERS.forEach((finger, i) => {
             for (const k of [1, 2, 3]) this.hinges[`${finger}${k}${side}`] = { bones: [bones[i * 3 + k - 1]], axis: axes[i * 3 + k - 1], fingers: true };
         });

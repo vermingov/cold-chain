@@ -16,7 +16,7 @@ const RELAXED = {
     shoulderFlexL: -26, shoulderFlexR: -26,
     elbowL: 12, elbowR: 12,
     // (the hands loosely curled, the thumb in alongside the index: a hand hanging with nothing working it)
-    curlL: 30, curlR: 28, thumbL: 14, thumbR: 12, thumbInL: 8, thumbInR: 8,
+    curlL: 30, curlR: 28, thumbL: 26, thumbR: 25, thumbBaseL: -22, thumbBaseR: -22, thumbInL: 25, thumbInR: 25,
     hipAbductL: -2, hipAbductR: -2,
 };
 
