@@ -1122,8 +1122,8 @@ function handAt(arm, x: number[], out: BABYLON.Vector3) {
 }
 
 // The ways of holding an arm a reach is tried from (_armTo): up in front of the chest, across it high and low, in front
-// of the belly, down by the side.
-const SEEDS = [[-60, 40, 0, 95], [-80, 65, 25, 105], [-45, 80, -30, 125], [-30, 20, 60, 85], [10, 25, 10, 60]];
+// of the belly, down by the side, down in front of the thigh.
+const SEEDS = [[-60, 40, 0, 95], [-80, 65, 25, 105], [-45, 80, -30, 125], [-30, 20, 60, 85], [10, 25, 10, 60], [-45, 25, -20, 25]];
 // The forearm kept out of the trunk's boxes (_armTo): at the elbow, half way down it and near the wrist, by about its
 // flesh (m). The hand itself is meant to come to the body.
 const ALONG = [0, 0.5, 0.75], FLESH = [0.04, 0.036, 0.03];

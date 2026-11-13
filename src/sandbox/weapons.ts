@@ -1034,9 +1034,11 @@ export class Weapons {
         if (key === 'rifle') return this._bolt(u, pos, turn, hold, parts, true);
         const shotgun = key === 'shotgun';
         // Tipped in: the magazine well (or the open breech) turned toward the other hand, brought in and up a little.
-        pos.addInPlace(new V3(-0.05, shotgun ? 0.02 : 0.04, -0.05).scale(tip));
-        turn.z += (shotgun ? 0.25 : key === 'pistol' ? 0.45 : 0.55) * tip;
-        turn.x += (shotgun ? 0.45 : -0.15) * tip;
+        // (Turned about the grip: a long gun pitched down there would bring its stock up into the face. The shotgun's
+        // barrels drop; the gun itself only comes in and down a little.)
+        pos.addInPlace(new V3(-0.05, shotgun ? -0.03 : 0.04, -0.05).scale(tip));
+        turn.z += (shotgun ? 0.2 : key === 'pistol' ? 0.45 : 0.5) * tip;
+        turn.x += (shotgun ? 0.1 : -0.15) * tip;
         const mag = parts?.mag, below = [-0.06, -0.4, -0.12];
         const well = mag ? [(mag.min.x + mag.max.x) / 2, mag.min.y + 0.03, (mag.min.z + mag.max.z) / 2]
             : shotgun ? [0, 0.08, 0.03] : [0, -0.06, 0.1];
@@ -1072,7 +1074,7 @@ export class Weapons {
         // Then the slide (pistol: over the top, from behind) or the charging handle (rifles) pulled back and let go.
         const pull = span(u, 0.76, 0.82) - span(u, 0.82, 0.84);
         if (key === 'pistol') {
-            const slide = parts?.slide, grab: Grip = { hold: 'wrap', at: [0, slide ? slide.max.y - 0.012 : 0.06, slide ? slide.min.z + 0.03 : -0.02], along: [1, 0, 0], back: [0.2, -0.3, 0.95] };
+            const slide = parts?.slide, grab: Grip = { hold: 'wrap', at: [0, slide ? slide.max.y - 0.012 : 0.06, slide ? slide.min.z + 0.03 : -0.02], along: [0, 0, 1], back: [1, -0.3, 0] };
             this._move(slide, new V3(0, 0, -0.024 * pull));
             hold.left = blend(blend(hold.left, grab, span(u, 0.7, 0.76)), support, span(u, 0.86, 0.98));
             hold.left = { ...hold.left, at: hold.left.at.map((v, i) => v - (i === 2 ? 0.024 * pull * span(u, 0.7, 0.76) : 0)) };

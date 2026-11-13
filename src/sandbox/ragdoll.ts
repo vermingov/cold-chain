@@ -321,11 +321,49 @@ export class Ragdoll {
             seg.geo = { kind, c: seg.centre, r: seg.radius };
             return new BABYLON.PhysicsShapeSphere(seg.centre, seg.radius, this.scene);
         }
+        if (seg.name.startsWith('hand')) return this._hand(seg, pts);
         seg.radius = Math.min(size.x, size.z) * 0.5 * THIN;
         const extent = new V3(size.x * THIN, size.y * (foot ? 1 : 0.92), size.z * (foot ? 1 : THIN));
         seg.centre = centre;
-        seg.geo = { kind, c: centre, h: extent.scale(0.5) };
+        seg.geo = { kind, c: centre, h: extent.scale(0.5), q: Q.Identity() };
         return new BABYLON.PhysicsShapeBox(centre, Q.Identity(), extent, this.scene);
+    }
+
+    // A hand's box, laid along the hand: its length, its breadth across the palm and thumb, and its thickness, the
+    // three ways its flesh lies (the axes of its spread). Square to the body, a hand held out at rest slanting forward
+    // and in made a box 10 x 12 x 13 cm round a hand under 5 cm thick, and nothing it reached for came nearer its
+    // middle than 5 to 7 cm: a hand on a belly or a wounded arm stopped short of it.
+    _hand(seg, pts: BABYLON.Vector3[]) {
+        const mid = pts.reduce((a, p) => a.addInPlace(p), new V3()).scaleInPlace(1 / pts.length);
+        const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        for (const p of pts) {
+            const d = [p.x - mid.x, p.y - mid.y, p.z - mid.z];
+            for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += (d[i] * d[j]) / pts.length;
+        }
+        // The two widest ways by power iteration, the third square to both.
+        const axes = [];
+        for (let k = 0; k < 2; k++) {
+            let v = k ? new V3(0, 0, 1) : new V3(0, 1, 0);
+            for (let it = 0; it < 60; it++) {
+                if (k) v.subtractInPlace(axes[0].scale(V3.Dot(v, axes[0])));
+                v = new V3(C[0][0] * v.x + C[0][1] * v.y + C[0][2] * v.z, C[1][0] * v.x + C[1][1] * v.y + C[1][2] * v.z, C[2][0] * v.x + C[2][1] * v.y + C[2][2] * v.z).normalize();
+            }
+            if (k) v.subtractInPlace(axes[0].scale(V3.Dot(v, axes[0]))).normalize();
+            axes.push(v);
+        }
+        axes.push(V3.Cross(axes[0], axes[1]).normalize());
+        const lo = new V3(), hi = new V3(), at = (list, f) => list[Math.floor((list.length - 1) * f)];
+        ['x', 'y', 'z'].forEach((k, i) => {
+            const along = pts.map((p) => V3.Dot(p.subtract(mid), axes[i])).sort((a, b) => a - b);
+            lo[k] = at(along, 0.02);
+            hi[k] = at(along, 0.98);
+        });
+        const q = Q.RotationQuaternionFromAxis(axes[0], axes[1], axes[2]);
+        const centre = mid.add(lo.add(hi).scale(0.5).applyRotationQuaternion(q)), extent = hi.subtract(lo).scaleInPlace(THIN);
+        seg.radius = extent.z / 2;
+        seg.centre = centre;
+        seg.geo = { kind: 'box', c: centre, h: extent.scale(0.5), q };
+        return new BABYLON.PhysicsShapeBox(centre, q, extent, this.scene);
     }
 
     // From a segment's bone head to its far end, in rest space.
@@ -578,7 +616,7 @@ export class Ragdoll {
         if (g.kind === 'capsule') return Math.min(this.worldPoint(seg, g.a, _v).y, this.worldPoint(seg, g.b, _v).y) - g.r;
         if (g.kind === 'sphere') return this.worldPoint(seg, g.c, _v).y - g.r;
         // A box: how far down its corners reach from its middle, by how its three axes now point.
-        const { x, y, z, w } = q;
+        const { x, y, z, w } = q.multiplyToRef(g.q, _qp);
         const down = Math.abs(2 * (x * y + z * w)) * g.h.x + Math.abs(1 - 2 * (x * x + z * z)) * g.h.y + Math.abs(2 * (y * z - x * w)) * g.h.z;
         return this.worldPoint(seg, g.c, _v).y - down;
     }
@@ -635,7 +673,8 @@ export class Ragdoll {
             const ab = g.b.subtract(g.a), t = Math.max(0, Math.min(1, V3.Dot(p.subtract(g.a), ab) / Math.max(1e-9, ab.lengthSquared())));
             return V3.Distance(p, g.a.add(ab.scaleInPlace(t))) - g.r;
         }
-        const x = Math.abs(p.x - g.c.x) - g.h.x, y = Math.abs(p.y - g.c.y) - g.h.y, z = Math.abs(p.z - g.c.z) - g.h.z;
+        p.subtractInPlace(g.c).applyRotationQuaternionInPlace(Q.InverseToRef(g.q, _qp));
+        const x = Math.abs(p.x) - g.h.x, y = Math.abs(p.y) - g.h.y, z = Math.abs(p.z) - g.h.z;
         return Math.hypot(Math.max(x, 0), Math.max(y, 0), Math.max(z, 0)) + Math.min(Math.max(x, y, z), 0);
     }
 
