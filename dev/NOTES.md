@@ -809,7 +809,9 @@ Checked headless on SwiftShader (frames stepped by hand, numbers read back); not
 - Organs: no scripted spill; bowel, colon and stomach are verlet ropes held by the wall and their attachments, out only
   through an opening they fit, carried by belly pressure and gravity (pistol and close shotgun holes keep them in).
   Blood on hit organs; cavity sparkle (a bump in metres) and the striped mesentery sheets gone; a slash is a lens slit.
-  The organs' look was still being worked on (wound edge, vessels, sheen, a glassy dome in shotgun holes).
+  Looks: own textures per organ (vessels faint, under the serosa; mesenteric fat), the clear coat on the relief map
+  (soft broken sheen, not streaks), the wound edge in uneven layers (fat lobules, torn muscle, rolled skin; the black
+  specks were a 0.6 mm noise on depth), and the 'glass dome' in shotgun holes was clean clear-coated loops: bloodied now.
 - Test map (map.ts): 22 x 22 m hall with grid test textures, ramp, stairs, 1/2/3 m ledges, a balcony, cover walls, a
   corridor, crates; the player steps and falls; N spawns on any top; people stand on ledges (behaviour.ts floor under
   them); blood lands on raised tops as growing stains (only the floor flows).
