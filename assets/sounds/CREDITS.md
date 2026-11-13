@@ -1,0 +1,102 @@
+# The sound effects
+
+Generated with ElevenLabs Sound Effects v2 (eleven_text_to_sound_v2) from the prompt beside each,
+one channel, set to a level (tools/sfx.py). Voices are in assets/cries (Fish Audio).
+
+- `shot-pistol-1.ogg`: "Single 9mm pistol gunshot fired indoors in a concrete room, sharp crack, short room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation fTY7yHmOLqybbPo5oIUJ.
+- `shot-pistol-2.ogg`: "Single 9mm pistol gunshot fired indoors in a concrete room, sharp crack, short room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation NTdW1ImHd72binHr0QFy.
+- `shot-rifle-1.ogg`: "Single bolt-action .308 rifle gunshot indoors, loud deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Kd0FtcCVyePbvTXdRBe2.
+- `shot-rifle-2.ogg`: "Single bolt-action .308 rifle gunshot indoors, loud deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Uevg0ssZg7smyh1FnCsh.
+- `shot-shotgun-1.ogg`: "Single 12 gauge shotgun blast indoors, huge deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jeyE8tKgFj7D4iqxddgL.
+- `shot-shotgun-2.ogg`: "Single 12 gauge shotgun blast indoors, huge deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 3d29AQj0if3KQV3dJQyR.
+- `shot-ak-1.ogg`: "Single AK-47 rifle shot indoors, loud sharp crack with heavy body, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation droZgHHx6wc8hnq9PeTE.
+- `shot-ak-2.ogg`: "Single AK-47 rifle shot indoors, loud sharp crack with heavy body, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Qsgu7IUANORuhf3xCTHV.
+- `shot-m4-1.ogg`: "Single M4 carbine 5.56 rifle shot indoors, sharp high crack, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 2Wc97qUDq2fFsUdTwUhq.
+- `shot-m4-2.ogg`: "Single M4 carbine 5.56 rifle shot indoors, sharp high crack, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation y4ohsv7j9fnPF7s2TNsb.
+- `bullet-flesh-1.ogg`: "Bullet hitting a human body, short wet meaty thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Q4yY5fB6jPgXNJiUhnwa.
+- `bullet-flesh-2.ogg`: "Bullet hitting a human body, short wet meaty thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation lOpUxkT3g10tj19lDdM0.
+- `bullet-flesh-3.ogg`: "Bullet hitting a human body, short wet meaty thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FKatGfytzTWScf8jOtUW.
+- `casing-1.ogg`: "Single brass bullet casing dropping and bouncing on a concrete floor, small metallic tinkles". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FtFClQFpeSFXKydcBZmM.
+- `casing-2.ogg`: "Single brass bullet casing dropping and bouncing on a concrete floor, small metallic tinkles". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 90kPyBPYj7IcETBETiGO.
+- `casing-3.ogg`: "Single brass bullet casing dropping and bouncing on a concrete floor, small metallic tinkles". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation fAPHBXYcr7Nvyx4BkGFb.
+- `rack-1.ogg`: "Pistol slide racked back and released, crisp metallic clack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation zPW1QhUq4Xslr4YzUk9O.
+- `swing-1.ogg`: "Fast whoosh of a baseball bat swung hard through the air". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation CNGLpOxcP43deQlXaAhY.
+- `swing-2.ogg`: "Fast whoosh of a baseball bat swung hard through the air". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation HUijrtvLpDj5z56i7TH9.
+- `swing-3.ogg`: "Fast whoosh of a baseball bat swung hard through the air". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation JbfXywOApOSmHLfXvaZ7.
+- `stab-1.ogg`: "Knife stabbed into flesh, short wet squelch". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation tZezBxWza6pdXBlvBoht.
+- `stab-2.ogg`: "Knife stabbed into flesh, short wet squelch". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation RXYULqOejU2cokksYNfO.
+- `stab-3.ogg`: "Knife stabbed into flesh, short wet squelch". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation D68kbXHfvOgAAwaTjHwO.
+- `blunt-1.ogg`: "Baseball bat hitting a human body, heavy dull thump". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation OI2sDJFmbIaOsZZTNKqN.
+- `blunt-2.ogg`: "Baseball bat hitting a human body, heavy dull thump". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation IcN3SIh1QCuoiKZscrbt.
+- `blunt-3.ogg`: "Baseball bat hitting a human body, heavy dull thump". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation shV0HHN1gxgupZTIYcpH.
+- `crack-1.ogg`: "Human bone snapping, sharp dry crack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation BSKeWtKg0a7fxys3zagu.
+- `crack-2.ogg`: "Human bone snapping, sharp dry crack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FKoQqe7vGv9ukLDGBYIc.
+- `crack-3.ogg`: "Human bone snapping, sharp dry crack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 9gKWuq690L6gCfjg81T6.
+- `body-fall-1.ogg`: "Human body collapsing limp onto a concrete floor, heavy thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation al7sGkrU2CPb908uDE9K.
+- `body-fall-2.ogg`: "Human body collapsing limp onto a concrete floor, heavy thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation DfhRBdmZ8deW6twwxnlz.
+- `body-fall-3.ogg`: "Human body collapsing limp onto a concrete floor, heavy thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation U2EiUQjQBBskKnKOY21Y.
+- `body-fall-4.ogg`: "Human body collapsing limp onto a concrete floor, heavy thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation leHejnb7kySFFswZgCj8.
+- `drip-1.ogg`: "Thick liquid dripping onto a concrete floor, slow wet drips". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 0gD9E8a6knKH49NogxQV.
+- `drip-2.ogg`: "Thick liquid dripping onto a concrete floor, slow wet drips". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation AdkRWhT12NUYNX8lVKuN.
+- `spurt-1.ogg`: "Blood spurting from a wound in rhythmic pulses, wet squirting". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jZVOPUtQ1MHYfUdEZY6H.
+- `spurt-2.ogg`: "Blood spurting from a wound in rhythmic pulses, wet squirting". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation HY9Lj34aDrOvQe0diWrq.
+- `room-sandbox-1.ogg`: "Empty concrete warehouse room tone, low steady ventilation hum (5 s loop)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation iDJ3iLRnHho95y7QgCai.
+- `explosion-1.ogg`: "Hand grenade explosion indoors, sharp powerful blast, concrete room, debris rattling". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 4aJhhNqTuCFztSQFDMfs.
+- `explosion-2.ogg`: "Hand grenade explosion indoors, sharp powerful blast, concrete room, debris rattling". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Mr3K5tlH7OolZfAct35d.
+- `pin-1.ogg`: "Grenade pin pulled out and safety lever flicking off, small metallic clicks". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 1sqccsVQ2Bu9rxbyghBZ.
+- `bounce-metal-1.ogg`: "Small heavy metal grenade bouncing and rolling on a concrete floor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation bD5bhuXKWxBFvXxFy0Vn.
+- `bounce-metal-2.ogg`: "Small heavy metal grenade bouncing and rolling on a concrete floor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation WcisaG7LYppRgO6LZSwm.
+- `skin-1.ogg`: "Sharp knife slicing through skin and flesh, soft wet cut, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation BbsAJmrwf30XmUKJrmVG.
+- `skin-2.ogg`: "Sharp knife slicing through skin and flesh, soft wet cut, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation HstMbZbtpgvQrHM6Sdiz.
+- `skin-3.ogg`: "Sharp knife slicing through skin and flesh, soft wet cut, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation rACXBo2zoOLaZFBnYx8y.
+- `bone-1.ogg`: "Knife blade scraping and grinding against bone, gritty scrape, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 3tkth1P3C4H870S9iCUa.
+- `bone-2.ogg`: "Knife blade scraping and grinding against bone, gritty scrape, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation gOi4pMr1JAxJa5nSKhYi.
+- `give-1.ogg`: "Raw flesh tearing apart, wet ripping, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Gu5fCKH9MMRvJJ3lAu6v.
+- `give-2.ogg`: "Raw flesh tearing apart, wet ripping, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation vVU4Dlhwby1p8WQyy0t6.
+- `wet-1.ogg`: "Wet slippery organs being squeezed and moved by hand, squelching, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 73diVDVcocZfxtjwySNz.
+- `wet-2.ogg`: "Wet slippery organs being squeezed and moved by hand, squelching, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation cZcuZHniA3Nu4dtjPuHC.
+- `glove-1.ogg`: "Latex medical glove pulled on and snapped at the wrist, close-mic, quiet room". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FEuehljlBv9dejLQ98Qs.
+- `lay-2.ogg`: "Limp human hand flopping softly onto a concrete floor, soft muffled fleshy pat, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation dnlbHls6LPe84rM9yZ2V.
+- `step-tarmac-1.ogg`: "Footsteps of hard leather shoes walking on a concrete floor, steady steps, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 2FIbNasdNJnWXQrL5WvX.
+- `step-tarmac-2.ogg`: "Footsteps of hard leather shoes walking on a concrete floor, steady steps, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation UBV19JmAzTT09UYLhUgl.
+- `step-tarmac-3.ogg`: "Footsteps of hard leather shoes walking on a concrete floor, steady steps, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation BIKtvCIJ5X8Fnm8MdRUl.
+- `step-tarmac-4.ogg`: "Footsteps of hard leather shoes walking on a concrete floor, steady steps, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation QIpMFbzxgOIt1A3pj0fa.
+- `step-carpet-1.ogg`: "Soft footsteps walking on carpet, steady pace, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation qVzE8NsJxKv7DnkMKTwJ.
+- `step-gravel-1.ogg`: "Footsteps walking on loose gravel, boots crunching, steady pace, outdoors". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation hXOEwmbtMFq0C4U7aQww.
+- `step-grass-1.ogg`: "Footsteps walking through damp grass, boots, steady pace, outdoors at night". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 9Hns8pr2z2postr1B4PP.
+- `step-mud-1.ogg`: "Boots walking through thick wet mud, squelching steps, steady pace". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FCzY9a4BUz0B8eGgNmLC.
+- `ring-1.ogg`: "Old landline telephone ringing twice in a quiet room". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation xW7qZICSReufHn3tlVva.
+- `beep-1.ogg`: "Short electronic pager beep, three quick tones". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation MWLuT7SXKH1RtHcOyWiN.
+- `handset-1.ogg`: "Plastic telephone handset picked up from its cradle, clunk and click". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 4G222gd2wSDQcIcSGKj0.
+- `door-1.ogg`: "Heavy metal door opening and closing with a latch clunk, echoing corridor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation LiqW6VWdju26JiEMikeF.
+- `room-1.ogg`: "Room tone of a cold tiled basement morgue, faint refrigeration hum, ventilation, no voices (5 s loop)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation QNb3pBrfyHrtn3f4V7uW.
+- `night-1.ogg`: "Quiet rural night ambience, light wind, distant traffic, a few crickets, no music (5 s loop)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation d9dbZ3B8JcjacRLz1enZ.
+- `dig-1.ogg`: "Shovel digging into wet soil and tossing dirt aside, one scoop". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jUYC6PqtRoyhQF84uhjh.
+- `lid-1.ogg`: "Heavy wooden coffin lid closing with a dull thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation CuOVD2sRnfQhdVHg4RwA.
+- `bier-1.ogg`: "Metal hospital gurney with squeaky wheels rolled across a tiled floor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation XAXJB64hyo57Sx33LUfT.
+- `van-1.ogg`: "Diesel van engine idling outside, then the sliding side door opening". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation OKp9PAaVOtZsXdkZFTrD.
+- `mag-out-1.ogg`: "Rifle magazine released and pulled out of the magazine well, metallic click and scrape, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation AieKnjk2XP0awmkrHMFD.
+- `mag-in-1.ogg`: "Magazine pushed into a gun and seated with a firm metallic click, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation It7KjHTLfC6J2iX3T2GO.
+- `mag-in-2.ogg`: "Magazine pushed into a gun and seated with a firm metallic click, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Agrk76ad3evRmPLoJP0u.
+- `charge-1.ogg`: "Assault rifle charging handle pulled back and released, sharp metallic clack, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation T22RbboGNcO5ey06duW0.
+- `bolt-open-1.ogg`: "Bolt-action rifle bolt lifted and pulled back, metallic clack and slide, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation u7TB4ebSSIjoo2BEFy2L.
+- `bolt-close-1.ogg`: "Bolt-action rifle bolt pushed forward and locked down, metallic slide and clack, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 8X2h8lEPaeIGVCi3yyiZ.
+- `round-in-1.ogg`: "Single rifle cartridge pressed down into a rifle magazine with the thumb, small metallic click, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation AFoj3UjmHRp3NUvX43kV.
+- `round-in-2.ogg`: "Single rifle cartridge pressed down into a rifle magazine with the thumb, small metallic click, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation xuZMYrNAstgnYGO4tvDB.
+- `break-open-1.ogg`: "Double-barrel shotgun broken open, hinge clack and spent shells sliding out, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation XRG4u6VSEjuBpm5uSwDg.
+- `break-close-1.ogg`: "Double-barrel shotgun snapped shut, solid metallic clack, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation EwZXO1BjVnZ4l3QobDtW.
+- `shell-in-1.ogg`: "Single shotgun shell pushed into the breech of a shotgun, short plastic and brass click, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation lvrerUtknPJGCqU4j0SJ.
+- `shell-in-2.ogg`: "Single shotgun shell pushed into the breech of a shotgun, short plastic and brass click, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation G2s8hDpnY6rT5SOciCXY.
+- `gauze-tear-1.ogg`: "Sterile gauze packet torn open by hand, crisp paper tearing, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation M6r7xg7j5PYka5mljef6.
+- `gauze-wrap-1.ogg`: "Gauze bandage roll unwound and wrapped round an arm, soft steady fabric rustle, close-mic (4 s)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation ayd3zYedbCP3B4Aly8QO.
+- `gauze-wrap-2.ogg`: "Gauze bandage roll unwound and wrapped round an arm, soft steady fabric rustle, close-mic (4 s)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation GLuasF2V7YjBdFmSwUYk.
+- `tape-1.ogg`: "Strip of medical tape pulled and torn from the roll, short sticky rip, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 7lFlW4l7YymPvphgZwuY.
+- `zip-1.ogg`: "Nylon first aid pouch zipped open, one quick zipper pull, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation XgwEmPpGWTnaXJpEqzjS.
+- `head-hit-1.ogg`: "Human head hitting a concrete floor, hard dull knock, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation xjNXbH2xs1MH27kqCxNG.
+- `head-hit-2.ogg`: "Human head hitting a concrete floor, hard dull knock, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation yLvqN6qtX5hrCUorbjq2.
+- `body-slam-1.ogg`: "Human body slamming hard into a concrete wall, heavy dull thud, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation l4kE1Hoi8oGNhGb1DDiQ.
+- `body-slam-2.ogg`: "Human body slamming hard into a concrete wall, heavy dull thud, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 0dMZ1klIz7AycRgpdFKJ.
+- `limb-slap-1.ogg`: "Limp human arm slapping down onto a concrete floor, short fleshy slap, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation oRrMG9MrA9MqG5an0Cqi.
+- `limb-slap-2.ogg`: "Limp human arm slapping down onto a concrete floor, short fleshy slap, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Mp0AmAvNajzAvNq58vkj.
+- `drag-1.ogg`: "Limp human body dragged across a concrete floor, clothes scraping and sliding, steady, indoor concrete hall (4 s)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation dobayZR5YU2xlpYzs6xE.
+- `drag-2.ogg`: "Limp human body dragged across a concrete floor, clothes scraping and sliding, steady, indoor concrete hall (4 s)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation lZ7oB39XUNggWBZKqNDv.
