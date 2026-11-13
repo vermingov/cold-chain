@@ -14,6 +14,7 @@ import { Blood } from './blood.ts';
 import { Weapons } from './weapons.ts';
 import { buildArsenal } from './arsenal.ts';
 import { HALL, buildMap, ground, solids, land, covered, screened } from './map.ts';
+import { Thuds } from './thuds.ts';
 const V3 = BABYLON.Vector3;
 
 const BODIES = ['oldman', 'sexton', 'buyer', 'hood'];
@@ -74,6 +75,7 @@ export async function openSandbox(engine, canvas, hud) {
         sound: null,
     };
     blood.bodies = () => world.npcs;
+    const thuds = new Thuds(world, physics.getPhysicsPlugin() as unknown as BABYLON.HavokPlugin);
     const weapons = new Weapons(world);
     world.weapons = weapons;
     await weapons.load();
@@ -85,6 +87,7 @@ export async function openSandbox(engine, canvas, hud) {
         const number = ++made, bit = 8 << ((number - 1) % 27);
         const npc = await Npc.make(world, people, body, { at, yaw, bit, mass: MASS[body], name: CALLED[body] });
         for (const seg of npc.ragdoll.segments) world.bodyOf.set(seg.body, { npc, seg });
+        thuds.listen(npc);
         npc.label = `${CALLED[body]} (${number})`;
         const injure = npc.vitals.injure.bind(npc.vitals);
         npc.vitals.injure = (text, severity) => { lastHurt = npc; injure(text, severity); };

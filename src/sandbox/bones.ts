@@ -935,7 +935,9 @@ export class Bones {
             const before = this._vy.get(seg) ?? 0;
             this._vy.set(seg, _v.y);
             // (Stopped: it lost most of the speed it had downward, in one step, at the floor.)
-            if (settling || before > -2.5 || _v.y < before * 0.4 || rd.lowest(seg) > FLOOR + 0.06) continue;
+            // (On whatever is under it: the floor, or a ledge it came down on.)
+            const low = rd.lowest(seg), under = this.npc.world.ground?.(seg.node.position.x, seg.node.position.z, low + 0.1) ?? FLOOR;
+            if (settling || before > -2.5 || _v.y < before * 0.4 || low > under + 0.06) continue;
             this._land(seg, _v.y - before);
         }
     }
