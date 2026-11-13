@@ -342,35 +342,57 @@ ${GLSL_BLOOD}
 float puddleHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float puddleNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
     return mix(mix(puddleHash(i), puddleHash(i + vec2(1, 0)), f.x), mix(puddleHash(i + vec2(0, 1)), puddleHash(i + vec2(1, 1)), f.x), f.y); }
-float puddleMm(vec2 u) { float r = texture2D(puddleMap, u).r; return r * r * ${MOST_MM.toFixed(1)}; }
+// A cubic B-spline's four weights at fraction t, and their slopes.
+vec4 puddleW(float t) { float t2 = t * t, t3 = t2 * t; return vec4(1.0 - 3.0 * t + 3.0 * t2 - t3, 4.0 - 6.0 * t2 + 3.0 * t3, 1.0 + 3.0 * t + 3.0 * t2 - 3.0 * t3, t3) / 6.0; }
+vec4 puddleS(float t) { float t2 = t * t; return vec4(-1.0 + 2.0 * t - t2, -4.0 * t + 3.0 * t2, 1.0 + 2.0 * t - 3.0 * t2, t2) * 0.5; }
 #endif
 `,
             CUSTOM_FRAGMENT_UPDATE_ALPHA: `
 #ifdef PUDDLE
 float puddleGloss = 0.0;
 {
-    // Read a little off where this point is, by a smooth noise (blood's edge wanders with the floor's grain), and from
-    // four places half a cell about it: the depth smoothed, so a pool's edge is a curve and not the grid's steps.
-    vec2 pw = vPositionW.xz + (vec2(puddleNoise(vPositionW.xz * 17.0), puddleNoise(vPositionW.xz * 17.0 + 9.0)) - 0.5) * 0.012;
-    vec2 pu = (pw - puddleArea.xy) * puddleArea.z;
-    float t = 0.5 / puddleArea.w;
-    float a = puddleMm(pu + vec2(t, t)), b = puddleMm(pu + vec2(-t, t)), c = puddleMm(pu + vec2(t, -t)), d = puddleMm(pu - vec2(t, t));
-    float mm = (a + b + c + d) * 0.25, peak = max(max(a, b), max(c, d));
-    // A pool's edge is where it stands about a third of its depth (its rounded rim); a smear's, wherever there is any.
-    float n1 = puddleNoise(vPositionW.xz * 190.0);
-    float edge = clamp(peak * 0.35, 0.025, 0.8);
-    float cover = smoothstep(edge * 0.8, edge * 1.25, mm + (n1 - 0.5) * edge * 0.3);
+    // The cells read as a smooth surface (a cubic B-spline over the 4 by 4 cells about this point), not the grid's
+    // squares: where blood is at all (wet cells, 1, against dry, 0), how deep it is, how wet, and how each changes across
+    // the floor. Read a little off where this point is, by a smooth noise: blood's edge wanders with the floor's grain.
+    vec2 pw = vPositionW.xz + (vec2(puddleNoise(vPositionW.xz * 17.0), puddleNoise(vPositionW.xz * 17.0 + 9.0)) - 0.5) * 0.009
+        + (vec2(puddleNoise(vPositionW.xz * 61.0 + 3.0), puddleNoise(vPositionW.xz * 61.0 + 5.0)) - 0.5) * 0.003;
+    vec2 tc = (pw - puddleArea.xy) * puddleArea.z * puddleArea.w - 0.5, base = floor(tc), f = tc - base;
+    vec4 wx = puddleW(f.x), wz = puddleW(f.y), sx = puddleS(f.x), sz = puddleS(f.y);
+    ivec2 at = ivec2(base) - 1, last = ivec2(int(puddleArea.w) - 1);
+    // (Four filtered reads, each the mean of four cells, find a floor with no blood near it at a quarter of the cost.)
+    vec2 q = (vec2(at) + 1.0) / puddleArea.w, h = vec2(2.0 / puddleArea.w, 0.0);
+    if (texture2D(puddleMap, q).r + texture2D(puddleMap, q + h).r + texture2D(puddleMap, q + h.yx).r + texture2D(puddleMap, q + h.xx).r == 0.0) discard;
+    float on = 0.0, onX = 0.0, onZ = 0.0, mm = 0.0, mmX = 0.0, mmZ = 0.0, wet = 0.0;
+    for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
+        vec2 s = texelFetch(puddleMap, clamp(at + ivec2(i, j), ivec2(0), last), 0).rg;
+        float there = step(0.03, s.r), deep = s.r * s.r * ${MOST_MM.toFixed(1)};
+        float w = wx[i] * wz[j], ax = sx[i] * wz[j], az = wx[i] * sz[j];
+        on += there * w; onX += there * ax; onZ += there * az;
+        mm += deep * w; mmX += deep * ax; mmZ += deep * az;
+        wet += s.g * there * w;
+    }
+    // The edge is where the wet cells give way to dry ones, as smooth a curve as they allow.
+    const float EDGE = 0.3;
+    float fw = max(fwidth(on), 1e-4);
+    float cover = smoothstep(EDGE - fw, EDGE + fw, on + (puddleNoise(vPositionW.xz * 260.0) - 0.5) * 0.04);
     if (cover < 0.003) discard;
-    float wet = texture2D(puddleMap, pu).g;
-    // The surface of the blood: flat where it is deep, rising at its edge, as steep as the depth changes across it.
-    float slope = 1.0 / ${(CELL * 1000).toFixed(1)};
-    float gx = (a + c - b - d) * 0.5 * slope, gz = (a + b - c - d) * 0.5 * slope;
+    // How deep the blood about here stands (the wet cells' own depth, not thinned by the dry ones beside them), and at its
+    // very edge thinning to nothing over a few millimetres: a thin bright rim round a dark pool, its meniscus.
+    float inv = 1.0 / max(on, 0.05);
+    float pool = mm * inv;
+    float rim = smoothstep(EDGE, EDGE + 0.2, on);
+    float shown = pool * mix(0.08, 1.0, rim);
+    wet *= inv;
+    // The surface of the blood: its depth's slope across the floor (per mm of floor, a cell being ${(CELL * 1000).toFixed(1)}).
+    float t = clamp((on - EDGE) / 0.2, 0.0, 1.0);
+    vec2 grad = ((vec2(mmX, mmZ) - pool * vec2(onX, onZ)) * inv * mix(0.08, 1.0, rim) + pool * 0.92 * 30.0 * t * (1.0 - t) * vec2(onX, onZ))
+        / ${(CELL * 1000).toFixed(1)};
     // Drying, it skins over and wrinkles.
     float crinkle = (1.0 - wet) * (puddleNoise(vPositionW.xz * 700.0) - 0.5) * 0.25;
-    normalW = normalize(vec3(-gx * 1.6 + crinkle, 1.0, -gz * 1.6 - crinkle));
-    surfaceAlbedo = bloodOver(vec3(0.21, 0.2, 0.185), mm, wet);
-    alpha = cover * clamp(0.45 + mm * 2.5, 0.0, 1.0);
-    puddleGloss = cover * mix(0.55, 0.97, smoothstep(0.05, 0.6, wet)) * smoothstep(0.0, 0.08, mm);
+    normalW = normalize(vec3(-grad.x + crinkle, 1.0, -grad.y - crinkle));
+    surfaceAlbedo = bloodOver(vec3(0.21, 0.2, 0.185), shown, wet);
+    alpha = cover * clamp(0.5 + shown * 2.5, 0.0, 1.0);
+    puddleGloss = cover * mix(0.55, 0.97, smoothstep(0.05, 0.6, wet)) * smoothstep(0.0, 0.04, shown);
 }
 #endif
 `,

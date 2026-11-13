@@ -12,9 +12,12 @@ import * as BABYLON from '@babylonjs/core';
 import { place } from '../glb.ts';
 import { pierce, blow, type Missile } from './wounds.ts';
 import { rayToSegment } from './anatomy.ts';
+import { blast } from './dismember.ts';
+import * as viscera from './viscera.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
+const FRAGMENTS = 1000;      // an M67's body breaks into roughly this many that can wound
 
-type Gun = Missile & { rounds: number; every: number; pellets: number; spread: number; kick: number; sound: string; reload: number; speed: number };
+type Gun = Missile & { rounds: number; every: number; pellets: number; spread: number; kick: number; sound: string; reload: number; speed: number; auto?: boolean };
 
 // Where each thing sits in the hand, in the eye's own frame (x right, y up, z ahead), and how it is turned there.
 const HELD = {
@@ -24,6 +27,9 @@ const HELD = {
     pistol: { at: [0.16, -0.17, 0.4], turn: [0, 0, 0] },
     rifle: { at: [0.16, -0.19, 0.3], turn: [0, 0, 0] },
     shotgun: { at: [0.16, -0.2, 0.3], turn: [0, 0, 0] },
+    ak: { at: [0.17, -0.2, 0.5], turn: [0, 0, 0] },
+    m4: { at: [0.16, -0.19, 0.42], turn: [0, 0, 0] },
+    grenade: { at: [0.2, -0.2, 0.46], turn: [0, 0, 0] },
 };
 
 export const ARMS = [
@@ -38,6 +44,13 @@ export const ARMS = [
         pellets: 1, spread: 0.0012, kick: 0.07, sound: 'shot-rifle', reload: 2.6 } as Gun },
     { key: 'shotgun', name: 'Shotgun', kind: 'gun', gun: { energy: 170, mass: 0.0035, speed: 400, calibre: 0.0084, channel: 0.005, soft: 9, hard: 90, rounds: 2, every: 0.25,
         pellets: 9, spread: 0.028, kick: 0.12, sound: 'shot-shotgun', reload: 2.2 } as Gun },
+    // 7.62x39: a 7.9 g bullet at 715 m/s, about 2 kJ, 600 a minute. It goes some way into a body before it yaws.
+    { key: 'ak', name: 'AK-47', kind: 'gun', gun: { energy: 2020, mass: 0.0079, speed: 715, calibre: 0.0078, channel: 0.011, soft: 24, hard: 150, rounds: 30, every: 0.1,
+        pellets: 1, spread: 0.0035, kick: 0.022, sound: 'shot-ak', reload: 2.5, auto: true } as Gun },
+    // 5.56x45 M855 from a 14.5 inch barrel: 4 g at 900 m/s, about 1.6 kJ, 800 a minute. Fast enough to break up inside.
+    { key: 'm4', name: 'M4A1', kind: 'gun', gun: { energy: 1620, mass: 0.004, speed: 900, calibre: 0.0057, channel: 0.013, soft: 22, hard: 130, rounds: 30, every: 0.075,
+        pellets: 1, spread: 0.0025, kick: 0.016, sound: 'shot-m4', reload: 2.3, auto: true } as Gun },
+    { key: 'grenade', name: 'M67 grenade', kind: 'grenade' },
     { key: 'hands', name: 'Hands', kind: 'grab' },
     { key: 'throw', name: 'Throw things', kind: 'throw' },
 ];
@@ -67,10 +80,22 @@ export class Weapons {
     declare reloading: number;
     declare firing: boolean;
     declare _anchors: Map<string, any>;
+    declare slots: (string | null)[];
+    declare bag: (string | null)[];
+    declare slot: number;
+    declare arsenal: any;
+    declare grenades: any[];
+    declare flashAt: number;
 
     constructor(world) {
         this.world = world;
-        this.current = 3;
+        // What is carried: six at hand (1 to 6), twelve more in the bag. An empty hand is the hands.
+        this.slots = ['pistol', 'knife', null, null, null, null];
+        this.bag = new Array(12).fill(null);
+        this.slot = 0;
+        this.current = 0;
+        this.arsenal = null;
+        this.grenades = [];
         const { scene, camera } = world;
         this.hand = new BABYLON.TransformNode('hand', scene);
         this.hand.parent = camera;
@@ -153,13 +178,15 @@ export class Weapons {
             const local = (a) => (a ? p(a).applyRotationQuaternion(turn).add(align.position) : null);
             this._anchors.set(key, { tip: local(j.tip), ejection: local(j.ejection), eject: j.ejectDir ? V3.FromArray(j.ejectDir) : V3.Right() });
         }));
-        this.select(this.current);
+        this.select(this.slot);
     }
 
+    // The slot at hand `i` (0 to 5) taken up: whatever is in it, or the bare hands.
     select(i) {
-        if (i < 0 || i >= ARMS.length) return;
+        if (i < 0 || i >= this.slots.length) return;
         this._letGo();
-        this.current = i;
+        this.slot = i;
+        this.current = ARMS.findIndex((a) => a.key === (this.slots[i] ?? 'hands'));
         this.action = null;
         this.reloading = 0;
         for (const [key, node] of this.models) node.setEnabled(key === this.arm.key);
@@ -179,10 +206,13 @@ export class Weapons {
         };
         const up = (e) => { if (e.button === 0) { this.firing = false; this._letGo(); } };
         const key = (e) => {
-            if (/^Digit[1-8]$/.test(e.code)) this.select(Number(e.code.slice(5)) - 1);
+            if (document.pointerLockElement !== canvas) return;
+            if (/^Digit[1-6]$/.test(e.code)) this.select(Number(e.code.slice(5)) - 1);
             if (e.code === 'KeyR') this._reload();
+            if (e.code === 'KeyE') this.take(this.looking());
+            if (e.code === 'KeyG') this.putBack();
         };
-        const wheel = (e) => this.select((this.current + (e.deltaY > 0 ? 1 : -1) + ARMS.length) % ARMS.length);
+        const wheel = (e) => this.select((this.slot + (e.deltaY > 0 ? 1 : -1) + this.slots.length) % this.slots.length);
         // Pointer events, not mouse ones: Babylon cancels pointerdown, and a cancelled pointerdown has no mousedown after it.
         canvas.addEventListener('pointerdown', down);
         window.addEventListener('pointerup', up);
@@ -200,6 +230,42 @@ export class Weapons {
         else if (arm.kind === 'grab' && button === 0) this._take();
         else if (arm.kind === 'grab' && button === 2) this._punch();
         else if (arm.kind === 'throw') button === 0 ? this._throw() : (this.throwKind = (this.throwKind + 1) % THROWN.length);
+        else if (arm.kind === 'grenade') this._lob(button === 0 ? 14 : 6);
+    }
+
+    // --- what is carried ----------------------------------------------------------------------
+
+    // What on the arsenal the eye is on, if anything.
+    looking(): string | null {
+        if (!this.arsenal) return null;
+        const { camera } = this.world;
+        return this.arsenal.look(camera.globalPosition, camera.getDirection(V3.Forward()));
+    }
+
+    // `key` from the arsenal into the hand: into the slot held if it is empty, else the first empty one, else in place
+    // of what is held (which goes back on the wall). What is carried already is just taken up.
+    take(key: string | null) {
+        if (!key) return;
+        const have = this.slots.indexOf(key);
+        if (have >= 0) { this.select(have); return; }
+        const into = this.slots[this.slot] === null ? this.slot : this.slots.indexOf(null);
+        this.slots[into >= 0 ? into : this.slot] = key;
+        this.select(into >= 0 ? into : this.slot);
+        this.world.sound?.shot('rack', { gain: 0.35, rate: 1.3 });
+    }
+
+    // What is held, back on the wall.
+    putBack() {
+        if (this.slots[this.slot] === null) return;
+        this.slots[this.slot] = null;
+        this.select(this.slot);
+    }
+
+    // Two places swapped (from the inventory screen): `list` 'slots' or 'bag'.
+    move(fromList: 'slots' | 'bag', from: number, toList: 'slots' | 'bag', to: number) {
+        const a = this[fromList], b = this[toList];
+        [a[from], b[to]] = [b[to], a[from]];
+        this.select(this.slot);
     }
 
     // --- guns ---------------------------------------------------------------------------
@@ -227,8 +293,10 @@ export class Weapons {
         const muzzle = anchors?.tip ? V3.TransformCoordinates(anchors.tip, this.hand.getWorldMatrix()) : eye.add(ahead.scale(0.6));
         this.flash.position.copyFrom(muzzle);
         this.flash.intensity = 40;
+        this.flashAt = performance.now();
         this.flashCard.position.copyFrom(muzzle.add(ahead.scale(0.05)));
-        this.flashCard.scaling.setAll(gun.pellets > 1 ? 1.6 : key === 'rifle' ? 1.4 : 1);
+        this.flash.range = 8;
+        this.flashCard.scaling.setAll(gun.pellets > 1 ? 1.6 : key === 'pistol' ? 1 : 1.35);
         this.flashCard.rotation.z = Math.random() * Math.PI;
         this.flashCard.setEnabled(true);
         this.world.player.pitch -= gun.kick * (0.6 + Math.random() * 0.4);
@@ -291,7 +359,8 @@ export class Weapons {
     _eject(anchors, key) {
         const { scene, sound } = this.world;
         const at = V3.TransformCoordinates(anchors.ejection, this.hand.getWorldMatrix());
-        const brass = BABYLON.MeshBuilder.CreateCylinder('casing', { height: key === 'rifle' ? 0.039 : 0.019, diameter: key === 'rifle' ? 0.011 : 0.0098, tessellation: 10 }, scene);
+        const long = { rifle: [0.051, 0.012], ak: [0.039, 0.0113], m4: [0.045, 0.0096] }[key] ?? [0.019, 0.0098];
+        const brass = BABYLON.MeshBuilder.CreateCylinder('casing', { height: long[0], diameter: long[1], tessellation: 10 }, scene);
         brass.material = scene.getMaterialByName('brass') ?? Object.assign(new BABYLON.PBRMaterial('brass', scene), { albedoColor: new BABYLON.Color3(0.78, 0.56, 0.24), metallic: 1, roughness: 0.3 });
         brass.position.copyFrom(at);
         const body = new BABYLON.PhysicsAggregate(brass, BABYLON.PhysicsShapeType.CYLINDER, { mass: 0.01, restitution: 0.4, friction: 0.6 }, scene);
@@ -370,6 +439,9 @@ export class Weapons {
     _take() {
         const { camera } = this.world;
         const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
+        // Bowel that has come out is taken hold of before the body it came out of.
+        const bowel = viscera.pick(this.world.npcs, eye, ahead, 3);
+        if (bowel) { this.grab = { bowel, distance: bowel.distance }; return; }
         const person = this._person(eye, ahead, 3);
         if (person) {
             const skin = person.npc.surface(eye, ahead, 3)[0];
@@ -413,6 +485,7 @@ export class Weapons {
         if (!g) return;
         const { camera } = this.world;
         const target = camera.globalPosition.add(camera.getDirection(V3.Forward()).scale(Math.min(g.distance, 2.2)));
+        if (g.bowel) { viscera.pull(g.bowel, target); return; }
         const at = V3.TransformCoordinates(g.local, g.node.computeWorldMatrix(true));
         const v = g.body.getLinearVelocity();
         // A stiff spring on the point that was taken hold of, damped, as strong as two arms.
@@ -425,6 +498,7 @@ export class Weapons {
     _letGo() {
         if (!this.grab) return;
         if (this.grab.npc) this.grab.npc.grabbed = false;
+        if (this.grab.bowel) viscera.letGo(this.grab.bowel);
         this.grab = null;
     }
 
@@ -463,12 +537,138 @@ export class Weapons {
 
     get throwing() { return THROWN[this.throwKind][0].replace(/_\d+$/, '').replace(/_/g, ' '); }
 
+    // --- the grenade ----------------------------------------------------------------------------
+
+    // An M67: pin out, lever off as it leaves the hand, and a fuse of four to five and a half seconds. Thrown overarm
+    // (left) or rolled underhand (right) at `speed` m/s.
+    _lob(speed: number) {
+        const { scene, camera, sound, bodyOf } = this.world;
+        const model = this.models.get('grenade');
+        if (!model) return;
+        this.busy = 0.9;
+        sound?.shot('pin', { gain: 0.7 });
+        setTimeout(() => {
+            const ahead = camera.getDirection(V3.Forward()), up = camera.getDirection(V3.Up());
+            const node = model.instantiateHierarchy(null, { doNotInstantiate: true });
+            node.parent = null;
+            node.setEnabled(true);
+            node.position.copyFrom(camera.globalPosition.add(ahead.scale(0.4)).add(up.scale(speed > 10 ? 0.1 : -0.3)));
+            const meshes = node.getChildMeshes();
+            for (const m of meshes) this.world.shadows?.addShadowCaster(m);
+            // The physics on a sphere the size of the body (64 mm across, 400 g) that carries the model with it.
+            const ball = BABYLON.MeshBuilder.CreateSphere('grenade', { diameter: 0.064, segments: 6 }, scene);
+            ball.isVisible = false;
+            ball.isPickable = false;
+            ball.position.copyFrom(node.position);
+            node.position.setAll(0);
+            node.parent = ball;
+            const agg = new BABYLON.PhysicsAggregate(ball, BABYLON.PhysicsShapeType.SPHERE, { mass: 0.4, friction: 0.7, restitution: 0.3 }, scene);
+            agg.body.setLinearVelocity(ahead.scale(speed).add(up.scale(speed > 10 ? 2.5 : 0)));
+            agg.body.setAngularVelocity(new V3(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5));
+            agg.body.setAngularDamping(0.6);
+            agg.body.setCollisionCallbackEnabled(true);
+            let last = 0;
+            agg.body.getCollisionObservable().add((e) => {
+                const v = agg.body.getLinearVelocity().length(), now = performance.now();
+                if (v < 1.2 || now - last < 120) return;
+                last = now;
+                this.world.sound?.shot('bounce-metal', { at: ball.position.asArray(), gain: Math.min(1, v / 8) });
+                const who = bodyOf.get(e.collidedAgainst);
+                if (who && v > 5) blow(who.npc, e.point ?? ball.position, agg.body.getLinearVelocity().normalize(), 0.4, v,);
+            });
+            this.grenades.push({ ball, node, agg, fuse: 4 + Math.random() * 1.5 });
+        }, 220);
+    }
+
+    _fuses(dt) {
+        for (const g of this.grenades) if ((g.fuse -= dt) <= 0) this._explode(g);
+        this.grenades = this.grenades.filter((g) => g.fuse > 0);
+    }
+
+    // 180 g of Composition B in a steel body that breaks into a few hundred fragments: killing within 5 m, wounding to
+    // 15. The blast throws and knocks down whoever is close; the fragments go out every way as missiles of their own.
+    _explode(g) {
+        const { scene, sound, player } = this.world;
+        const at = g.ball.position.clone();
+        g.agg.dispose();
+        g.node.dispose(false, true);
+        g.ball.dispose();
+        sound?.shot('explosion', { at: at.asArray(), gain: 1 });
+        this.flash.position.copyFrom(at.add(new V3(0, 0.3, 0)));
+        this.flash.range = 16;
+        this.flash.intensity = 900;
+        this.flashAt = performance.now();
+        this.flashCard.position.copyFrom(at.add(new V3(0, 0.25, 0)));
+        this.flashCard.scaling.setAll(6);
+        this.flashCard.rotation.z = Math.random() * Math.PI;
+        this.flashCard.setEnabled(true);
+        smoke(scene, at);
+
+        // The blast: an impulse on every part of everyone near, falling off with the square of the distance; limbs near
+        // enough torn off and a belly burst (180 g of Composition B is about 0.25 kg of TNT).
+        for (const npc of this.world.npcs) {
+            blast(npc, at, 0.25);
+            const centre = npc.ragdoll.centre, d = Math.max(0.4, V3.Distance(at, centre));
+            if (d > 8) continue;
+            const total = Math.min(60, 35 / (d * d));          // N s on the whole body
+            for (const seg of npc.ragdoll.segments) {
+                if (!seg.body) continue;
+                const p = seg.node.getAbsolutePosition();
+                const dir = p.subtract(at).normalize().add(new V3(0, 0.35, 0)).normalize();
+                seg.body.applyImpulse(dir.scale(total * seg.mass / npc.ragdoll.mass), p);
+            }
+            if (d < 3.5) {
+                npc.knockDown();
+                const near = npc.ragdoll.nearest(at);
+                const point = near.seg.node.getAbsolutePosition();
+                blow(npc, point, point.subtract(at).normalize(), 2, Math.min(18, 12 / d), 'flat');
+            }
+        }
+
+        // The fragments, about a thousand, each spending its energy against air first (half its speed in 15 m). Followed
+        // one by one only where they meet somebody: each part of each person takes as many as the share of the sphere it
+        // covers seen from the burst. A few hundred more go out every way, for the marks they leave on the room.
+        const frag: Gun = { name: 'fragment', energy: 330, mass: 0.0003, speed: 1500, calibre: 0.004, channel: 0.004, soft: 18, hard: 110, rounds: 0, every: 0,
+            pellets: 1, spread: 0, kick: 0, sound: '', reload: 0 };
+        const fly = (dir: BABYLON.Vector3, far: number) => this._shot(at, dir, { ...frag, energy: frag.energy * Math.exp(-far / 10.8) });
+        for (const npc of this.world.npcs) {
+            for (const seg of npc.ragdoll.segments) {
+                const [a, b] = npc.ragdoll.segmentEnds(seg), mid = a.add(b).scale(0.5), d = V3.Distance(at, mid);
+                if (d > 25) continue;
+                const area = 2 * seg.radius * (V3.Distance(a, b) + 2 * seg.radius);
+                const expected = FRAGMENTS * area / (4 * Math.PI * d * d);
+                for (let n = Math.floor(expected + Math.random()); n > 0; n--) {
+                    const aim = V3.Lerp(a, b, Math.random()).add(new V3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).scale(seg.radius * 1.6));
+                    fly(aim.subtract(at).normalize(), Math.max(0, d - 0.3));
+                }
+            }
+        }
+        for (let i = 0; i < 160; i++) {
+            const y = Math.random() * 1.6 - 0.6, r = Math.sqrt(1 - y * y), a = Math.random() * Math.PI * 2;
+            const dir = new V3(Math.cos(a) * r, y, Math.sin(a) * r);
+            if (!this._person(at, dir, 25)) fly(dir, 0);
+        }
+
+        // The player feels it.
+        const d = V3.Distance(at, this.world.camera.globalPosition);
+        if (d < 14) {
+            player.pitch -= (Math.random() * 0.08 + 0.04) * Math.min(1, 3 / d);
+            player.yaw += (Math.random() - 0.5) * 0.08 * Math.min(1, 3 / d);
+        }
+    }
+
     // --- every frame --------------------------------------------------------------------------
 
     update(dt) {
         this.busy = Math.max(0, this.busy - dt);
         if (this.reloading > 0 && (this.reloading -= dt) <= 0) this.ammo.set(this.arm.key, this.arm.gun.rounds);
         if (this.firing && this.arm.key === 'pistol' && this.busy <= 0) this.firing = false;
+        // Held down, an automatic keeps firing until it is empty.
+        if (this.firing && this.arm.gun?.auto && this.busy <= 0 && this.reloading <= 0) {
+            if (this.ammo.get(this.arm.key) > 0) this._fire();
+            else { this.firing = false; this._reload(); }
+        }
+        this._fuses(dt);
         if (this.action) {
             this._sweep(dt);
             if (this.action.t >= this.action.length) {
@@ -479,8 +679,12 @@ export class Weapons {
         }
         this._hold(dt);
         // The flash goes as fast as it came.
-        this.flash.intensity *= Math.exp(-dt * 40);
-        if (this.flash.intensity < 1) { this.flash.intensity = 0; this.flashCard.setEnabled(false); }
+        // By the clock, not by frames: a frame held up by a limb coming off must not keep a flash on screen.
+        if (this.flash.intensity > 0) {
+            const age = (performance.now() - this.flashAt) / 1000;
+            this.flash.intensity *= Math.exp(-age * 40);
+            if (this.flash.intensity < 1 || age > 0.12) { this.flash.intensity = 0; this.flashCard.setEnabled(false); }
+        }
         this._animate(dt);
     }
 
@@ -506,6 +710,42 @@ export class Weapons {
         this.hand.position.copyFrom(pos);
         this.hand.rotation.copyFrom(rot);
     }
+}
+
+// A grey cloud where the grenade was, rising and spreading for a few seconds.
+let smokeTexture: BABYLON.DynamicTexture | null = null;
+function smoke(scene, at: BABYLON.Vector3) {
+    if (!smokeTexture) {
+        smokeTexture = new BABYLON.DynamicTexture('smoke', 64, scene, false);
+        const ctx = smokeTexture.getContext();
+        const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        g.addColorStop(0, 'rgba(255,255,255,0.55)');
+        g.addColorStop(0.6, 'rgba(255,255,255,0.18)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 64, 64);
+        smokeTexture.hasAlpha = true;
+        smokeTexture.update();
+    }
+    const ps = new BABYLON.ParticleSystem('smoke', 90, scene);
+    ps.particleTexture = smokeTexture;
+    ps.emitter = at.add(new V3(0, 0.2, 0));
+    ps.createSphereEmitter(0.3);
+    ps.color1 = new BABYLON.Color4(0.55, 0.53, 0.5, 0.85);
+    ps.color2 = new BABYLON.Color4(0.4, 0.39, 0.37, 0.75);
+    ps.colorDead = new BABYLON.Color4(0.25, 0.25, 0.25, 0);
+    ps.minSize = 0.9; ps.maxSize = 1.8;
+    ps.addSizeGradient(0, 0.6);
+    ps.addSizeGradient(1, 2.6);
+    ps.minLifeTime = 2.5; ps.maxLifeTime = 4.5;
+    ps.minEmitPower = 1.5; ps.maxEmitPower = 4;
+    ps.gravity = new V3(0, 0.25, 0);
+    ps.minAngularSpeed = -0.4; ps.maxAngularSpeed = 0.4;
+    ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+    ps.manualEmitCount = 90;
+    ps.disposeOnStop = true;
+    ps.targetStopDuration = 5;
+    ps.start();
 }
 
 function jitter(dir: BABYLON.Vector3, spread: number) {

@@ -23,6 +23,7 @@ VOICES = {
     'oldman': '5e79e8f5d2b345f98baa8c83c947532d',   # Paddington: British, old, deep
     'sexton': 'b7204d4e40ef4a548c7c8547b7f73492',   # Alok: British, middle-aged
     'buyer': '711cf3ed00ab441a8f54a45058047b7a',    # Verity: young, expressive
+    'hood': 'e9e9d36027424e55ac3faa620f78a72b',     # a2ksi: young, energetic
 }
 
 # What each kind of cry was asked for (the same direction for every voice).
@@ -38,6 +39,9 @@ ASKED = {
 
 # The Fish task each file was made in: TASKS[body][kind].
 TASKS = {
+    'hood': {'scream': 'a7e98d464f224457b01ea172624e8795', 'yell': '41008327934e4e6d8b68c9b1f967da6f', 'groan': 'e7ace29861704931b5d3f519876384ba',
+             'cry': 'cfa3795c8ba94ac08e2e89d65279babe', 'gasp': '219616026ba246029b254990a5606a15', 'cough': '98297e93127e439191902baaef34e94e',
+             'dying': '7cbc4f471c0f4ed3818c89daf0587b64'},
     'buyer': {'scream': '13ce24e84c204ec1998505eaa3f5637a', 'yell': '695c38e93e744a009dcb4b50a44b1a4f', 'groan': '8afa2ce2401348688222cf49b422f3ad',
               'cry': '6585da203401426db65fca519155abef', 'gasp': '84e83a4b70d8458bb69e83db591fd0ce', 'cough': 'f850836660e54ca4a51e98f2c219af7a',
               'dying': '9c400259b84e4c2c9c3ad1a4876cd6c2'},

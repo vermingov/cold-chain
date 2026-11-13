@@ -112,7 +112,7 @@ export class Muscles {
     // middle of the weight is carried at `accel` and no joint has to pass the push on.
     lean(accel: BABYLON.Vector3, height: number, planted: any[], dt: number) {
         const rd = this.ragdoll;
-        for (const seg of rd.segments) {
+        for (const seg of rd.attached) {
             if (planted.includes(seg)) continue;
             rd.worldPoint(seg, seg.centre, _w);
             const k = seg.mass * dt * Math.max(0, _w.y) / height;

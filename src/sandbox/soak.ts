@@ -23,20 +23,28 @@ const V3 = BABYLON.Vector3;
 
 const VOX = 0.008;              // metres: a cube of the grid
 const STEP = 1 / 8;             // seconds between moves of the blood in the cloth
-const MOST = 1800;              // cubes worked out a step at most; the rest wait for the next
+const MOST = 1200;              // cubes worked out a step at most; the rest wait for the next
+const STILL = 0.01;             // of what a cube holds, the change in a step below which it counts as settled
 const SENDS = 0.25;             // seconds at least between sending what changed to the card
 const WICK = 1.6;               // how fast cloth pulls blood from fuller to emptier (1/s, at full)
 const DRAINS = 2.5;             // how fast free blood runs down through it (1/s)
 const HOLDS = 0.7;              // of what it can hold, the part held by wicking; past it the blood runs
 const OVER = 1.3;               // how much past full a cloth can be before it drips (blood standing on it)
+const RUNS = 0.4;               // of the blood standing on soaked cloth, the share that runs on to the cube below a step
+                                // (a film a few tenths of a millimetre thick runs a few centimetres a second: rho g h^2 / 3 mu)
 const DRIES = 1500;             // seconds for soaked cloth to lose two thirds of its wetness
 // Litres a square metre holds, by what the garment is.
 const HOLD = [[/shoe|boot/, 0.04], [/worksuit|overall|jean|denim/, 0.5], [/casual/, 0.42], [/suit/, 0.36], [/./, 0.32]] as const;
 
-type Grid = { o: BABYLON.Vector3; n: number[]; cap: Float32Array; owner: Uint16Array; weave: Float32Array; bones: any[]; copyFrom: Int32Array; copyAt: Int32Array; copyTo: Int32Array };
+type Grid = { o: BABYLON.Vector3; n: number[]; id: Int32Array; cell: Int32Array; cap: Float32Array; owner: Uint16Array; weave: Float32Array;
+    nb: Int32Array; copyAt: Int32Array; copyTo: Int32Array };
 
-// The grid of one body: how much each cube holds (the area of cloth in it times what that cloth holds), which bone
-// each moves with, and how readily the weave in it wicks. Made once per body.
+// The grid of one body, kept for its cubes with cloth in them only, numbered 0 to N (most of the box round a person is
+// air: walked over cube by cube, the box's few megabytes missed the cache at every neighbour): which cube of the box
+// each is (`cell`; `id` the other way, -1 for air), how much it holds (the area of cloth in it times what that cloth
+// holds), which bone it moves with (an index into the body's bones), how readily the weave in it wicks, and its six
+// neighbours (`nb`, -1 where there is no cloth). Made once per body, and shared by everyone with that body: nothing of
+// any one person's is kept in it.
 const grids = new Map<string, Grid>();
 function gridOf(npc): Grid {
     const key = npc.person.bodyName;
@@ -54,7 +62,7 @@ function gridOf(npc): Grid {
     const o = lo.subtractFromFloats(VOX * 2, VOX * 2, VOX * 2);
     const n = [0, 1, 2].map((k) => Math.ceil((hi.asArray()[k] - o.asArray()[k]) / VOX) + 2);
     const cells = n[0] * n[1] * n[2];
-    const cap = new Float32Array(cells), owner = new Uint16Array(cells), weight = new Float32Array(cells), weave = new Float32Array(cells);
+    const all = new Float32Array(cells), bones = new Uint16Array(cells), weight = new Float32Array(cells);
     const a = new V3(), b = new V3(), c = new V3(), p = new V3();
     for (const part of header.parts) {
         if (part.kind !== 'cloth') continue;
@@ -74,41 +82,45 @@ function gridOf(npc): Grid {
                 p.copyFrom(a).scaleInPlace(1 - u - v).addInPlace(b.scale(u)).addInPlace(c.scale(v));
                 const cell = Math.floor((p.x - o.x) / VOX) + n[0] * (Math.floor((p.y - o.y) / VOX) + n[1] * Math.floor((p.z - o.z) / VOX));
                 const share = area / (k * (k + 1) / 2);
-                cap[cell] += share * hold;
-                if (share > weight[cell]) { weight[cell] = share; owner[cell] = bone; }
+                all[cell] += share * hold;
+                if (share > weight[cell]) { weight[cell] = share; bones[cell] = bone; }
             }
         }
     }
-    for (let i = 0; i < cells; i++) {
-        if (!cap[i]) continue;
+    const id = new Int32Array(cells).fill(-1);
+    let count = 0;
+    for (let c = 0; c < cells; c++) if (all[c]) id[c] = count++;
+    const cell = new Int32Array(count), cap = new Float32Array(count), owner = new Uint16Array(count), weave = new Float32Array(count);
+    const nb = new Int32Array(count * 6), nx = n[0], nxy = n[0] * n[1], ways = [1, -1, nx, -nx, nxy, -nxy];
+    for (let c = 0; c < cells; c++) {
+        const i = id[c];
+        if (i < 0) continue;
+        cell[i] = c;
+        cap[i] = all[c];
+        owner[i] = bones[c];
         // Thread to thread the weave pulls blood unevenly: some cubes take it twice as readily as others.
-        const h = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+        const h = Math.sin(c * 12.9898 + 78.233) * 43758.5453;
         weave[i] = 0.75 + 0.5 * (h - Math.floor(h));
+        for (let k = 0; k < 6; k++) nb[i * 6 + k] = id[c + ways[k]];
     }
     // The empty cubes round the cloth show what the cloth next to them holds: the shader reads between cubes, and an
     // empty one beside a soaked one would otherwise make the stain fade wherever the cloth runs close to a cube's edge.
-    const copies = new Map<number, number[]>();
-    const nx = n[0], nxy = n[0] * n[1];
+    // (Kept as lists end to end: cube i's copies are copyTo[copyAt[i]..copyAt[i + 1]].)
+    const copies: number[][] = Array.from({ length: count }, () => []);
     for (let z = 1; z < n[2] - 1; z++) for (let y = 1; y < n[1] - 1; y++) for (let x = 1; x < n[0] - 1; x++) {
         const c = x + nx * y + nxy * z;
-        if (cap[c]) continue;
+        if (all[c]) continue;
         let best = -1;
         for (let k = -1; k <= 1; k++) for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
             const d = c + i + nx * j + nxy * k;
-            if (cap[d] && (best < 0 || cap[d] > cap[best])) best = d;
+            if (all[d] && (best < 0 || all[d] > all[best])) best = d;
         }
-        if (best < 0) continue;
-        if (!copies.has(best)) copies.set(best, []);
-        copies.get(best).push(c);
+        if (best >= 0) copies[id[best]].push(c);
     }
-    // (Kept as lists end to end: cube c's copies are copyTo[copyAt[k]..copyAt[k + 1]] where copyFrom[k] = c, found by
-    // copyIndex below.)
-    const sources = [...copies.keys()].sort((a, b) => a - b);
-    const copyFrom = new Int32Array(sources), copyAt = new Int32Array(sources.length + 1), list = [];
-    sources.forEach((c, k) => { copyAt[k] = list.length; list.push(...copies.get(c)); });
-    copyAt[sources.length] = list.length;
-    const bones = header.bones.map((bn) => npc.person.byName[bn.name]);
-    const grid = { o, n, cap, owner, weave, bones, copyFrom, copyAt, copyTo: new Int32Array(list) };
+    const copyAt = new Int32Array(count + 1), list = [];
+    copies.forEach((to, i) => { copyAt[i] = list.length; for (const c of to) list.push(c); });
+    copyAt[count] = list.length;
+    const grid = { o, n, id, cell, cap, owner, weave, nb, copyAt, copyTo: new Int32Array(list) };
     grids.set(key, grid);
     return grid;
 }
@@ -116,6 +128,7 @@ function gridOf(npc): Grid {
 export class Soak {
     declare npc: any;
     declare grid: Grid;
+    declare bones: any[];
     declare ml: Float32Array;
     declare born: Float32Array;
     declare change: Float32Array;
@@ -125,14 +138,18 @@ export class Soak {
     declare next: Int32Array;
     declare queued: number;
     declare touched: Int32Array;
+    declare nt: number;
+    declare count: number;
+    declare done: number;
+    declare stepDt: number;
     declare isActive: Uint8Array;
     declare quiet: Uint8Array;
-    declare copyIndex: Int32Array;
     declare downs: Float32Array;
     declare downStep: Int32Array;
     declare steps: number;
     declare sent: number;
     declare stirred: number;
+    declare lastDown: Float32Array | undefined;
     declare drips: Map<number, number>;
     declare data: Uint8Array;
     declare texture: BABYLON.RawTexture3D;
@@ -144,22 +161,24 @@ export class Soak {
     constructor(scene: BABYLON.Scene, npc) {
         this.npc = npc;
         this.grid = gridOf(npc);
-        const [nx, ny, nz] = this.grid.n, cells = nx * ny * nz;
-        this.ml = new Float32Array(cells);
-        this.born = new Float32Array(cells);
-        this.change = new Float32Array(cells);
-        this.isLive = new Uint8Array(cells);
+        // This person's own bones. (Kept in the shared grid they were the first person's, so everyone else's clothes
+        // dripped from where that person was, or had lain before the room was cleared: drops out of the air.)
+        this.bones = npc.person.header.bones.map((bn) => npc.person.byName[bn.name]);
+        const [nx, ny, nz] = this.grid.n, cells = nx * ny * nz, cubes = this.grid.cell.length;
+        this.ml = new Float32Array(cubes);
+        this.born = new Float32Array(cubes);
+        this.change = new Float32Array(cubes);
+        this.isLive = new Uint8Array(cubes);
         this.live = [];
-        this.isActive = new Uint8Array(cells);
-        this.quiet = new Uint8Array(cells);
+        this.isActive = new Uint8Array(cubes);
+        this.quiet = new Uint8Array(cubes);
         this.work = new Int32Array(1024);
         this.next = new Int32Array(1024);
         this.queued = 0;
+        this.count = this.done = this.nt = this.stepDt = 0;
         this.touched = new Int32Array(1024);
-        this.copyIndex = new Int32Array(cells).fill(-1);
-        this.grid.copyFrom.forEach((c, k) => { this.copyIndex[c] = k; });
-        this.downs = new Float32Array(this.grid.bones.length * 6);
-        this.downStep = new Int32Array(this.grid.bones.length).fill(-1);
+        this.downs = new Float32Array(this.bones.length * 6);
+        this.downStep = new Int32Array(this.bones.length).fill(-1);
         this.steps = 0;
         this.sent = 0;
         this.stirred = 0;
@@ -180,14 +199,16 @@ export class Soak {
     get scale() { return new V3(1 / (this.grid.n[0] * VOX), 1 / (this.grid.n[1] * VOX), 1 / (this.grid.n[2] * VOX)); }
 
     // The cube of cloth at a rest-space point, or the fullest-holding one next to it (-1 if there is no cloth there).
-    cellAt(rest: BABYLON.Vector3) {
-        const { o, n, cap } = this.grid;
+    cubeAt(rest: BABYLON.Vector3) {
+        const { o, n, id, cap } = this.grid;
         const x = Math.floor((rest.x - o.x) / VOX), y = Math.floor((rest.y - o.y) / VOX), z = Math.floor((rest.z - o.z) / VOX);
         let best = -1, most = 0;
         for (let k = -1; k <= 1; k++) for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
             const X = x + i, Y = y + j, Z = z + k;
             if (X < 0 || Y < 0 || Z < 0 || X >= n[0] || Y >= n[1] || Z >= n[2]) continue;
-            const c = X + n[0] * (Y + n[1] * Z), w = cap[c] / (1 + 2 * (Math.abs(i) + Math.abs(j) + Math.abs(k)));
+            const c = id[X + n[0] * (Y + n[1] * Z)];
+            if (c < 0) continue;
+            const w = cap[c] / (1 + 2 * (Math.abs(i) + Math.abs(j) + Math.abs(k)));
             if (w > most) { most = w; best = c; }
         }
         return best;
@@ -195,7 +216,7 @@ export class Soak {
 
     // `ml` of blood into the cloth at `rest`. False if there is no cloth there to take it.
     add(rest: BABYLON.Vector3, ml: number) {
-        const c = this.cellAt(rest);
+        const c = this.cubeAt(rest);
         if (c < 0 || ml <= 0) return false;
         // What was dry, or mostly fresh blood now, counts as freshly wet.
         const fresh = this.ml[c] < ml * 3;
@@ -208,7 +229,7 @@ export class Soak {
 
     // Up to `ml` wiped off the cloth at `rest`; what it gave.
     take(rest: BABYLON.Vector3, ml: number) {
-        const c = this.cellAt(rest);
+        const c = this.cubeAt(rest);
         if (c < 0) return 0;
         const got = Math.min(ml, this.ml[c] * 0.5);
         this.ml[c] -= got;
@@ -218,7 +239,7 @@ export class Soak {
 
     // How full the cloth at `rest` is: 0 dry, 1 holding all it can, more with blood standing on it.
     fullness(rest: BABYLON.Vector3) {
-        const c = this.cellAt(rest);
+        const c = this.cubeAt(rest);
         return c < 0 ? 0 : this.ml[c] / this.grid.cap[c];
     }
 
@@ -238,26 +259,24 @@ export class Soak {
 
     // Cube `c` as the card has it: how full (as a square root, so a faint stain still has steps) and, when it is
     // newly wet, freshly wet again or being recoloured as it dries, how wet. Marked to be sent only if that changed.
-    _encode(c: number, wetness = false) {
-        const { cap, copyAt, copyTo } = this.grid, data = this.data;
-        const full = Math.min(OVER, this.ml[c] / cap[c]);
+    _encode(i: number, wetness = false) {
+        const { cap, cell, copyAt, copyTo } = this.grid, data = this.data, c = cell[i];
+        const full = Math.min(OVER, this.ml[i] / cap[i]);
         const r = Math.round(Math.sqrt(full / OVER) * 255);
-        const g = !wetness && data[c * 2 + 1] ? data[c * 2 + 1] : this.ml[c] > 0 ? Math.round(255 * Math.exp(-(this.clock - this.born[c]) / DRIES)) : 0;
+        const g = !wetness && data[c * 2 + 1] ? data[c * 2 + 1] : this.ml[i] > 0 ? Math.round(255 * Math.exp(-(this.clock - this.born[i]) / DRIES)) : 0;
         if (data[c * 2] === r && data[c * 2 + 1] === g) return;
         data[c * 2] = r;
         data[c * 2 + 1] = g;
         this._mark(c);
-        const k = this.copyIndex[c];
-        if (k < 0) return;
-        for (let i = copyAt[k]; i < copyAt[k + 1]; i++) {
-            const e = copyTo[i];
+        for (let k = copyAt[i]; k < copyAt[i + 1]; k++) {
+            const e = copyTo[k];
             data[e * 2] = r;
             data[e * 2 + 1] = g;
             this._mark(e);
         }
     }
 
-    // The 8-cube brick that holds cube `c` is to be sent to the card again. (Sending one box round everything that
+    // The 8-cube brick that holds cell `c` of the box is to be sent to the card again. (Sending one box round everything that
     // changed sent most of the torso every step, and the copy alone took milliseconds.)
     _mark(c: number) {
         const nx = this.grid.n[0], ny = this.grid.n[1];
@@ -270,130 +289,189 @@ export class Soak {
     _down(b: number) {
         if (this.downStep[b] !== this.steps) {
             this.downStep[b] = this.steps;
-            const bone = this.grid.bones[b];
+            const bone = this.bones[b];
             const v = bone ? V3.TransformNormal(DOWN, this.npc.restToWorld(bone).clone().invert()).normalize() : DOWN;
             this.downs.set([v.x, -v.x, v.y, -v.y, v.z, -v.z], b * 6);
         }
         return b * 6;
     }
 
+    // Which bones have turned more than ten degrees since this was last asked (down, in each one's rest frame).
+    _turned() {
+        const was = this.lastDown ?? (this.lastDown = new Float32Array(this.bones.length * 3)), turned = new Uint8Array(this.bones.length);
+        this.bones.forEach((bone, b) => {
+            if (!bone) return;
+            const v = V3.TransformNormal(DOWN, this.npc.restToWorld(bone).invert()).normalize();
+            if (v.x * was[b * 3] + v.y * was[b * 3 + 1] + v.z * was[b * 3 + 2] > 0.985) return;
+            turned[b] = 1;
+            was[b * 3] = v.x; was[b * 3 + 1] = v.y; was[b * 3 + 2] = v.z;
+        });
+        return turned;
+    }
+
     // A step works out only the cubes still changing: a cube sleeps once its blood has changed by a sliver of what it
     // holds for a few steps running, and wakes when blood comes into it, when a fuller neighbour could give it some, or
-    // (every second and a half, for the body may have been turned over) when it holds more than wicking keeps and could
-    // drain. At most MOST a step: a great soaking spreads a little slower, it does not cost more.
+    // (every second and a half, if the bone it moves with has turned since: the body may have been turned over) when it
+    // holds more than wicking keeps and could drain. At most MOST a step: a great soaking spreads a little slower, it
+    // does not cost more.
     update(dt: number) {
         this.clock += dt;
         this.wait += dt;
+        // A step's cubes are worked out a share each frame, over the frames until the next step, not all in one.
+        if (this.count) this._some(Math.ceil((this.count * dt) / STEP));
         if (this.wait >= STEP && this.live.length) {
+            if (this.count) this._some(this.count);
             const step = Math.min(this.wait, 0.25);
             this.wait = 0;
             this.steps++;
             if (this.clock - this.stirred > 1.5) {
                 this.stirred = this.clock;
-                const { ml } = this, cap = this.grid.cap;
-                for (const c of this.live) if (ml[c] > HOLDS * cap[c]) this._wake(c);
+                const { ml } = this, { cap, owner } = this.grid, turned = this._turned();
+                for (const c of this.live) if (turned[owner[c]] && ml[c] > HOLDS * cap[c]) this._wake(c);
             }
-            if (this.queued) this._step(step);
+            if (this.queued) this._begin(step);
         }
         this._send();
     }
 
-    _step(step: number) {
-        const { cap, owner, weave, n } = this.grid, { ml, change, born, isActive, quiet, isLive, downs } = this;
-        const nx = n[0], nxy = n[0] * n[1];
-        STEPS[0] = 1; STEPS[1] = -1; STEPS[2] = nx; STEPS[3] = -nx; STEPS[4] = nxy; STEPS[5] = -nxy;
+    _begin(step: number) {
         // This step's cubes are those queued; the rest of the queue (past MOST) stays queued.
         const work = this.next, count = Math.min(this.queued, MOST);
-        this.next = this.work;
+        let next = this.work;
+        if (next.length < work.length) next = new Int32Array(work.length);
+        next.set(work.subarray(count, this.queued));
+        this.queued -= count;
+        this.next = next;
         this.work = work;
-        if (this.next.length < work.length) this.next = new Int32Array(work.length);
-        const left = this.queued - count;
-        this.next.set(work.subarray(count, this.queued));
-        this.queued = left;
-        for (let i = 0; i < count; i++) isActive[work[i]] = 0;
-        let touched = this.touched, nt = 0;
-        const touch = (c: number) => {
-            if (nt >= touched.length) this.touched = touched = grown(touched);
-            touched[nt++] = c;
-        };
-        const give = (c: number, j: number, m: number) => {
-            if (change[j] === 0) touch(j);
-            change[j] += m;
-            if (ml[j] < m * 3) born[j] = born[c];
-            if (!isLive[j]) { isLive[j] = 1; this.live.push(j); }
-            this._queue(j);
-        };
-        for (let i = 0; i < count; i++) {
+        for (let i = 0; i < count; i++) this.isActive[work[i]] = 0;
+        this.count = count;
+        this.done = 0;
+        this.nt = 0;
+        this.stepDt = step;
+    }
+
+    // The next `most` cubes of the step begun; what they give is kept aside (change) until the step's last cube, so that
+    // the order they are worked out in does not show. (Written flat, the queue and the list of what changed kept in
+    // locals: with a closure and a method call for each neighbour given to, a cube cost two to three times as much.)
+    _some(most: number) {
+        const { cap, owner, weave, nb } = this.grid, { ml, change, born, isActive, quiet, isLive, downs, downStep, live, work } = this;
+        const steps = this.steps, step = this.stepDt, count = this.count, from = this.done, to = Math.min(count, from + most);
+        let next = this.next, queued = this.queued, touched = this.touched, nt = this.nt;
+        for (let i = from; i < to; i++) {
             const c = work[i];
             let have = ml[c];
             if (have < 1e-7) continue;
-            const hold = cap[c], d0 = this._down(owner[c]);
-            // Blood standing on cloth that cannot take any more runs over it onto the cloth round it, down first, and
-            // soaks in there; with nowhere left to go, it gathers into drops.
+            const hold = cap[c], b = owner[c], d0 = b * 6;
+            if (downStep[b] !== steps) this._down(b);
+            // Blood standing on cloth that cannot take any more runs over it: downhill over the cloth below however full
+            // that is (it runs on from there, as fast as a film of it runs: RUNS), and to the side or up only into cloth
+            // less full than this, no more than a twelfth of the difference (else two soaked cubes spill into each other
+            // back and forth); with nowhere left to go (a hem, a cuff), it gathers into drops.
+            let spilt = 0;
             if (have > OVER * hold) {
-                const spare = have - OVER * hold;
+                const spare = have - OVER * hold, fc = have / hold;
                 let sum = 0;
                 for (let k = 0; k < 6; k++) {
-                    const j = c + STEPS[k];
-                    OUT[k] = cap[j] > 0 && ml[j] < OVER * cap[j] ? Math.max(0.03, downs[d0 + k] + 0.35) : 0;
-                    sum += OUT[k];
+                    const j = nb[c * 6 + k], dk = downs[d0 + k];
+                    SPILL[k] = j < 0 ? 0 : dk > 0.2 ? dk + 0.35 : ml[j] < fc * cap[j] ? Math.max(0.03, dk + 0.35) : 0;
+                    sum += SPILL[k];
                 }
-                if (change[c] === 0) touch(c);
-                change[c] -= spare;
-                if (sum > 0) { for (let k = 0; k < 6; k++) if (OUT[k] > 0) give(c, c + STEPS[k], (spare * OUT[k]) / sum); }
-                else {
+                if (sum > 0) {
+                    for (let k = 0; k < 6; k++) {
+                        if (!SPILL[k]) continue;
+                        const j = nb[c * 6 + k], share = (spare * SPILL[k]) / sum;
+                        SPILL[k] = downs[d0 + k] > 0.2 ? share * RUNS : Math.min(share, ((fc * cap[j] - ml[j]) * (hold < cap[j] ? hold : cap[j])) / (12 * cap[j]));
+                        spilt += SPILL[k];
+                    }
+                } else {
                     const gathered = (this.drips.get(c) ?? 0) + spare;
                     if (gathered >= DRIP) { this._drip(c, gathered); this.drips.delete(c); } else this.drips.set(c, gathered);
+                    spilt = spare;
                 }
-                have -= spare;
-            }
+                have -= spilt;
+            } else for (let k = 0; k < 6; k++) SPILL[k] = 0;
             const full = have / hold;
-            // Cloth barely damp hardly wicks at all (the square of its fullness): not worth working out.
-            if (full < 0.02) continue;
             let total = 0;
-            for (let k = 0; k < 6; k++) {
+            // Cloth barely damp hardly wicks at all (the square of its fullness): not worth working out.
+            if (full >= 0.02) for (let k = 0; k < 6; k++) {
                 OUT[k] = 0;
-                const j = c + STEPS[k], cj = cap[j];
-                if (cj === 0) continue;
-                const fj = ml[j] / cj;
+                const j = nb[c * 6 + k];
+                if (j < 0) continue;
+                const cj = cap[j], fj = ml[j] / cj;
                 // A fuller neighbour asleep could give to this one: wake it.
-                if (!isActive[j] && fj > full * 1.3 + 0.03) { quiet[j] = 0; this._queue(j); }
+                if (!isActive[j] && fj > full * 1.3 + 0.03) {
+                    quiet[j] = 0;
+                    isActive[j] = 1;
+                    if (queued >= next.length) next = grown(next);
+                    next[queued++] = j;
+                }
                 let flow = 0;
                 // Wicking: from fuller to emptier, readily where both are wet, hardly at all into dry fibre from a damp
-                // one (so the edge of a stain is sharp).
-                if (full > fj) { const m = (full + fj) * 0.5; flow = WICK * m * m * (full - fj) * (hold < cj ? hold : cj) * weave[j]; }
+                // one (so the edge of a stain is sharp). At most a twelfth of the difference a step to each of the six
+                // neighbours: more, and soaked cubes passed blood back and forth for ever and never settled.
+                if (full > fj) { const m = (full + fj) * 0.5; flow = Math.min(1 / 12, WICK * m * m * weave[j] * step) * (full - fj) * (hold < cj ? hold : cj); }
                 // Free blood past what wicking holds runs down.
                 const dk = downs[d0 + k];
-                if (dk > 0.2 && full > HOLDS && fj < OVER) flow += DRAINS * (full - HOLDS) * dk * hold;
-                OUT[k] = flow * step;
+                if (dk > 0.2 && full > HOLDS && fj < OVER) flow += Math.min(DRAINS * (full - HOLDS) * dk * hold * step, (OVER - fj) * cj * 0.5);
+                OUT[k] = flow;
                 total += OUT[k];
-            }
-            if (total === 0) continue;
+            } else for (let k = 0; k < 6; k++) OUT[k] = 0;
+            if (total === 0 && spilt === 0) continue;
             const scale = total > have * 0.45 ? (have * 0.45) / total : 1;
-            if (change[c] === 0) touch(c);
-            change[c] -= total * scale;
-            for (let k = 0; k < 6; k++) if (OUT[k] > 0) give(c, c + STEPS[k], OUT[k] * scale);
+            if (change[c] === 0) { if (nt >= touched.length) this.touched = touched = grown(touched); touched[nt++] = c; }
+            change[c] -= total * scale + spilt;
+            for (let k = 0; k < 6; k++) {
+                const m = OUT[k] * scale + SPILL[k];
+                if (m <= 0) continue;
+                const j = nb[c * 6 + k];
+                if (change[j] === 0) { if (nt >= touched.length) this.touched = touched = grown(touched); touched[nt++] = j; }
+                change[j] += m;
+                if (ml[j] < m * 3) born[j] = born[c];
+                if (!isLive[j]) { isLive[j] = 1; live.push(j); }
+                // A sliver given to a cube asleep is taken in without waking it (else, wet cloth always giving its
+                // neighbours a little, no cube in a stain ever slept).
+                if (!isActive[j] && m > cap[j] * STILL) {
+                    isActive[j] = 1;
+                    if (queued >= next.length) next = grown(next);
+                    next[queued++] = j;
+                }
+            }
         }
+        this.done = to;
+        this.next = next;
+        this.queued = queued;
+        this.nt = nt;
+        if (to < count) return;
         for (let i = 0; i < nt; i++) {
             const c = touched[i], d = change[c];
             if (d === 0) continue;
             // Still changing, or settled. (What flows in and out at once, as blood wicked up against gravity draining it
             // down, is no change.)
-            if (Math.abs(d) > cap[c] * 0.004) quiet[c] = 0;
+            if (Math.abs(d) > cap[c] * STILL) quiet[c] = 0;
             const v = ml[c] + d;
             ml[c] = v > 0 ? v : 0;
             change[c] = 0;
             this._encode(c, born[c] === this.clock);
         }
-        for (let i = 0; i < count; i++) { const c = work[i]; if (quiet[c] === 0 || ++quiet[c] < 4) this._queue(c); }
+        // (Changed this step, a cube's count starts again at 0: it sleeps once it has gone four steps without.)
+        for (let i = 0; i < count; i++) {
+            const c = work[i];
+            if (++quiet[c] >= 4 || isActive[c]) continue;
+            isActive[c] = 1;
+            if (queued >= next.length) next = grown(next);
+            next[queued++] = c;
+        }
+        this.next = next;
+        this.queued = queued;
+        this.count = 0;
     }
 
-    // A drop falling from the cloth at cube `c`, from where that cube is now.
-    _drip(c: number, ml: number) {
-        const { o, n, owner, bones } = this.grid;
+    // A drop falling from the cloth at cube `i`, from where that cube is now.
+    _drip(i: number, ml: number) {
+        const { o, n, owner, cell } = this.grid, bones = this.bones, c = cell[i];
         const x = c % n[0], y = Math.floor(c / n[0]) % n[1], z = Math.floor(c / (n[0] * n[1]));
         const rest = new V3(o.x + (x + 0.5) * VOX, o.y + (y + 0.5) * VOX, o.z + (z + 0.5) * VOX);
-        const bone = bones[owner[c]];
+        const bone = bones[owner[i]];
         if (!bone) return;
         const at = this.npc.worldOf(rest, bone).at;
         this.npc.world.blood.drip(at.addInPlaceFromFloats(0, -0.006, 0), ml, across(ml));
@@ -423,12 +501,28 @@ export class Soak {
     dispose() { this.texture.dispose(); }
 }
 
-const STEPS = new Int32Array(6), OUT = new Float64Array(6), DOWN = new V3(0, -1, 0);
+const OUT = new Float64Array(6), SPILL = new Float64Array(6), DOWN = new V3(0, -1, 0);
 
 function grown(a: Int32Array) {
     const b = new Int32Array(a.length * 2);
     b.set(a);
     return b;
 }
+
+// The grid read by the clothes' shader (hider.ts) as a cubic B-spline (eight trilinear reads, after Sigg and Hadwiger)
+// rather than straight between cubes: a stain's edge comes out a smooth curve, not the grid's 8 mm steps.
+export const GLSL_SOAK = `
+vec4 soakRead(highp sampler3D field, vec3 u) {
+    vec3 size = vec3(textureSize(field, 0)), t = u * size - 0.5, i = floor(t), f = t - i, f2 = f * f, f3 = f2 * f;
+    vec3 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0, w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    vec3 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0, w3 = f3 / 6.0;
+    vec3 g1 = w2 + w3, a = (i - 0.5 + w1 / (w0 + w1)) / size, b = (i + 1.5 + w3 / g1) / size;
+    return mix(
+        mix(mix(texture(field, vec3(a.x, a.y, a.z)), texture(field, vec3(b.x, a.y, a.z)), g1.x),
+            mix(texture(field, vec3(a.x, b.y, a.z)), texture(field, vec3(b.x, b.y, a.z)), g1.x), g1.y),
+        mix(mix(texture(field, vec3(a.x, a.y, b.z)), texture(field, vec3(b.x, a.y, b.z)), g1.x),
+            mix(texture(field, vec3(a.x, b.y, b.z)), texture(field, vec3(b.x, b.y, b.z)), g1.x), g1.y), g1.z);
+}
+`;
 
 export { OVER, VOX };

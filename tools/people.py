@@ -64,6 +64,19 @@ CAST = {
         'skin': 'old_caucasian_male', 'eyes': 'brown', 'brows': 'eyebrow010', 'lashes': 'eyelashes01',
         'hair': 'short01', 'wears': ['male_worksuit01', 'shoes05'],
     },
+    # The sandbox's young man in a hood: early twenties, a dark green hooded sweat jacket over a dark T-shirt and
+    # jeans, a black knitted beanie pushed back on short dark hair. The jacket and beanie are from the MakeHuman
+    # community packs shirts02 and hats03 (Elvaerwyn, CC-BY), copied into <base assets>/clothes; `tint` recolours a
+    # garment's texture (sRGB 0..255).
+    'hood': {
+        'body': {'gender': 0.97, 'age': 0.44, 'muscle': 0.45, 'weight': 0.62, 'height': 0.52},
+        'skin': 'young_caucasian_male', 'eyes': 'brown', 'brows': 'eyebrow003', 'lashes': 'eyelashes01',
+        'hair': 'short02', 'wears': ['male_casualsuit02', 'elvs_hooded_sweat_jacket1', 'shoes04', 'elvs_slouchy_beanie1'],
+        'tint': {'male_casualsuit02': [30, 30, 33], 'elvs_hooded_sweat_jacket1': [30, 46, 31], 'elvs_slouchy_beanie1': [21, 21, 23]},
+        # The beanie pulled down and forward over the hair, and a little fuller so the hair stays under it.
+        # The jacket a little looser than it was cut, so the T-shirt under it never comes through at a bend.
+        'adjust': {'elvs_slouchy_beanie1': {'inflate': 0.012, 'shift': [0, -0.022, 0.014]}, 'elvs_hooded_sweat_jacket1': {'inflate': 0.009}},
+    },
 }
 
 # --- skeleton ---------------------------------------------------------------
@@ -366,26 +379,55 @@ class Mesh:
 
 # --- textures ------------------------------------------------------------------
 
-def texture(src, kind, done):
+def natural_iris(image):
+    """MakeHuman's irises are painted at full saturation: its brown is nearly pure red (65, 14, 5), and the game's
+    grade makes it a red eye. The iris (everything saturated) is taken to half its saturation, and a red-brown is
+    turned a little toward yellow, to the dark brown of a real one; the white and the pupil are left."""
+    rgba = image.convert('RGBA')
+    hsv = np.asarray(rgba.convert('RGB').convert('HSV')).astype(np.float32)
+    iris = hsv[..., 1] > 90
+    reddish = iris & (hsv[..., 0] < 20)
+    hsv[..., 0] = np.where(reddish, hsv[..., 0] + 7, hsv[..., 0])
+    hsv[..., 1] = np.where(iris, hsv[..., 1] * 0.55, hsv[..., 1])
+    hsv[..., 2] = np.where(iris, np.minimum(255, hsv[..., 2] * 1.1), hsv[..., 2])
+    out = Image.fromarray(hsv.astype(np.uint8), 'HSV').convert('RGB')
+    out.putalpha(rgba.getchannel('A'))
+    return out if image.mode == 'RGBA' else out.convert('RGB')
+
+
+def texture(src, kind, done, tint=None):
     """Copy a texture into the game at the size its kind is kept at, once.
-    Anything with see-through in it stays a PNG; a skin is a JPEG."""
+    Anything with see-through in it stays a PNG; a skin is a JPEG.
+    With `tint` the picture is recoloured: its typical (median) shade made that colour, lighter and darker shades kept
+    lighter and darker but softened (a jacket's texture can be nearly all one dark with white cords and stitching)."""
     if src is None:
         return None
-    if src in done:
-        return done[src]
+    key = (src, tuple(tint) if tint else None)
+    if key in done:
+        return done[key]
     image = Image.open(src)
+    if kind == 'eyes':
+        image = natural_iris(image)
+    if tint:
+        grey = np.asarray(image.convert('L'), dtype=np.float32)
+        shade = np.minimum(3.2, 0.6 + 0.4 * grey / max(1.0, float(np.median(grey))))
+        rgb = np.clip(shade[..., None] * np.array(tint, dtype=np.float32), 0, 255).astype(np.uint8)
+        tinted = Image.fromarray(rgb, 'RGB')
+        if image.mode in ('RGBA', 'LA'):
+            tinted.putalpha(image.getchannel('A'))
+        image = tinted
     limit = TEXTURE_SIZE[kind]
     if max(image.size) > limit:
         image = image.resize([round(s * limit / max(image.size)) for s in image.size], Image.LANCZOS)
     alpha = image.mode in ('RGBA', 'LA') and image.getchannel('A').getextrema()[0] < 250
-    name = src.stem + ('.png' if alpha else '.jpg')
+    name = src.stem + ('-' + '-'.join(map(str, tint)) if tint else '') + ('.png' if alpha else '.jpg')
     (OUT / 'tex').mkdir(parents=True, exist_ok=True)
     if alpha:
         image.save(OUT / 'tex' / name, optimize=True)
     else:
         image.convert('RGB').save(OUT / 'tex' / name, quality=88)
-    done[src] = {'file': 'tex/' + name, 'alpha': alpha}
-    return done[src]
+    done[key] = {'file': 'tex/' + name, 'alpha': alpha}
+    return done[key]
 
 
 def write(path, header, arrays):
@@ -443,7 +485,9 @@ def build(name, spec, base, data, assets, cache, textures):
     if under:
         mesh.add('skin-under', game, uvs, under, joints, amounts, kind='skin', texture=skin_tex, under=True)
 
-    def proxy(part, kind, path, image=None, **extra):
+    body_normals = smooth_normals(game, faces)
+
+    def proxy(part, kind, path, image=None, tint=None, adjust=None, **extra):
         p = read_proxy(path)
         pos, carried = fit(p, body, weights)
         pv, puv, pf = read_obj(p['obj'])
@@ -451,8 +495,14 @@ def build(name, spec, base, data, assets, cache, textures):
             raise SystemExit(f'{path}: {len(pv)} vertices in the mesh, {len(pos)} bound')
         g = to_game(pos)
         g[:, 1] -= floor
+        if adjust:
+            # Worn otherwise than its maker fitted it: pushed out from the body under it (along the body's own surface,
+            # so a thin cord moves out whole rather than swelling), then moved (metres, the game's frame).
+            out = np.array([sum(w * body_normals[v] for v, w in zip(vs, ws)) for vs, ws, _ in p['binds']])
+            out /= np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
+            g = g + out * adjust.get('inflate', 0) + np.array(adjust.get('shift', [0, 0, 0]))
         pj, pa = quantise(carried)
-        mesh.add(part, g, puv, pf, pj, pa, kind=kind, texture=texture(image or p['texture'], kind, textures), **extra)
+        mesh.add(part, g, puv, pf, pj, pa, kind=kind, texture=texture(image or p['texture'], kind, textures, tint), **extra)
 
     iris = assets / 'eyes' / 'materials' / f"{spec['eyes']}_eye.png"
     # The eyeballs ship with MakeHuman itself; only their irises are in the assets.
@@ -464,7 +514,7 @@ def build(name, spec, base, data, assets, cache, textures):
     if spec.get('hair'):
         proxy('hair', 'hair', proxy_path(assets, 'hair', spec['hair']))
     for w in spec['wears']:
-        proxy('wears:' + w, 'cloth', proxy_path(assets, 'clothes', w), worn=True)
+        proxy('wears:' + w, 'cloth', proxy_path(assets, 'clothes', w), tint=spec.get('tint', {}).get(w), adjust=spec.get('adjust', {}).get(w), worn=True)
 
     pos = np.array(mesh.pos, dtype=np.float32)
     idx = np.array(mesh.index, dtype=np.uint32)

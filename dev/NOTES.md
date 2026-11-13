@@ -727,19 +727,30 @@ Rebuilt as physics (numbers in `src/sandbox/fluid.ts`: 1060 kg/m3, 3.5 mPa s,
 - Measured (RIG_GPU, RIG_UNCAP, three people bleeding): blood + bleeding +
   runs about 1.5 ms of a 12 ms frame. Scripts in ~/.cache/cold-chain/blood/.
 
-## Paused, 2026-11-13 (0.8.15 + uncommitted work, checkpoint commit below)
+## 0.8.17 (2026-11-13): the paused work finished
 
-The user paused every agent to reopen the session. Where each stood, to restart them:
-- Active ragdoll (behaviour.ts, motor.ts, ragdoll.ts): working; remaining: stepping (people fall again a few s
-  after getting up; 40 N s front/back shoves fall), limb-limb and person-person collisions and clothes sinking into
-  limbs, injury-specific reactions (shot in the right arm: the left hand grabs it; limp on a leg wound; hands to a
-  hurt belly or face).
-- Blood (blood.ts, floor.ts, film.ts, soak.ts, fluid.ts, runs.ts): physics done; was mid-way through performance
-  (about 6 ms a frame idle in Blood.update, target 1.5 ms with three bleeding) and these visual bugs: black dashes
-  and dots round floor splashes, drips and footprints; blocky pool and shirt-stain edges; drips from empty air.
-- Dismemberment (new src/sandbox/dismember.ts, may not exist yet) and exposed organs / evisceration (new
-  src/sandbox/viscera.ts): just started; briefs are in the session transcript; both extend hider.ts.
-- Arsenal assets: AK-47, M4A1, M67 grenade models (CC0/CC-BY online, no Blender) and real recordings for them:
-  just started. Not started at all: the inventory system, hotbar, arsenal wall, and the AK/M4/grenade weapon code.
-- Done this round: bone system (every bone, faces, teeth, realistic blunt and fall thresholds), wounds in the skin's
-  shader (marks.ts Gore), voices and faces, close-range shotgun as one charge, punch at 9 kN/m.
+- Sound effects: all ElevenLabs (tools/sfx.py builds assets/sounds from ~/.cache/cold-chain/sfx-raw; generation ids in it).
+  tools/sounds.py puts the old Freesound set back. Ambience loops are 5 s generations with loop on.
+- Carrying: six slots at hand (1-6, wheel), twelve in the bag (Tab, drag to move); the arsenal board on the west wall
+  (arsenal.ts), E takes, G puts back. AK-47 (2 kJ, 600/min) and M4A1 (1.6 kJ, 800/min) fire full auto; M67 grenade
+  (weapons.ts _lob/_explode): 4-5.5 s fuse, blast impulse, ~1000 fragments followed only where they meet a body, and
+  dismember.blast for limbs and belly. Flash fades by the clock (frames stall for ~0.2 s when a limb comes off).
+- Dismemberment (dismember.ts) and opened bodies / prolapsed bowel (viscera.ts), hooked in wounds.pierce and npc.slash;
+  the hands grab bowel (viscera.pick/pull/letGo). Thresholds are exported constants there.
+- Blunt trauma (bruise.ts): a per-vertex field in rest space; redness, oedema as geometry, bruising that develops and
+  spreads, splits over bone, nosebleeds; face.ts closes swollen lids.
+- Ragdoll: balance holds 40-120 N s shoves, falls at 180+; every limb collides with the same body (not jointed
+  neighbours or overlapping trunk/roots), other people and things; shapes now fit 95% of skin plus close clothes, neck and
+  spine pivot mid-bone, the skeleton follows straight after each physics step (the "sinking" was the drawn body outside
+  its shapes). Collision bits: 1 world, 2 trunk, 4 upper arm/thigh roots, 8 limbs, own = bit << 1.
+- Blood: black fringes and dashes gone (single-sided quads, a sheet without black clear pixels), boot prints, smooth
+  pool and stain edges, drips from nowhere fixed (cloth used the first person's bones), cloth simulation sleeps.
+- hider.ts always sends its windows and reveal: under-clothes skin was drawn whole and came through the clothes.
+- A fourth person, "Man in a hood" (hood): community MakeHuman jacket and beanie (CC-BY, assets/people/CREDITS.md),
+  people.py `tint` and `adjust` per garment; Fish voice a2ksi for his cries. Irises desaturated (natural_iris).
+  anatomy.py now fits the skull to skin only (a hat set it before); the other three keep their old anatomy files.
+- Player: mouse look on pointermove (the view froze while a button was held).
+
+Left: after heavy carnage the frame is 34-63 ms on a loaded machine (physics substeps spiral, soak ~5 ms, runs ~3,
+blood ~9, render ~16); a severed head that lands gets skull-fracture entries (bones.ts); severed pieces still count in
+balance; splits look like incisions; the other hand often can't reach a wounded arm.

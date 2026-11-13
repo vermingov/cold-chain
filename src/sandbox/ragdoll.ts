@@ -92,7 +92,9 @@ const J = (parent, hinge, bend, side, twist, muscle, neutral = []) => ({ parent,
 const LOCK = (parent, hinge) => ({ parent, hinge, lock: true });
 
 const SEGMENTS = (s) => [
-    [`upperarm${s}`, `upperarm01.${s}`, 0.014, 'capsule', J('chest', 'x', [`shoulderFlex${s}`, -60, 175], [`shoulderAbduct${s}`, -35, 165], 85, 110,
+    // (In across the body as far as the shoulder blade sliding forward takes it, which this has no bone for: a hand
+    // reaching the other arm needs it.)
+    [`upperarm${s}`, `upperarm01.${s}`, 0.014, 'capsule', J('chest', 'x', [`shoulderFlex${s}`, -60, 175], [`shoulderAbduct${s}`, -50, 165], 85, 110,
         [[`shoulderAbduct${s}`, -36], [`shoulderFlex${s}`, -26]])],
     [`upperarm2${s}`, midOf('upperarm01', s), 0.013, 'capsule', LOCK(`upperarm${s}`, 'x')],
     [`forearm${s}`, `lowerarm01.${s}`, 0.009, 'capsule', J(`upperarm2${s}`, 'elbow', [`elbow${s}`, -6, 150], [null, -5, 5], 15, 80)],
@@ -104,15 +106,16 @@ const SEGMENTS = (s) => [
     [`shin2${s}`, midOf('lowerleg01', s), 0.02, 'capsule', LOCK(`shin${s}`, 'x')],
     [`foot${s}`, `foot.${s}`, 0.014, 'box', J(`shin2${s}`, 'x', [`ankle${s}`, -50, 25], [null, -10, 10], 22, 200)],
 ];
-const TRUNK = [
+const TRUNK_SEGMENTS = [
     ['pelvis', 'root', 0.14, 'box', null],
     ['belly', 'spine03', 0.12, 'box', J('pelvis', 'x', ['spineFlex', -25, 45], ['spineSide', -25, 25], 20, 300)],
     ['chest', 'spine01', 0.22, 'box', J('belly', 'x', ['spineFlex', -20, 40], ['spineSide', -25, 25], 30, 260)],
     ['head', 'neck01', 0.08, 'sphere', J('chest', 'x', ['neckFlex', -55, 70], ['headTilt', -40, 40], 75, 60)],
 ];
-const ALL: any[] = [...TRUNK, ...SEGMENTS('L'), ...SEGMENTS('R')];
-// Segments past the elbow and the middle of the thigh: they may meet the person's own trunk and other limbs.
-const LIMB = /^(forearm|forearm2|hand|thigh2|shin|shin2|foot)[LR]$/;
+const ALL: any[] = [...TRUNK_SEGMENTS, ...SEGMENTS('L'), ...SEGMENTS('R')];
+const TRUNK_NAMES = new Set(TRUNK_SEGMENTS.map(([name]) => name));
+// The halves of the arms and legs at the trunk: they overlap it round the shoulder and hip.
+const ROOT = /^(upperarm|thigh)[LR]$/;
 // Where a turn of the spine or neck is spread over every bone of it on screen, so a bow is a curve.
 const SPREAD = new Set(['belly', 'chest', 'head']);
 // A joint's three axes in Havok's order: the hinge it bends about, the limb's own length, and across both.
@@ -120,10 +123,19 @@ const ANGULAR = [AXIS.ANGULAR_X, AXIS.ANGULAR_Y, AXIS.ANGULAR_Z];
 const RAD = Math.PI / 180;
 
 const FORWARD = new V3(0, 0, 1);
-const WORLD = 1;                // collision bits: the room and loose things
-const BODIES = 2;               // every person's trunk and upper limbs
-const LIMBS = 4;                // every person's forearms, hands, lower thighs, shins and feet
-const THIN = 0.82;              // a segment's shape is this much of the flesh round its bone: the rest is give
+// Collision bits. A person's own segments meet each other as they would anyone else's (a hand on the belly, one knee on
+// the other, an arm against the chest), but for neighbours at a joint (its constraint leaves them be) and the trunk's
+// segments and the halves of the limbs at it, which overlap round every joint of the spine, the shoulder and the hip.
+// Each person has a bit of their own above these, which is what tells their own segments from anyone else's.
+const WORLD = 1;                // the room and loose things
+const TRUNK = 2;                // pelvis, belly, chest, head
+const ROOTS = 4;                // upper arms and thighs, their halves at the trunk
+const LIMBS = 8;                // the rest of the arms and legs
+// A segment's shape is this much of the outside of what it carries, flesh and clothes: the rest is give. (Fitted to the
+// middle of the skin at four fifths of it, a body lying down had its back, its trousers and its shoe soles 4 to 8 cm
+// into the floor, and a hand on the belly sank into the shirt.)
+const THIN = 0.95;
+const GARMENT = 0.015;          // m: the most a segment's shape is grown for the clothes over it
 const TONE = { alive: 18, out: 5, dead: 1.2 };      // Nm of resistance in every joint: muscle with a mind behind it, without, and none
 
 // A turn `q` (in a joint's parent's frame) as the joint's three angles. Havok's 6DoF joint reads a turn as about its
@@ -152,6 +164,9 @@ export class Ragdoll {
     declare mass: number;
     declare _qWorld: BABYLON.Quaternion;
     declare _inv: BABYLON.Matrix;
+    declare _moved: BABYLON.Observer<BABYLON.Scene>;
+    declare attached: any[];
+    declare _cuts: any[];
 
     // `person` is made from withMidBones' data; `mass` in kg; `bit` this person's own collision bit (8 and up, one bit).
     constructor(person, { mass = 75, bit = 8 } = {}) {
@@ -172,7 +187,9 @@ export class Ragdoll {
             while (at && !leads.has(at.name)) at = at.parent >= 0 ? bones[at.parent] : null;
             segmentOf.set(b.name, at ? leads.get(at.name) : 'pelvis');
         }
-        const flesh = this._flesh(segmentOf);
+        const flesh = this._flesh(segmentOf), clothes = this._flesh(segmentOf, 'cloth');
+        // (sandbox.ts hands out bits from 8 up; ours start one higher, past LIMBS.)
+        const own = bit << 1;
 
         this.segments = [];
         this.byName = new Map();
@@ -180,20 +197,21 @@ export class Ragdoll {
             const node = new BABYLON.TransformNode('rd_' + name, this.scene);
             node.rotationQuaternion = Q.Identity();
             const head = byName[bone].head;
-            const limb = LIMB.test(name);
+            const limb = !TRUNK_NAMES.has(name) && !ROOT.test(name);
             const seg = { name, bone, node, head, joint, limb, shape: null, body: null, constraint: null, parent: null, broken: false, locked: false, mass: mass * share,
-                points: flesh.get(name) || [], abs: new Q(), chain: [], spread: [], frame: null, unneutral: Q.Identity(), lo: [0, 0, 0], hi: [0, 0, 0], muscle: joint?.muscle ?? 0,
+                points: flesh.get(name) || [], clothes: clothes.get(name) || [], abs: new Q(), chain: [], spread: [], frame: null, unneutral: Q.Identity(), lo: [0, 0, 0], hi: [0, 0, 0], muscle: joint?.muscle ?? 0,
                 motor: { on: false, f: -1, t: [NaN, NaN, NaN] } };
             seg.shape = this._shape(seg, shape, byName);
-            // A person's trunk never meets itself (its segments overlap at every joint), but their forearms, hands and
-            // legs meet their trunk and each other, as a hand on a wound or one knee on the other does.
-            seg.shape.filterMembershipMask = (limb ? LIMBS : BODIES) | bit;
-            seg.shape.filterCollideMask = limb ? ~bit : ~(BODIES | bit);
+            const kind = TRUNK_NAMES.has(name) ? TRUNK : limb ? LIMBS : ROOTS;
+            seg.shape.filterMembershipMask = kind | own;
+            seg.shape.filterCollideMask = ~(own | (kind === TRUNK ? TRUNK | ROOTS : kind === ROOTS ? TRUNK : 0));
             seg.shape.material = { friction: 0.75, restitution: 0.02 };
             this.segments.push(seg);
             this.byName.set(name, seg);
         }
         for (const seg of this.segments) if (seg.joint) seg.parent = this.byName.get(seg.joint.parent);
+        this.attached = this.segments;
+        this._cuts = [];
         this._chains();
         // The bones that lie between one segment's bone and the next (spine04 between pelvis and belly): drive() turns
         // the ones it spreads a bend over and leaves the rest straight.
@@ -220,13 +238,17 @@ export class Ragdoll {
         for (const seg of this.segments) if (seg.joint) this._join(seg);
         for (const b of this.between) b.setRotationQuaternion(Q.Identity(), BABYLON.Space.LOCAL);
         this.setTone('alive');
+        // The skeleton put where the bodies are as soon as they have moved, before the picture is drawn: following them
+        // only in the next frame's update, a body was drawn where it had been a frame before, a head falling at 6 m/s
+        // 10 cm above its body and, the frame it landed, through the floor.
+        this._moved = this.scene.onAfterPhysicsObservable.add(() => this.drive());
     }
 
-    // The rest-space corners of the skin that move with each segment, for its shape.
-    _flesh(segmentOf) {
+    // The rest-space corners of the skin (or, `kind` 'cloth', the clothes) that move with each segment, for its shape.
+    _flesh(segmentOf, kind = 'skin') {
         const { header, arrays } = this.person.lib.bodies.get(this.person.bodyName);
         const out = new Map();
-        const skin = header.parts.filter((p) => p.kind === 'skin');
+        const skin = header.parts.filter((p) => p.kind === kind);
         const names = header.bones.map((b) => b.name);
         for (const part of skin) {
             for (let v = part.vertexStart; v < part.vertexStart + part.vertexCount; v++) {
@@ -242,32 +264,55 @@ export class Ragdoll {
 
     // The segment's shape in its own frame, whose origin is its bone's head and whose axes are the body's at rest.
     _shape(seg, kind, byName) {
-        const pts = seg.points.map((p) => p.subtract(seg.head));
+        const pts = seg.points.map((p) => p.subtract(seg.head)), cloth = seg.clothes.map((p) => p.subtract(seg.head));
         const end = this._end(seg, byName);
         seg.end = end;
         if (kind === 'capsule') {
             const axis = end.normalizeToNew(), length = end.length();
-            const distances = pts.map((p) => {
+            const out = (list) => list.map((p) => {
                 const t = Math.max(0, Math.min(length, V3.Dot(p, axis)));
                 return p.subtract(axis.scale(t)).length();
             }).sort((a, b) => a - b);
-            const r = Math.max(0.025, distances[Math.floor(distances.length * 0.5)] * THIN);
+            const skin = out(pts), worn = out(cloth), at = (list, f) => list[Math.floor((list.length - 1) * f)];
+            // Most of the way out, not all of it (a fold or a cuff standing off is not what the limb rests on), and what is
+            // worn over it as far as it fits close: a baggy sleeve or a hoodie's hem is not something to stand on.
+            const over = worn.length ? Math.max(0, Math.min(GARMENT, at(worn, 0.5) - at(skin, 0.5))) : 0;
+            // (A thigh's or upper arm's half at the trunk carries the buttock or the shoulder's bulge, well off the bone:
+            // taken all the way out, the thighs stood pressed into each other.)
+            const r = Math.max(0.025, (at(skin, ROOT.test(seg.name) ? 0.7 : 0.9) + over) * THIN);
             seg.radius = r;
             seg.geo = { kind, a: axis.scale(Math.min(r, length / 2)), b: axis.scale(Math.max(length - r, length / 2)), r };
             seg.centre = end.scale(0.5);
             return new BABYLON.PhysicsShapeCapsule(seg.geo.a, seg.geo.b, r, this.scene);
         }
-        const lo = new V3(Infinity, Infinity, Infinity), hi = new V3(-Infinity, -Infinity, -Infinity);
-        for (const p of pts) { lo.minimizeInPlace(p); hi.maximizeInPlace(p); }
+        // Its box, leaving out the outermost few corners each way (a collar, a hood's peak), but for a foot, whose shoe's
+        // sole and toe are what it stands and lies on.
+        // Then out over what is worn on it, as far as a close fit goes (a shoe's sole and toe all the way).
+        const foot = seg.name.startsWith('foot'), edge = foot ? 0 : 0.02, fit = foot ? 0.05 : GARMENT;
+        const cut = (list, k, f) => list.map((p) => p[k]).sort((a, b) => a - b)[Math.floor((list.length - 1) * f)];
+        const lo = new V3(), hi = new V3();
+        for (const k of ['x', 'y', 'z']) {
+            lo[k] = cut(pts, k, edge);
+            hi[k] = cut(pts, k, 1 - edge);
+            if (!cloth.length) continue;
+            lo[k] = Math.max(lo[k] - fit, Math.min(lo[k], cut(cloth, k, edge)));
+            hi[k] = Math.min(hi[k] + fit, Math.max(hi[k], cut(cloth, k, 1 - edge)));
+        }
         const centre = lo.add(hi).scale(0.5), size = hi.subtract(lo);
         if (kind === 'sphere') {
-            seg.radius = Math.min(size.x, size.z) * 0.5 * THIN;
-            seg.centre = new V3(centre.x, centre.y + 0.04, centre.z);
+            // The skull, from the corners above where the head sits on the neck, round the middle of them. (Fitted to the
+            // whole of head and neck, it sat low and the back of a head lying on the floor went 11 cm into it.)
+            const above = byName.head.head.y - seg.head.y;
+            const skull = pts.filter((p) => p.y > above);
+            const mid = skull.reduce((a, p) => a.addInPlace(p), new V3()).scaleInPlace(1 / skull.length);
+            const reach = skull.map((p) => V3.Distance(p, mid)).sort((a, b) => a - b);
+            seg.radius = reach[Math.floor(reach.length * 0.75)] * THIN;
+            seg.centre = mid;
             seg.geo = { kind, c: seg.centre, r: seg.radius };
             return new BABYLON.PhysicsShapeSphere(seg.centre, seg.radius, this.scene);
         }
         seg.radius = Math.min(size.x, size.z) * 0.5 * THIN;
-        const extent = new V3(size.x * THIN, size.y * 0.92, size.z * THIN);
+        const extent = new V3(size.x * THIN, size.y * (foot ? 1 : 0.92), size.z * (foot ? 1 : THIN));
         seg.centre = centre;
         seg.geo = { kind, c: centre, h: extent.scale(0.5) };
         return new BABYLON.PhysicsShapeBox(centre, Q.Identity(), extent, this.scene);
@@ -311,7 +356,11 @@ export class Ragdoll {
         let hinge = j.hinge === 'elbow' ? V3.Cross(along, FORWARD).normalize() : new V3(1, 0, 0);
         hinge = hinge.subtract(along.scale(V3.Dot(hinge, along))).normalize();
         seg.frame = [hinge, along, V3.Cross(hinge, along)];
-        const params = { pivotA: seg.head.subtract(parent.head), pivotB: V3.Zero(), axisA: hinge, perpAxisA: along,
+        // Where it turns: for a spine or neck, whose turn drive() spreads over every bone of it, the middle of those
+        // bones' joints, about which the curve they make swings what is past them as one turn would (about the first
+        // joint, the skull drawn on a curved neck lay 7 cm from the head's body, and through the floor under it).
+        const pivot = seg.spread.length > 1 ? seg.spread.reduce((a, b) => a.addInPlace(this.person.byName[b.name].head), new V3()).scaleInPlace(1 / seg.spread.length) : seg.head;
+        const params = { pivotA: pivot.subtract(parent.head), pivotB: pivot.subtract(seg.head), axisA: hinge, perpAxisA: along,
             axisB: hinge.applyRotationQuaternion(seg.unneutral), perpAxisB: along.applyRotationQuaternion(seg.unneutral), collision: false };
         const limits: any[] = [{ axis: AXIS.LINEAR_DISTANCE, minLimit: 0, maxLimit: 0 }];
         if (j.lock) {
@@ -395,6 +444,40 @@ export class Ragdoll {
         }
     }
 
+    // Whether a segment is on a piece cut off the body (dismember.ts marks the piece's first segment `severed`).
+    cutOff(seg) {
+        for (let at = seg; at; at = at.parent) if (at.severed) return true;
+        return false;
+    }
+
+    // A piece cut off is not the body's any more: its weight, balance and pushes go without it (`attached`, and the
+    // mass). Its first segment, still inside the stump where it was cut, meets nothing of the body until it is clear
+    // of it (met at once, it was thrown out of it), and from then on meets all of it, as anything else would.
+    _severed() {
+        let n = 0;
+        for (const seg of this.segments) if (seg.severed) n++;
+        if (n !== this._cuts.length) {
+            this._cuts = this.segments.filter((seg) => seg.severed).map((seg) => this._cuts.find((c) => c.seg === seg) ?? this._cut(seg));
+            this.attached = this.segments.filter((seg) => !this.cutOff(seg));
+            this.mass = this.attached.reduce((sum, seg) => sum + seg.mass, 0);
+        }
+        for (const c of this._cuts) {
+            if (c.clear) continue;
+            const { seg } = c, at = this.worldPoint(seg.parent, seg.head.subtract(seg.parent.head), _v);
+            if (V3.Distance(at, seg.node.position) < seg.radius + seg.parent.radius) continue;
+            c.clear = true;
+            seg.shape.filterMembershipMask = LIMBS | c.own;
+            seg.shape.filterCollideMask = ~c.own;
+        }
+    }
+
+    _cut(seg) {
+        const own = seg.shape.filterMembershipMask & ~(TRUNK | ROOTS | LIMBS);
+        seg.shape.filterMembershipMask = own;
+        seg.shape.filterCollideMask = ~own;
+        return { seg, own, clear: false };
+    }
+
     // Whether a segment hangs past a broken bone, with nothing to move it but its own weight.
     loose(seg) {
         for (let at = seg; at; at = at.parent) if (at.broken) return true;
@@ -442,14 +525,14 @@ export class Ragdoll {
     // The middle of the body's weight.
     com(out: BABYLON.Vector3) {
         out.setAll(0);
-        for (const seg of this.segments) out.addInPlace(this.worldPoint(seg, seg.centre, _v).scaleInPlace(seg.mass));
+        for (const seg of this.attached) out.addInPlace(this.worldPoint(seg, seg.centre, _v).scaleInPlace(seg.mass));
         return out.scaleInPlace(1 / this.mass);
     }
 
     // How fast the middle of the body's weight is moving.
     comVelocity(out: BABYLON.Vector3) {
         out.setAll(0);
-        for (const seg of this.segments) {
+        for (const seg of this.attached) {
             seg.body.getLinearVelocityToRef(_v);
             out.addInPlace(_v.scaleInPlace(seg.mass));
         }
@@ -472,6 +555,7 @@ export class Ragdoll {
     // The skeleton put where the bodies are. Called every frame.
     drive() {
         const { person } = this;
+        this._severed();
         person._sync();
         const world = person.mesh.getWorldMatrix();
         world.decompose(undefined, this._qWorld, undefined);
@@ -520,6 +604,7 @@ export class Ragdoll {
     get centre() { return this.byName.get('pelvis').node.position; }
 
     dispose() {
+        this.scene.onAfterPhysicsObservable.remove(this._moved);
         for (const seg of this.segments) {
             seg.constraint?.dispose();
             seg.body?.dispose();
@@ -529,4 +614,4 @@ export class Ragdoll {
     }
 }
 
-export { WORLD, BODIES, LIMBS };
+export { WORLD };

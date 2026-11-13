@@ -8,9 +8,10 @@
 
 import * as BABYLON from '@babylonjs/core';
 import { GLSL_BLOOD } from './fluid.ts';
-import { OVER, type Soak } from './soak.ts';
+import { GLSL_SOAK, OVER, type Soak } from './soak.ts';
 
 const MOST = 64;            // wounds (or holes in clothes) one person can have drawn
+const CUTS = 8;             // limbs one person can lose (dismember.ts)
 
 // Smooth noise over rest space, for the ragged edge of a stain.
 const GLSL_NOISE = `
@@ -34,10 +35,16 @@ export class Hider extends BABYLON.MaterialPluginBase {
     declare windowNormals: Float32Array;
     declare openings: number;
     declare field: Soak | null;
+    declare cuts: Float32Array;
+    declare cutAt: Float32Array;
+    declare cutCount: number;
+    declare sides: WeakMap<BABYLON.AbstractMesh, Float32Array>;
+    declare _body: Float32Array;
+    declare inside: boolean;
 
     // `depth` is how far either side of a wound's plane the person is not drawn (a little for skin; clothes stand off).
     constructor(material, depth = 0.025) {
-        super(material, 'Hider', 230, { HIDER: false, HIDER_SOAK: false });
+        super(material, 'Hider', 230, { HIDER: false, HIDER_SOAK: false, HIDER_INSIDE: false });
         this.a = new Float32Array(MOST * 4);
         this.b = new Float32Array(MOST * 4);
         this.c = new Float32Array(MOST * 4);
@@ -48,14 +55,55 @@ export class Hider extends BABYLON.MaterialPluginBase {
         this.windowNormals = new Float32Array(MOST * 4);
         this.openings = 0;
         this.field = null;
+        this.cuts = new Float32Array(CUTS * 4);
+        this.cutAt = new Float32Array(CUTS * 4);
+        this.cutCount = 0;
+        this.sides = new WeakMap();
+        this._body = new Float32Array(CUTS).fill(1);
+        this.inside = false;
+        // (For hardBindForSubMesh: the cuts are bound for every mesh drawn with this material.)
+        this.registerForExtraEvents = true;
         this._enable(true);
     }
 
     getClassName() { return 'Hider'; }
 
     prepareDefines(defines) {
-        defines.HIDER = this.reveal || this.count > 0 || !!this.field;
+        defines.HIDER = this.reveal || this.count > 0 || !!this.field || this.cutCount > 0;
         defines.HIDER_SOAK = !!this.field;
+        defines.HIDER_INSIDE = this.inside;
+    }
+
+    // A limb cut off (dismember.ts): the plane through `at` (rest space) square to unit `n`, which points away from the
+    // body. Within `radius` of `at` nothing past it is drawn, unless a mesh is said (`keeps`) to be the piece cut off,
+    // which keeps only what is past it. Returns the cut's number, or -1 if no more can be drawn.
+    // A cut that `tore` leaves cloth with a ragged edge (the skin's is closed by the cut face, which lies on the plane).
+    cut(at: BABYLON.Vector3, n: BABYLON.Vector3, radius: number, tore = false) {
+        if (this.cutCount >= CUTS) return -1;
+        const k = this.cutCount++;
+        this.cuts.set([n.x, n.y, n.z, BABYLON.Vector3.Dot(at, n)], k * 4);
+        this.cutAt.set([at.x, at.y, at.z, tore ? -radius : radius], k * 4);
+        this.markAllDefinesAsDirty();
+        return k;
+    }
+
+    // Mesh `mesh` is the piece past cut `k`: it keeps that side of it (and the body's side of every earlier cut).
+    keeps(mesh: BABYLON.AbstractMesh, k: number) {
+        const sides = this._body.slice();
+        sides[k] = -1;
+        for (let j = k + 1; j < CUTS; j++) sides[j] = 0;
+        this.sides.set(mesh, sides);
+    }
+
+    // The inside of the body seen through a hole right through its wall: what is behind the skin is drawn as the wall
+    // of the body's cavity, not left out (which shows the room through the far side of the body).
+    opens() {
+        if (this.inside) return;
+        this.inside = true;
+        const m = this._material as BABYLON.PBRMaterial;
+        m.backFaceCulling = false;
+        m.twoSidedLighting = true;
+        this.markAllDefinesAsDirty();
     }
 
     // The blood in these clothes (soak.ts), drawn from now on.
@@ -66,11 +114,11 @@ export class Hider extends BABYLON.MaterialPluginBase {
 
     // The other way round, for the skin under clothes: drawn only where a hole in the clothes over it lets it be seen,
     // a round window `radius` across at `at`, through clothes facing `n`.
-    window(at: BABYLON.Vector3, n: BABYLON.Vector3, radius: number) {
+    window(at: BABYLON.Vector3, n: BABYLON.Vector3, radius: number, depth = 0.06) {
         if (this.openings >= MOST) return;
         const k = this.openings++ * 4;
         this.windows.set([at.x, at.y, at.z, radius], k);
-        this.windowNormals.set([n.x, n.y, n.z, 0.06], k);
+        this.windowNormals.set([n.x, n.y, n.z, depth], k);
         this.markAllDefinesAsDirty();
     }
 
@@ -92,7 +140,8 @@ export class Hider extends BABYLON.MaterialPluginBase {
         return {
             // (Declared in the fragment's definitions below: a plugin's own `fragment` uniforms are only written into
             // the shader for materials that do not use a uniform buffer.)
-            externalUniforms: ['hiderA', 'hiderB', 'hiderC', 'hiderCount', 'windowA', 'windowB', 'windowCount', 'hiderReveal', 'soakOrigin', 'soakScale'],
+            externalUniforms: ['hiderA', 'hiderB', 'hiderC', 'hiderCount', 'windowA', 'windowB', 'windowCount', 'hiderReveal', 'soakOrigin', 'soakScale',
+                'hiderCut', 'hiderCutAt', 'hiderCuts', 'hiderSide', 'hiderFray'],
         };
     }
 
@@ -102,6 +151,18 @@ export class Hider extends BABYLON.MaterialPluginBase {
 
     hasTexture(texture) { return !!this.field && texture === this.field.texture; }
 
+    // Which side of each cut is kept is the mesh's own (the body, or a limb cut off it), and two meshes share this
+    // material: bound for every mesh drawn, not only when the material changes.
+    hardBindForSubMesh(_ubo, _scene, _engine, subMesh) {
+        const effect = subMesh.effect;
+        if (!effect || !this.cutCount) return;
+        effect.setFloatArray4('hiderCut', this.cuts);
+        effect.setFloatArray4('hiderCutAt', this.cutAt);
+        effect.setFloat('hiderCuts', this.cutCount);
+        effect.setFloatArray('hiderSide', this.sides.get(subMesh.getMesh()) ?? this._body);
+        effect.setFloat('hiderFray', this.depth > 0.04 ? 1 : 0);     // (clothes stand off the skin; the skin's own cuts are closed)
+    }
+
     bindForSubMesh(_ubo, _scene, _engine, subMesh) {
         const effect = subMesh.effect;
         if (!effect) return;
@@ -110,7 +171,8 @@ export class Hider extends BABYLON.MaterialPluginBase {
             effect.setVector3('soakOrigin', this.field.origin);
             effect.setVector3('soakScale', this.field.scale);
         }
-        if (!this.count) return;
+        // Always all of it, holes or none: under-clothes skin has no holes of its own but must still get its windows and
+        // its reveal, or it is drawn whole and comes through the cloth everywhere.
         effect.setFloatArray4('hiderA', this.a);
         effect.setFloatArray4('hiderB', this.b);
         effect.setFloatArray4('hiderC', this.c);
@@ -126,7 +188,7 @@ export class Hider extends BABYLON.MaterialPluginBase {
             return { CUSTOM_VERTEX_DEFINITIONS: '#ifdef HIDER\nvarying vec3 vHiderRest;\n#endif\n', CUSTOM_VERTEX_MAIN_BEGIN: '#ifdef HIDER\nvHiderRest = position;\n#endif\n' };
         }
         return {
-            CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef HIDER\nvarying vec3 vHiderRest;\nuniform vec4 hiderA[${MOST}];\nuniform vec4 hiderB[${MOST}];\nuniform vec4 hiderC[${MOST}];\nuniform float hiderCount;\nuniform vec4 windowA[${MOST}];\nuniform vec4 windowB[${MOST}];\nuniform float windowCount;\nuniform float hiderReveal;\n${GLSL_NOISE}#endif\n#ifdef HIDER_SOAK\nuniform highp sampler3D soakField;\nuniform vec3 soakOrigin;\nuniform vec3 soakScale;\n${GLSL_BLOOD}#endif\n`,
+            CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef HIDER\nvarying vec3 vHiderRest;\nuniform vec4 hiderCut[${CUTS}];\nuniform vec4 hiderCutAt[${CUTS}];\nuniform float hiderCuts;\nuniform float hiderSide[${CUTS}];\nuniform float hiderFray;\nuniform vec4 hiderA[${MOST}];\nuniform vec4 hiderB[${MOST}];\nuniform vec4 hiderC[${MOST}];\nuniform float hiderCount;\nuniform vec4 windowA[${MOST}];\nuniform vec4 windowB[${MOST}];\nuniform float windowCount;\nuniform float hiderReveal;\n${GLSL_NOISE}#endif\n#ifdef HIDER_SOAK\nuniform highp sampler3D soakField;\nuniform vec3 soakOrigin;\nuniform vec3 soakScale;\n${GLSL_BLOOD}${GLSL_SOAK}#endif\n`,
             // Blood in the cloth (soak.ts): a stain whose edge is the weave's, red where a little has wicked in and dark
             // where the cloth is full, wet-dark and with a sheen where blood stands on it, drying brown with a darker
             // tide line at its edge. Round a bullet's hole in cloth, the fibres it dragged in are blackened (its wipe).
@@ -138,7 +200,7 @@ float soakGloss = 0.0;
     // The grid is 8 mm: read it a little off where this point is, by a smooth noise, so that a stain's edge wanders as
     // the weave makes it and does not follow the grid.
     vec3 sp = vHiderRest + (vec3(hiderNoise(vHiderRest * 55.0), hiderNoise(vHiderRest * 55.0 + 17.0), hiderNoise(vHiderRest * 55.0 + 31.0)) - 0.5) * 0.014;
-    vec4 sk = texture(soakField, (sp - soakOrigin) * soakScale);
+    vec4 sk = soakRead(soakField, (sp - soakOrigin) * soakScale);
     float full = sk.r * sk.r * ${OVER.toFixed(2)};
     if (full > 0.002) {
         float n1 = hiderNoise(vHiderRest * 160.0), n2 = hiderNoise(vHiderRest * 420.0);
@@ -166,6 +228,13 @@ for (int i = 0; i < ${MOST}; i++) {
     scorched = max(scorched, 1.0 - smoothstep(1.0, 1.35, r));
 }
 surfaceAlbedo = mix(surfaceAlbedo, vec3(0.02, 0.012, 0.01), scorched * 0.85);
+#ifdef HIDER_INSIDE
+// The body's wall from inside: muscle under its glistening lining, blood lying on it.
+if (!gl_FrontFacing) {
+    float n1 = hiderNoise(vHiderRest * 30.0), n2 = hiderNoise(vHiderRest * 110.0);
+    surfaceAlbedo = mix(vec3(0.14, 0.016, 0.012), vec3(0.26, 0.04, 0.032), n1 * 0.75 + n2 * 0.25);
+}
+#endif
 #endif
 `,
             '!(float roughness=reflectivityOut\\.roughness;)': `$1
@@ -183,7 +252,27 @@ if (hiderReveal > 0.5) {
         vec3 d = vHiderRest - windowA[i].xyz;
         if (abs(dot(d, windowB[i].xyz)) < windowB[i].w && length(d - windowB[i].xyz * dot(d, windowB[i].xyz)) < windowA[i].w) { seen = true; break; }
     }
-    if (!seen) discard;
+    // (Seen from inside, through an opening in the body, the skin under the clothes is the body's wall.)
+    if (!seen && gl_FrontFacing) discard;
+}
+#ifdef HIDER_INSIDE
+// The body's inside is seen only through an opening in it: near one (within 30 cm), and nowhere else (a gap between a
+// shirt and trousers shows nothing of it).
+if (!gl_FrontFacing) {
+    bool near = false;
+    for (int i = 0; i < ${MOST}; i++) {
+        if (float(i) >= hiderCount) break;
+        if (hiderB[i].w >= 0.0 && distance(vHiderRest, hiderA[i].xyz) < hiderA[i].w + 0.3) { near = true; break; }
+    }
+    if (!near) discard;
+}
+#endif
+for (int i = 0; i < ${CUTS}; i++) {
+    if (float(i) >= hiderCuts) break;
+    if (distance(vHiderRest, hiderCutAt[i].xyz) > abs(hiderCutAt[i].w)) continue;
+    // (Cloth torn off with a limb frays: the same wandering edge on the body's side and the piece's, so they meet.)
+    float frayed = hiderCutAt[i].w < 0.0 && hiderFray > 0.5 ? (hiderNoise(vHiderRest * 70.0) - 0.5) * 0.04 + (hiderNoise(vHiderRest * 400.0) - 0.5) * 0.008 : 0.0;
+    if ((dot(vHiderRest, hiderCut[i].xyz) - hiderCut[i].w + frayed) * hiderSide[i] > 0.0) discard;
 }
 for (int i = 0; i < ${MOST}; i++) {
     if (float(i) >= hiderCount) break;
@@ -194,7 +283,8 @@ for (int i = 0; i < ${MOST}; i++) {
     // A hole in clothes (a width below nothing): round, with a frayed edge.
     // (frayed: the edge of a hole in cloth wanders with the weave, not in a pattern)
     if (hiderB[i].w < 0.0) { if (length(onPlane) < hiderA[i].w * (0.7 + 0.45 * hiderNoise(vHiderRest * 900.0) + 0.15 * hiderNoise(vHiderRest * 3000.0))) discard; }
-    else if (length(vec2(max(abs(onPlane.x) - (hiderA[i].w - hiderB[i].w), 0.0), onPlane.y)) < hiderB[i].w) discard;
+    // (An opening torn in skin: its edge wanders by a tenth of its width or so, as torn skin's does.)
+    else if (length(vec2(max(abs(onPlane.x) - (hiderA[i].w - hiderB[i].w), 0.0), onPlane.y)) < hiderB[i].w * (0.92 + 0.16 * hiderNoise(vHiderRest * 260.0))) discard;
 }
 #endif
 `,

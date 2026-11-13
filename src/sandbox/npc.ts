@@ -18,9 +18,12 @@ import { Marks, Gore } from './marks.ts';
 import { Hider } from './hider.ts';
 import { Runs } from './runs.ts';
 import { Face } from './face.ts';
+import { Bruise, BruiseLayer } from './bruise.ts';
 import { Film, FilmLayer } from './film.ts';
 import { Soak } from './soak.ts';
 import { RHO } from './fluid.ts';
+import { Dismember, swung } from './dismember.ts';
+import { Viscera, slashed } from './viscera.ts';
 const V3 = BABYLON.Vector3;
 const BACK = 45;            // mmHg: what the tissue round an open artery holds back of the pressure behind it
 
@@ -58,6 +61,7 @@ export class Npc {
     declare voice: string;
     declare runs: Runs;
     declare face: Face;
+    declare bruise: Bruise;
     declare _crying: boolean;
     declare film: Film;
     declare soak: Soak;
@@ -68,6 +72,8 @@ export class Npc {
     declare underHiders: Hider[];
     declare skinMaterials: BABYLON.Material[];
     declare _said: { until: number; pain: number; next: number; awake: boolean };
+    declare dismember: Dismember;
+    declare viscera: Viscera;
 
     // `world` is the sandbox: { scene, blood, sound, frame, camera, shadows }.
     static async make(world, people, body, { at, yaw = 0, bit = 4, mass = 75, name = body } = {} as any) {
@@ -122,12 +128,17 @@ export class Npc {
         for (const m of this.skinMaterials) new Gore(m, this.marks.depth);
         this.runs = new Runs(this);
         this.face = new Face(this.person);
+        // What blows do to the skin over minutes: redness, bruising, swelling (bruise.ts), drawn by the skin's own material.
+        this.bruise = new Bruise(this);
+        for (const m of this.skinMaterials) new BruiseLayer(m, this.bruise);
         // Blood on the skin (film.ts) and in the clothes (soak.ts), drawn by the skin's and the clothes' own materials.
         this.film = new Film(world.scene, person.mesh.name);
         for (const m of this.skinMaterials) new FilmLayer(m, this.film);
         this.soak = new Soak(world.scene, this);
         for (const h of this.clothHiders) h.soaks(this.soak);
         this._aims = new WeakMap();
+        this.dismember = new Dismember(this);
+        this.viscera = new Viscera(this);
         for (const m of [person.mesh, this.clothes]) world.shadows?.addShadowCaster(m);
     }
 
@@ -232,6 +243,8 @@ export class Npc {
 
     // The bone that carries most of corner `v`.
     _owner(v) {
+        const moved = this.dismember?.owners.get(v);
+        if (moved) return moved;
         const { arrays } = this.person.lib.bodies.get(this.person.bodyName);
         let best = 0, bone = 0;
         for (let k = 0; k < 4; k++) if (arrays.weights[v * 4 + k] > best) { best = arrays.weights[v * 4 + k]; bone = arrays.joints[v * 4 + k]; }
@@ -322,10 +335,13 @@ export class Npc {
         if (!person.blinks) person.blink = v.dead ? 0.35 : 0.75;
         person.tick(dt);
         person._face();
+        this.dismember.update(dt);
         this.face.update(dt, this.vitals, this._crying, (this as any).bones?.jawHangs ?? 0);
+        this.bruise.update(dt);
         this._bleed(dt);
         this._speak(dt);
         this.runs.update(dt);
+        this.viscera.update(dt);
     }
 
     // Blood out of each wound, as much as is coming out of it this frame, to where it goes: an artery open to the air
@@ -425,6 +441,8 @@ export class Npc {
     // place it crossed to the next, through places laid back on the skin in between, so it runs round a face and does
     // not cut across it.
     slash(hits, deep: number, sweep: BABYLON.Vector3 | null = null) {
+        swung(this);    // a heavy edge may have gone right through a limb (dismember.ts)
+        slashed(this, hits, deep);    // or through the wall of the belly or chest (viscera.ts)
         const skin = hits.filter((h) => h.kind === 'skin');
         // A blade that crossed the skin only once still opened it for a few centimetres, along the way it was going.
         if (skin.length === 1 && sweep) {
@@ -487,10 +505,13 @@ export class Npc {
     }
 
     dispose() {
+        this.dismember.dispose();
+        this.viscera.dispose();
         this.bones.dispose();
         this.ragdoll.dispose();
         this.insides.dispose();
         this.marks.dispose();
+        this.bruise.dispose();
         this.film.dispose();
         this.soak.dispose();
         this.clothes.dispose();

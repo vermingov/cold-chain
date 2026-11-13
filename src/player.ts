@@ -94,13 +94,15 @@ export class Player {
         const keyup = (e) => this.keys.delete(e.code);
         const blur = () => this.keys.clear();
         const click = () => this.canvas.requestPointerLock();
+        // Pointer events, not mouse ones: Babylon cancels pointerdown, and after a cancelled pointerdown the browser
+        // sends no mousemove until the button is let go, so the view froze while dragging a body or holding a trigger.
         const look = (e) => {
             if (document.pointerLockElement !== this.canvas) return;
             this.yaw += e.movementX * LOOK_RATE * this.lookSpeed;
             const limit = Math.PI * 0.46;
             this.pitch = Math.max(-limit, Math.min(limit, this.pitch + e.movementY * LOOK_RATE * this.lookSpeed));
         };
-        const on = [[window, 'keydown', keydown], [window, 'keyup', keyup], [window, 'blur', blur], [this.canvas, 'click', click], [this.canvas, 'mousemove', look]];
+        const on = [[window, 'keydown', keydown], [window, 'keyup', keyup], [window, 'blur', blur], [this.canvas, 'click', click], [this.canvas, 'pointermove', look]];
         for (const [target, name, handler] of on) target.addEventListener(name, handler);
         this.dispose = () => {
             for (const [target, name, handler] of on) target.removeEventListener(name, handler);

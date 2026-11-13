@@ -1,25 +1,99 @@
 {
+ "shot-pistol": [
+  "shot-pistol-1.ogg",
+  "shot-pistol-2.ogg"
+ ],
+ "shot-rifle": [
+  "shot-rifle-1.ogg",
+  "shot-rifle-2.ogg"
+ ],
+ "shot-shotgun": [
+  "shot-shotgun-1.ogg",
+  "shot-shotgun-2.ogg"
+ ],
+ "shot-ak": [
+  "shot-ak-1.ogg",
+  "shot-ak-2.ogg"
+ ],
+ "shot-m4": [
+  "shot-m4-1.ogg",
+  "shot-m4-2.ogg"
+ ],
+ "bullet-flesh": [
+  "bullet-flesh-1.ogg",
+  "bullet-flesh-2.ogg"
+ ],
+ "casing": [
+  "casing-1.ogg",
+  "casing-2.ogg"
+ ],
+ "rack": [
+  "rack-1.ogg"
+ ],
+ "swing": [
+  "swing-1.ogg",
+  "swing-2.ogg"
+ ],
+ "stab": [
+  "stab-1.ogg",
+  "stab-2.ogg"
+ ],
+ "blunt": [
+  "blunt-1.ogg",
+  "blunt-2.ogg"
+ ],
+ "crack": [
+  "crack-1.ogg",
+  "crack-2.ogg"
+ ],
+ "body-fall": [
+  "body-fall-1.ogg",
+  "body-fall-2.ogg"
+ ],
+ "drip": [
+  "drip-1.ogg"
+ ],
+ "spurt": [
+  "spurt-1.ogg"
+ ],
+ "room-sandbox": [
+  "room-sandbox-1.ogg"
+ ],
+ "explosion": [
+  "explosion-1.ogg",
+  "explosion-2.ogg"
+ ],
+ "pin": [
+  "pin-1.ogg"
+ ],
+ "bounce-metal": [
+  "bounce-metal-1.ogg"
+ ],
  "skin": [
-  "skin-1.ogg"
+  "skin-1.ogg",
+  "skin-2.ogg"
  ],
  "fat": [
-  "skin-1.ogg"
+  "skin-1.ogg",
+  "skin-2.ogg"
  ],
  "flesh": [
-  "skin-1.ogg"
+  "skin-1.ogg",
+  "skin-2.ogg"
  ],
  "organ": [
-  "skin-1.ogg"
+  "skin-1.ogg",
+  "skin-2.ogg"
  ],
  "snip": [
-  "skin-1.ogg"
+  "skin-1.ogg",
+  "skin-2.ogg"
  ],
  "bone": [
   "bone-1.ogg"
  ],
  "give": [
-  "give-1.ogg",
-  "give-2.ogg"
+  "give-1.ogg"
  ],
  "wet": [
   "wet-1.ogg"
@@ -30,17 +104,9 @@
  "lay": [
   "lay-1.ogg"
  ],
- "ring": [
-  "ring-1.ogg"
- ],
- "beep": [
-  "beep-1.ogg"
- ],
- "handset": [
-  "handset-1.ogg"
- ],
- "door": [
-  "door-1.ogg"
+ "step-tarmac": [
+  "step-tarmac-1.ogg",
+  "step-tarmac-2.ogg"
  ],
  "step-carpet": [
   "step-carpet-1.ogg"
@@ -54,8 +120,17 @@
  "step-mud": [
   "step-mud-1.ogg"
  ],
- "step-tarmac": [
-  "step-tarmac-1.ogg"
+ "ring": [
+  "ring-1.ogg"
+ ],
+ "beep": [
+  "beep-1.ogg"
+ ],
+ "handset": [
+  "handset-1.ogg"
+ ],
+ "door": [
+  "door-1.ogg"
  ],
  "room": [
   "room-1.ogg"
@@ -74,47 +149,5 @@
  ],
  "van": [
   "van-1.ogg"
- ],
- "shot-pistol": [
-  "shot-pistol-1.ogg"
- ],
- "shot-rifle": [
-  "shot-rifle-1.ogg"
- ],
- "shot-shotgun": [
-  "shot-shotgun-1.ogg"
- ],
- "bullet-flesh": [
-  "bullet-flesh-1.ogg"
- ],
- "casing": [
-  "casing-1.ogg"
- ],
- "rack": [
-  "rack-1.ogg"
- ],
- "swing": [
-  "swing-1.ogg"
- ],
- "stab": [
-  "stab-1.ogg"
- ],
- "blunt": [
-  "blunt-1.ogg"
- ],
- "crack": [
-  "crack-1.ogg"
- ],
- "body-fall": [
-  "body-fall-1.ogg"
- ],
- "drip": [
-  "drip-1.ogg"
- ],
- "spurt": [
-  "spurt-1.ogg"
- ],
- "room-sandbox": [
-  "room-sandbox-1.ogg"
  ]
 }

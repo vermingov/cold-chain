@@ -1,5 +1,7 @@
 """The sounds of the table: the recordings that were listened to and passed.
 
+Superseded 2026-11-13 by tools/sfx.py (ElevenLabs takes, asked for by the owner); running this puts the Freesound set back.
+
     python3 tools/sounds.py assets/audition dev/verdicts.json assets/sounds
 
 Every sound in the game is a recording of a real thing, other people's,

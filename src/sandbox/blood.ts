@@ -21,7 +21,7 @@
 
 import * as BABYLON from '@babylonjs/core';
 import { Floor } from './floor.ts';
-import { DRIP, across, drag, spreads, splashes, volume } from './fluid.ts';
+import { DRIP, across, drag, noise2, spreads, splashes, volume } from './fluid.ts';
 const V3 = BABYLON.Vector3, M = BABYLON.Matrix;
 
 const MOST = 3000;          // drops in the air at once
@@ -140,6 +140,8 @@ export class Blood {
 
         const sheet = splashSheet(scene);
         const material = wet('splatBlood', sheet);
+        // (The sheet carries the blood's own colour, thin and deep.)
+        material.albedoColor = BABYLON.Color3.White();
         this.marks = [];
         this.markCount = [];
         this.markNext = [];
@@ -152,7 +154,11 @@ export class Blood {
         this.markBorn = [];
         const [cols, rows] = TILES;
         for (let k = 0; k < cols * rows; k++) {
-            const quad = BABYLON.MeshBuilder.CreatePlane('splat' + k, { size: 1, frontUVs: tile(k), sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+            // One face, seen from both sides (the material does not cull): a second face for the back got the whole sheet
+            // as its picture, which lay under every mark as a grid of dark specks and dashes.
+            const quad = BABYLON.MeshBuilder.CreatePlane('splat' + k, { size: 1 }, scene);
+            const [u0, v0, u1, v1] = tile(k);
+            quad.setVerticesData(BABYLON.VertexBuffer.UVKind, quad.getVerticesData(BABYLON.VertexBuffer.UVKind).map((t, i) => (i % 2 ? v0 + (v1 - v0) * t : u0 + (u1 - u0) * t)));
             quad.material = material;
             quad.isPickable = false;
             quad.alwaysSelectAsActiveMesh = true;
@@ -317,7 +323,7 @@ export class Blood {
         const m = new M(), at = new V3(), vel = new V3(), q = new BABYLON.Quaternion(), size = new V3();
         let live = 0;
         for (let i = 0; i < this.n; i++) {
-            const speed0 = Math.hypot(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
+            const speed0 = Math.sqrt(v[i * 3] * v[i * 3] + v[i * 3 + 1] * v[i * 3 + 1] + v[i * 3 + 2] * v[i * 3 + 2]);
             const slow = Math.exp(-drag(d[i], speed0) * dt);
             v[i * 3] *= slow; v[i * 3 + 1] = v[i * 3 + 1] * slow - 9.81 * dt; v[i * 3 + 2] *= slow;
             const x = p[i * 3] + v[i * 3] * dt, y = p[i * 3 + 1] + v[i * 3 + 1] * dt, z = p[i * 3 + 2] + v[i * 3 + 2] * dt;
@@ -530,16 +536,22 @@ export class Blood {
     _onto(people, at: BABYLON.Vector3, vel: BABYLON.Vector3, d: number, ml: number) {
         for (const { npc, segs, caps, lo, hi } of people) {
             if (at.x < lo.x || at.y < lo.y || at.z < lo.z || at.x > hi.x || at.y > hi.y || at.z > hi.z) continue;
-            let seg = null, near = 0.015;
+            let seg = null, near = 0.015, ox = 0, oy = 0, oz = 0;
             for (let k = 0; k < caps.length; k += 8) {
                 const px = at.x - caps[k], py = at.y - caps[k + 1], pz = at.z - caps[k + 2];
                 const t = Math.max(0, Math.min(1, (px * caps[k + 3] + py * caps[k + 4] + pz * caps[k + 5]) / caps[k + 7]));
-                const d = Math.hypot(px - caps[k + 3] * t, py - caps[k + 4] * t, pz - caps[k + 5] * t) - caps[k + 6];
-                if (d < near) { near = d; seg = segs[k / 8]; }
+                const qx = px - caps[k + 3] * t, qy = py - caps[k + 4] * t, qz = pz - caps[k + 5] * t;
+                const d = Math.sqrt(qx * qx + qy * qy + qz * qz) - caps[k + 6];
+                if (d < near) { near = d; seg = segs[k / 8]; ox = qx; oy = qy; oz = qz; }
             }
-            if (!seg || --this.looks < 0) continue;
+            // (Going away from the segment's axis, it is not coming at the skin either: not worth finding the skin.)
+            if (!seg || ox * vel.x + oy * vel.y + oz * vel.z > 0 || --this.looks < 0) continue;
             const hit = npc.runs.onto(at, npc.person.byName[seg.bone]);
             if (!hit) continue;
+            // Only a drop coming at the skin or cloth lands on it. One going past (falling beside a leg, or away from the
+            // hem it dripped from) goes on: taken back into the cloth, a drip dripped from it again and again.
+            const facing = V3.TransformNormalToRef(hit.restNormal, npc.restToWorld(hit.owner), TMP[0]).normalize();
+            if (V3.Dot(facing, vel) > -0.25 * vel.length()) continue;
             if (hit.kind === 'cloth') npc.soak?.add(hit.rest, ml);
             else {
                 // A spot as wide as it spread when it hit, as thick as what it holds over that.
@@ -667,7 +679,7 @@ function gauss() {
 function tile(k) {
     const [cols, rows] = TILES;
     const c = k % cols, r = Math.floor(k / cols);
-    return new BABYLON.Vector4(c / cols, 1 - (r + 1) / rows, (c + 1) / cols, 1 - r / rows);
+    return [c / cols, 1 - (r + 1) / rows, (c + 1) / cols, 1 - r / rows];
 }
 
 // Twenty stains painted once, each filling about 40% of its tile: four round and smooth (a drop that fell gently);
@@ -675,10 +687,11 @@ function tile(k) {
 // a tail and droplets thrown on ahead (one that came slantwise, travelling along +X); four runs down a wall, a streak
 // from the top with the bead that is running at its foot; and four prints of a bloody shoe, fainter and fainter.
 function splashSheet(scene) {
-    const S = 256, [cols, rows] = TILES;
-    const texture = new BABYLON.DynamicTexture('splashes', { width: S * cols, height: S * rows }, scene, true);
-    const g = texture.getContext() as CanvasRenderingContext2D;
-    g.clearRect(0, 0, S * cols, S * rows);
+    const S = 256, [cols, rows] = TILES, W = S * cols, H = S * rows;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const g = canvas.getContext('2d', { willReadFrequently: true });
     const blob = (x, y, r) => {
         g.beginPath();
         g.arc(x, y, Math.max(0.6, r), 0, Math.PI * 2);
@@ -703,14 +716,8 @@ function splashSheet(scene) {
         g.rect(ox, oy, S, S);
         g.clip();
         g.fillStyle = 'rgba(245,245,245,1)';
-        // The middle of a stain holds more blood than its rim: a little more opaque there.
-        const body = (x, y, r, sx = 1, sy = 1) => {
-            g.fillStyle = 'rgba(245,245,245,0.82)';
-            outline(x, y, r, 14, 0.12, sx, sy);
-            g.fillStyle = 'rgba(245,245,245,0.6)';
-            outline(x, y, r * 0.7, 9, 0.2, sx, sy);
-            g.fillStyle = 'rgba(245,245,245,1)';
-        };
+        // (How thick it lies, thin at the rim and deep in the middle, is worked out from the shape: sheetTexels.)
+        const body = (x, y, r, sx = 1, sy = 1) => outline(x, y, r, 14, 0.12, sx, sy);
         const kind = Math.floor(k / 4);
         if (kind === 0) body(cx, cy, S * 0.19);
         else if (kind === 1) {
@@ -759,27 +766,99 @@ function splashSheet(scene) {
             g.fillStyle = 'rgba(245,245,245,1)';
             outline(x, foot, w * 0.95, 7, 0.15, 1, 1.25);
         } else {
-            // A right shoe's print, toes up the tile: heel, the narrow waist, the ball and toes leaning out; what the tread's
-            // ridges carried, the fuller the print the more of them (k % 4 = 0 whole, 3 a few flecks).
-            const keeps = [1, 0.7, 0.42, 0.18][k % 4];
-            g.save();
+            // A right shoe's print, toes up the tile (the quad is a shoe long and wide): the forefoot and the heel, which
+            // bear on the floor, joined by a strip of the outside edge (the arch stands off it); the tread's lugs carry
+            // blood and its grooves none. The fewer of the lugs the less the sole still carries (k % 4 = 0 whole, 3 a few
+            // patches), worn away first where the sole presses least.
+            const u = (f) => ox + f * S, v = (f) => oy + f * S;
             g.beginPath();
-            g.ellipse(cx, oy + S * 0.78, S * 0.26, S * 0.13, 0, 0, Math.PI * 2);
-            g.ellipse(cx + S * 0.04, oy + S * 0.33, S * 0.36, S * 0.25, 0.12, 0, Math.PI * 2);
-            g.rect(cx - S * 0.2, oy + S * 0.45, S * 0.36, S * 0.3);
-            g.clip();
-            g.fillStyle = 'rgba(245,245,245,0.9)';
-            for (let y = oy + S * 0.05; y < oy + S * 0.95; y += S * 0.036) {
-                for (let x = ox; x < ox + S; x += S * 0.05) {
-                    if (Math.random() > keeps) continue;
-                    g.fillRect(x, y, S * (0.03 + Math.random() * 0.015), S * (0.016 + Math.random() * 0.008));
+            g.ellipse(u(0.5), v(0.29), S * 0.4, S * 0.23, -0.06, 0, Math.PI * 2);
+            g.ellipse(u(0.52), v(0.8), S * 0.29, S * 0.15, 0, 0, Math.PI * 2);
+            g.fill();
+            g.beginPath();
+            g.moveTo(u(0.7), v(0.42)); g.lineTo(u(0.87), v(0.4)); g.lineTo(u(0.79), v(0.76)); g.lineTo(u(0.68), v(0.76));
+            g.fill();
+            // The tread: blocky lugs of a work boot's sole, set a little unevenly, the grooves between them clean.
+            const keeps = [0.9, 0.55, 0.32, 0.14][k % 4];
+            const img = g.getImageData(ox, oy, S, S), a = img.data;
+            const jitter = (i: number, j: number, e: number) => { const h = Math.sin(i * 127.1 + j * 311.7 + e * 74.7) * 43758.5453; return h - Math.floor(h); };
+            for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+                const i = (y * S + x) * 4 + 3;
+                if (!a[i]) continue;
+                // Distance to the edge of the nearest lug (the second nearest lug centre less the nearest, Worley's way), in
+                // lugs about 10 mm across (the tile is 130 mm wide and 330 mm long).
+                const gx = (x / S) * 13, gy = (y / S) * 33, cx = Math.floor(gx), cy = Math.floor(gy);
+                let d1 = 9, d2 = 9;
+                for (let j = -1; j <= 1; j++) for (let e = -1; e <= 1; e++) {
+                    const px = cx + e + 0.2 + 0.6 * jitter(cx + e, cy + j, 1), py = cy + j + 0.2 + 0.6 * jitter(cx + e, cy + j, 2);
+                    const d = Math.hypot(gx - px, gy - py);
+                    if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
                 }
+                const lug = Math.min(1, Math.max(0, ((d2 - d1) * 10 - 1.4) / 0.8));
+                // How hard the sole presses here (heel and ball most) and how the blood on it happens to lie.
+                const press = Math.max(Math.exp(-(((x / S - 0.52) / 0.2) ** 2 + ((y / S - 0.82) / 0.1) ** 2)), Math.exp(-(((x / S - 0.45) / 0.25) ** 2 + ((y / S - 0.3) / 0.12) ** 2)));
+                const lie = 0.55 * noise2(x / 22 + k * 7, y / 22) + 0.3 * noise2(x / 7, y / 7 + k * 3) + 0.15 * noise2(x / 2.5, y / 2.5);
+                const n = 0.65 * lie + 0.35 * press;
+                const keep = Math.min(1, Math.max(0, (n - (1 - keeps) * 0.85) / 0.06));
+                // A full sole fills the grooves too, here and there.
+                const fill = keeps > 0.8 ? Math.max(lug, Math.min(1, Math.max(0, (lie - 0.55) / 0.1))) : lug;
+                a[i] = Math.round(a[i] * keep * fill * (0.72 + 0.28 * lie));
             }
-            g.restore();
+            g.putImageData(img, ox, oy);
         }
         g.restore();
     }
+    const texture = new BABYLON.RawTexture(sheetTexels(g.getImageData(0, 0, W, H).data, W, H), W, H, BABYLON.Constants.TEXTUREFORMAT_RGBA, scene,
+        true, false, BABYLON.Texture.TRILINEAR_SAMPLINGMODE, BABYLON.Constants.TEXTURETYPE_UNSIGNED_BYTE);
+    texture.name = 'splashes';
     texture.hasAlpha = true;
-    texture.update();
+    texture.anisotropicFilteringLevel = 8;
     return texture;
+}
+
+// The sheet as the card takes it, the canvas's top row last (the tiles' UVs read it the right way up). Alpha is how much
+// of each texel the blood covers; colour is the blood's own, by how thick it lies there: a stain is thickest well inside
+// its edge and thins to nothing at it, so its rim is bright red and its middle near black-red (fluid.ts's absorption,
+// over concrete). Texels with no blood carry the rim's colour, so that where the card averages texels together (its
+// mipmaps, its filtering) it never averages in black.
+function sheetTexels(px: Uint8ClampedArray, W: number, H: number) {
+    const cover = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) cover[i] = px[i * 4 + 3] / 255;
+    const inside = blurred(blurred(cover, W, H, 4), W, H, 4);
+    const out = new Uint8Array(W * H * 4);
+    const srgb = (x: number) => Math.round(Math.pow(Math.min(1, x), 1 / 2.2) * 255);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = y * W + x, o = ((H - 1 - y) * W + x) * 4;
+        // (A shoe's print is blood pressed off a sole: thin all over, not a drop's dome.)
+        const print = Math.floor(y / (H / TILES[1])) * TILES[0] + Math.floor(x / (W / TILES[0])) >= 16;
+        const mm = !cover[i] ? 0.03 : print ? 0.12 + 0.2 * cover[i] : 0.03 + 0.57 * Math.min(1, Math.max(0, (inside[i] - 0.3) / 0.65)) ** 1.5;
+        const r = Math.exp(-6 * mm), gr = Math.exp(-48 * mm), b = Math.exp(-56 * mm);
+        out[o] = srgb(0.2 * r + 0.075 * (1 - r));
+        out[o + 1] = srgb(0.19 * gr + 0.004 * (1 - gr));
+        out[o + 2] = srgb(0.17 * b + 0.0035 * (1 - b));
+        out[o + 3] = px[i * 4 + 3];
+    }
+    return out;
+}
+
+// `a` (W by H) through a box `r` texels either way, along rows then columns.
+function blurred(a: Float32Array, W: number, H: number, r: number) {
+    const tmp = new Float32Array(W * H), out = new Float32Array(W * H), k = 1 / (2 * r + 1);
+    for (let y = 0; y < H; y++) {
+        let sum = 0;
+        for (let x = -r; x <= r; x++) sum += a[y * W + Math.min(W - 1, Math.max(0, x))];
+        for (let x = 0; x < W; x++) {
+            tmp[y * W + x] = sum * k;
+            sum += a[y * W + Math.min(W - 1, x + r + 1)] - a[y * W + Math.max(0, x - r)];
+        }
+    }
+    for (let x = 0; x < W; x++) {
+        let sum = 0;
+        for (let y = -r; y <= r; y++) sum += tmp[Math.min(H - 1, Math.max(0, y)) * W + x];
+        for (let y = 0; y < H; y++) {
+            out[y * W + x] = sum * k;
+            sum += tmp[Math.min(H - 1, y + r + 1) * W + x] - tmp[Math.max(0, y - r) * W + x];
+        }
+    }
+    return out;
 }

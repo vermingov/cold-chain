@@ -178,6 +178,54 @@ export class Marks {
         });
     }
 
+    // The lip of skin cut right through along a loop (`points`, each with its `uv`), `scale` texture units to a metre
+    // there: the layers it was cut through show along it for `wide` metres in from the edge, `deep` (0 to 1 of the
+    // sheet's 4 cm) at the edge itself, and blood lies in them. A torn edge (`ragged`) wanders in and out.
+    rim(points: { uv: number[] }[], scale: number, wide: number, deep: number, ragged = false) {
+        const g = this.depth.getContext() as CanvasRenderingContext2D;
+        g.save();
+        g.globalCompositeOperation = 'lighten';
+        g.lineCap = 'round';
+        g.filter = 'blur(1px)';
+        const px = (m: number) => Math.max(1, m * scale * SIZE);
+        for (let k = 0; k < points.length; k++) {
+            const a = points[k].uv, b = points[(k + 1) % points.length].uv;
+            if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.03) continue;
+            const w = wide * (ragged ? 0.5 + Math.random() : 1);
+            for (const [width, share] of [[1, 0.15], [0.55, 0.5], [0.2, 1]]) {
+                g.lineWidth = px(w * width * 2);
+                g.strokeStyle = `rgb(${Math.round(255 * deep * share)},${Math.round(200 * Math.min(1, share * 1.5))},0)`;
+                g.beginPath(); g.moveTo(a[0] * SIZE, (1 - a[1]) * SIZE); g.lineTo(b[0] * SIZE, (1 - b[1]) * SIZE); g.stroke();
+            }
+        }
+        g.restore();
+        this._dirty.add(this.depth);
+    }
+
+    // The lips of an opening right through the body's wall (viscera.ts), its middle line through skin crossings `line`
+    // (in order), `half` metres either side of it: the skin's cut edge, the fat and the muscle of the wall in a band `lip`
+    // wide round it. (Inside it, no skin is drawn.)
+    lip(line, half: number, lip: number) {
+        this._open(line[0], (g, _x, _y, px) => {
+            g.lineCap = 'round';
+            g.lineJoin = 'round';
+            g.filter = 'blur(1.5px)';
+            for (const [out, share] of [[1, 0.04], [0.5, 0.18], [0.15, 0.5]]) {
+                g.lineWidth = px(2 * (half + lip * out));
+                g.strokeStyle = `rgb(${Math.round(255 * share)},${Math.round(220 * Math.min(1, share * 1.8))},0)`;
+                g.beginPath();
+                let last = null;
+                for (const h of line) {
+                    const x = h.uv[0] * SIZE, y = (1 - h.uv[1]) * SIZE;
+                    if (last && Math.hypot(h.uv[0] - last[0], h.uv[1] - last[1]) < 0.04) g.lineTo(x, y); else g.moveTo(x, y);
+                    last = h.uv;
+                }
+                if (line.length === 1) g.lineTo(line[0].uv[0] * SIZE + 0.01, (1 - line[0].uv[1]) * SIZE);
+                g.stroke();
+            }
+        });
+    }
+
     // A bruise where a blow landed.
     bruise(hit, size) {
         if (!hit) return;
@@ -277,14 +325,17 @@ const GLSL_GORE = `
         float gs = inversesqrt(max(dot(gt, gt), dot(gb, gb)) + 1e-20);
         normalW = normalize(gn + (gt * gs * hx + gb * gs * hy) * 6.0);
         // Depth in millimetres, made uneven so that the lips and the layers in the walls wander as real ones do.
-        float d = gm.r * 40.0 * (0.8 + 0.4 * goreNoise(gu * 2600.0)) + (goreNoise(gu * 900.0) - 0.5) * 1.2;
+        // (The finest noise fades to its middle where a pixel covers more than one of its cells: further off it only
+        // sparkles.)
+        float gfine = clamp(1.6 - max(abs(gdu1.x), abs(gdu2.x)) * 2600.0, 0.0, 1.0);
+        float d = gm.r * 40.0 * (0.8 + 0.4 * mix(0.5, goreNoise(gu * 2600.0), gfine)) + (goreNoise(gu * 900.0) - 0.5) * 1.2;
         vec3 flesh = mix(vec3(0.5, 0.17, 0.15), vec3(0.74, 0.58, 0.36), smoothstep(1.4, 2.6, d));
         flesh = mix(flesh, vec3(0.68, 0.62, 0.56), smoothstep(9.5, 11.0, d));
         flesh = mix(flesh, vec3(0.36, 0.06, 0.05), smoothstep(11.5, 13.0, d));
         flesh = mix(flesh, vec3(0.08, 0.005, 0.004), smoothstep(15.0, 30.0, d));
         surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(flesh), smoothstep(0.1, 0.9, d));
         // Blood fills a fresh wound from the bottom and wells over its lips.
-        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * goreNoise(gu * 1500.0));
+        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, goreNoise(gu * 1500.0), gfine));
         surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
         surfaceAlbedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);
     }

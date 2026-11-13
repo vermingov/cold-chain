@@ -21,6 +21,8 @@ export class Face {
     declare squint: number;
     declare grimace: number;
     declare weep: number;
+    // How far each eye's lids have swollen shut, 0 to 1 (bruise.ts).
+    declare swollen: { L: number; R: number };
     declare voice: any;
     declare now: () => number;
 
@@ -30,6 +32,7 @@ export class Face {
         this.squint = 0;
         this.grimace = 0;
         this.weep = 0;
+        this.swollen = { L: 0, R: 0 };
         this.voice = null;
         this.now = () => 0;
     }
@@ -71,10 +74,12 @@ export class Face {
         if (jawBone) jawBone.setRotationQuaternion(Q.RotationAxis(p.hinges.jaw.axis, this.jaw * RAD), BABYLON.Space.LOCAL);
         for (const side of ['L', 'R']) {
             const upper = by[`orbicularis03.${side}`], lower = by[`orbicularis04.${side}`];
-            // Lids: screwed up in pain; half down out cold; open and still in death (the dead do not shut their eyes).
-            const shut = Math.max(p.blink, this.squint * 0.5, conscious < 0.35 && !v.dead ? 0.7 : 0);
+            // Lids: screwed up in pain; half down out cold; open and still in death (the dead do not shut their eyes);
+            // swollen shut whatever the person would do, the lower lid puffed up to meet the upper.
+            const swollen = this.swollen[side];
+            const shut = Math.max(p.blink, this.squint * 0.5, conscious < 0.35 && !v.dead ? 0.7 : 0, swollen);
             if (upper) upper.bone.setRotationQuaternion(Q.RotationAxis(new V3(1, 0, 0), shut * 0.55), BABYLON.Space.LOCAL);
-            if (lower) lower.bone.setRotationQuaternion(Q.RotationAxis(new V3(1, 0, 0), -(shut * 0.18 + this.squint * 0.08)), BABYLON.Space.LOCAL);
+            if (lower) lower.bone.setRotationQuaternion(Q.RotationAxis(new V3(1, 0, 0), -(shut * 0.18 + this.squint * 0.08 + swollen * 0.12)), BABYLON.Space.LOCAL);
             // The corners of the mouth: back and up off the teeth in a grimace or a scream, down in weeping.
             const corner = by[`risorius03.${side}`];
             if (!corner) continue;

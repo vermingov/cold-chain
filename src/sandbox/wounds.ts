@@ -15,6 +15,8 @@
 // bone in its way (bones.ts's impact).
 
 import * as BABYLON from '@babylonjs/core';
+import { edge, charge } from './dismember.ts';
+import { blown } from './viscera.ts';
 const V3 = BABYLON.Vector3;
 
 export type Missile = {
@@ -27,6 +29,7 @@ export type Missile = {
     reach?: number;         // metres into the body it can go at most (a blade's length)
     blade?: boolean;
     slash?: boolean;        // drawn across rather than driven in: no hole, the caller draws the cut
+    name?: string;          // what it is, for the injury list ('fragment', 'pellet'); a bullet if none
 };
 
 // How big an organ is, roughly, through: to say how much of it a path of a given length wrecks.
@@ -157,6 +160,10 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     const speed = Math.sqrt((2 * m.energy) / Math.max(1e-4, m.mass));
     npc.hit(enter.point, dir.scale(m.mass * speed * Math.sqrt(share)), m.blade ? 0.2 : 1);
     if (!m.slash) npc.spatter(enter, dir, exitAt, m, exited);
+    // A heavy edge may go right through a limb once the swing is through (npc.slash); a charge that is still one mass
+    // (a shotgun's at contact range) may tear one off now.
+    if (m.slash) edge(npc, m.energy, enter.point, dir);
+    else if (m.channel >= 0.015 && !m.blade) charge(npc, m.energy - (exited ? energy : 0), enter.point, dir) || blown(npc, enter, m.energy - (exited ? energy : 0));
     return { stopped: !exited, at: exited ? exitAt : origin.add(dir.scale(Math.min(stopAt, far))), energy: exited ? energy : 0, hit: true, enter };
 }
 
@@ -260,6 +267,7 @@ function regionOf(npc, hit) {
 function woundText(m, region, deep, through) {
     if (m.slash) return deep < 0.012 ? `Cut to the ${region}` : `Deep cut to the ${region}`;
     if (m.blade) return deep < 0.025 ? `Cut to the ${region}` : `Stab wound to the ${region}, ${Math.round(deep * 100)} cm deep`;
+    if (m.name) return through ? `${m.name[0].toUpperCase() + m.name.slice(1)} through the ${region}` : `${m.name[0].toUpperCase() + m.name.slice(1)} in the ${region}, lodged`;
     return through ? `Gunshot through the ${region}` : `Gunshot to the ${region}, bullet lodged`;
 }
 
@@ -291,8 +299,9 @@ export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: nu
     // One blow hurts as much as one blow can, whatever it broke.
     v.pain = Math.min(1, v.pain + energy / 400, pain + 0.45);
     v.injure(`Blunt blow to the ${regionOf(npc, { point })}`, 1 + energy / 100);
-    npc.marks.bruise(skin, 0.03 + energy / 6000);
     if (skin) for (const b of v.bleeds.slice(first)) b.source = { mark: skin };
+    // Redness, bruising, swelling and split skin (bruise.ts), after the line above: its own bleeds come out where it says.
+    npc.bruise.blow(skin, dir, mass, speed, tool);
     npc.hit(point, dir.scale(mass * speed * 0.9), 0);
 }
 

@@ -326,3 +326,92 @@ export function rayToSegment(o, d, a, b) {
 }
 
 export { triangle };
+
+// --- cross-sections ---------------------------------------------------------------
+//
+// Where a plane cuts a closed surface: the outline it leaves on the plane. A limb cut through shows the skin's outline,
+// and inside it each bone's, each read off the same triangles that are drawn (dismember.ts).
+
+export type SectionPoint = { x: number; y: number; a: number; b: number; t: number };
+
+// Where the plane through `c` square to unit `n` cuts triangles `tris` (offsets into `index`, corners in `position`):
+// loops of points in the plane's own directions `e1`, `e2`, metres from `c`. Each point says which two corners' edge it
+// lies on and how far along (`a`, `b`, `t`), to read anything else there off the corners. A surface whose corners are
+// doubled along a seam (the skin's picture) leaves pieces of outline that are joined again where their ends meet.
+export function section(position, index, tris: Iterable<number>, c: BABYLON.Vector3, n: BABYLON.Vector3, e1: BABYLON.Vector3, e2: BABYLON.Vector3) {
+    const side = (v: number) => (position[v * 3] - c.x) * n.x + (position[v * 3 + 1] - c.y) * n.y + (position[v * 3 + 2] - c.z) * n.z;
+    const points = new Map<number, SectionPoint>(), links = new Map<number, number[]>();
+    const link = (k: number, to: number) => (links.get(k) ?? links.set(k, []).get(k)).push(to);
+    for (const i of tris) {
+        const v = [index[i], index[i + 1], index[i + 2]], s = v.map(side), crossed = [];
+        for (let k = 0; k < 3; k++) {
+            const a = v[k], b = v[(k + 1) % 3], sa = s[k], sb = s[(k + 1) % 3];
+            if ((sa > 0) === (sb > 0)) continue;
+            const key = a < b ? a * 4194304 + b : b * 4194304 + a;
+            if (!points.has(key)) {
+                const t = sa / (sa - sb);
+                const x = position[a * 3] + (position[b * 3] - position[a * 3]) * t - c.x;
+                const y = position[a * 3 + 1] + (position[b * 3 + 1] - position[a * 3 + 1]) * t - c.y;
+                const z = position[a * 3 + 2] + (position[b * 3 + 2] - position[a * 3 + 2]) * t - c.z;
+                points.set(key, { x: x * e1.x + y * e1.y + z * e1.z, y: x * e2.x + y * e2.y + z * e2.z, a, b, t });
+            }
+            crossed.push(key);
+        }
+        if (crossed.length === 2) { link(crossed[0], crossed[1]); link(crossed[1], crossed[0]); }
+    }
+    // Walk the links, from loose ends first so that a broken outline is walked whole.
+    const used = new Set<number>(), chains: SectionPoint[][] = [];
+    const walk = (start: number) => {
+        const chain = [];
+        let prev = -1, at = start;
+        while (at !== undefined && !used.has(at)) {
+            used.add(at);
+            chain.push(points.get(at));
+            const next = links.get(at).find((k) => k !== prev && !used.has(k));
+            prev = at;
+            at = next;
+        }
+        if (chain.length > 1) chains.push(chain);
+    };
+    for (const [k, l] of links) if (l.length === 1 && !used.has(k)) walk(k);
+    for (const k of links.keys()) if (!used.has(k)) walk(k);
+    // Pieces whose ends meet (within half a millimetre) are one outline.
+    const near = (p: SectionPoint, q: SectionPoint) => Math.hypot(p.x - q.x, p.y - q.y) < 0.0005;
+    for (let joined = true; joined;) {
+        joined = false;
+        for (let i = 0; i < chains.length && !joined; i++) {
+            const a = chains[i];
+            if (near(a[0], a[a.length - 1])) continue;
+            for (let j = 0; j < chains.length; j++) {
+                if (i === j) continue;
+                const b = chains[j], end = a[a.length - 1];
+                if (near(end, b[0])) a.push(...b);
+                else if (near(end, b[b.length - 1])) a.push(...b.reverse());
+                else if (near(a[0], b[b.length - 1])) a.unshift(...b);
+                else if (near(a[0], b[0])) a.unshift(...b.reverse());
+                else continue;
+                chains.splice(j, 1);
+                joined = true;
+                break;
+            }
+        }
+    }
+    return chains.filter((l) => l.length >= 3);
+}
+
+// The area of a loop of points (positive one way round, negative the other).
+export function loopArea(loop: { x: number; y: number }[]) {
+    let s = 0;
+    for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) s += (loop[j].x - loop[i].x) * (loop[j].y + loop[i].y);
+    return s / 2;
+}
+
+// Whether point (x, y) is inside a loop.
+export function inLoop(loop: { x: number; y: number }[], x: number, y: number) {
+    let inside = false;
+    for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+        const a = loop[i], b = loop[j];
+        if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+}

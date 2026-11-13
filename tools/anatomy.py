@@ -222,7 +222,8 @@ def theirs(source, names):
 
 def ours(header, arrays):
     bones = {b['name']: np.array(b['head']) for b in header['bones']}
-    skin, _ = skin_of(header, arrays)
+    corners, faces = skin_of(header, arrays)
+    skin = corners[np.unique(faces)]        # the skin's own corners, not a hat's or a shoe's
     out = {'notch': (bones['clavicle.L'] + bones['clavicle.R']) / 2}
     out['crown'] = skin[skin[:, 1] > skin[:, 1].max() - 0.004].mean(axis=0)
     for _, k in SIDES:
@@ -257,7 +258,8 @@ def main():
     # men: the skull is then moved to sit inside the person's own head, a scalp's thickness in from the back and top.
     fitted = segment(a['notch'], a['crown'], b['notch'], b['crown'], give=0.1)
     skull = fitted(turned(read_named(source, names, SKULL_FIT)[0]))
-    skin, _ = skin_of(header, arrays)
+    corners, faces = skin_of(header, arrays)
+    skin = corners[np.unique(faces)]        # the skin's own corners: a hat's or a hood's would set the skull by the hat
     scalp = skin[skin[:, 1] > skull[:, 1].min() + 0.06]
     shift = np.array([0.0, min(0.0, scalp[:, 1].max() - SCALP - skull[:, 1].max()), scalp[:, 2].min() + SCALP - skull[:, 2].min()])
     print(f'head: skull moved {shift[1] * 1000:.0f} mm up, {shift[2] * 1000:.0f} mm forward')

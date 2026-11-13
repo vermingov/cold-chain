@@ -13,13 +13,14 @@ import { gradePicture } from '../picture.ts';
 import { Npc } from './npc.ts';
 import { Blood } from './blood.ts';
 import { Weapons } from './weapons.ts';
+import { buildArsenal } from './arsenal.ts';
 import { WORLD } from './ragdoll.ts';
 const V3 = BABYLON.Vector3;
 
 const HALL = { x: 9, z: 9, height: 5.5 };
-const BODIES = ['oldman', 'sexton', 'buyer'];
-const CALLED = { oldman: 'Old man', sexton: 'Groundskeeper', buyer: 'Young man' };
-const MASS = { oldman: 72, sexton: 80, buyer: 86 };
+const BODIES = ['oldman', 'sexton', 'buyer', 'hood'];
+const CALLED = { oldman: 'Old man', sexton: 'Groundskeeper', buyer: 'Young man', hood: 'Man in a hood' };
+const MASS = { oldman: 72, sexton: 80, buyer: 86, hood: 82 };
 
 export async function openSandbox(engine, canvas, hud) {
     const scene = new BABYLON.Scene(engine);
@@ -67,6 +68,7 @@ export async function openSandbox(engine, canvas, hud) {
     const weapons = new Weapons(world);
     world.weapons = weapons;
     await weapons.load();
+    weapons.arsenal = await buildArsenal(world, weapons);
 
     let made = 0, lastHurt: Npc | null = null;
     const spawn = async (body, at: BABYLON.Vector3, yaw) => {
@@ -81,7 +83,7 @@ export async function openSandbox(engine, canvas, hud) {
         world.npcs.push(npc);
         return npc;
     };
-    const lineUp = () => Promise.all(BODIES.map((b, i) => spawn(b, new V3((i - 1) * 1.6, 0, 2.2), Math.PI)));
+    const lineUp = () => Promise.all(BODIES.map((b, i) => spawn(b, new V3((i - (BODIES.length - 1) / 2) * 1.5, 0, 2.2), Math.PI)));
     let seeing = false;
     await lineUp();
 

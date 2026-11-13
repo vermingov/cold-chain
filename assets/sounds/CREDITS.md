@@ -1,41 +1,60 @@
-# The recordings
+# The sound effects
 
-Every sound in the game is one of these, from Freesound: twenty seconds of it, one channel,
-set to a level, and otherwise as its maker recorded it (tools/audition.py, tools/sounds.py).
+Generated with ElevenLabs Sound Effects v2 (eleven_text_to_sound_v2) from the prompt beside each,
+one channel, set to a level (tools/sfx.py). Voices are in assets/cries (Fish Audio).
 
-- `skin-1.ogg`: "cutting slicing flesh with knife" by kyles, CC0. https://freesound.org/people/kyles/sounds/637470/
-- `bone-1.ogg`: "fish scales scraper longer-Converted" by martian, CC0. https://freesound.org/people/martian/sounds/182107/
-- `give-1.ogg`: "Chicken Bone Break" by qubodup, CC0. https://freesound.org/people/qubodup/sounds/211606/
-- `give-2.ogg`: "Ripping Apart Carcass" by ProductionNow, CC0. https://freesound.org/people/ProductionNow/sounds/234236/
-- `wet-1.ogg`: "Chicken Meat Slime" by qubodup, CC0. https://freesound.org/people/qubodup/sounds/211605/
-- `glove-1.ogg`: "Putting on Latex Medical Gloves" by PDaefaul, CC0. https://freesound.org/people/PDaefaul/sounds/631970/
-- `lay-1.ogg`: "OWI Meat slap" by matthewHoldenSound, CC0. https://freesound.org/people/matthewHoldenSound/sounds/542506/
-- `ring-1.ogg`: "old telephone bell (british version)" by FreqMan, CC BY 4.0. https://freesound.org/people/FreqMan/sounds/25480/
-- `beep-1.ogg`: "Answering Machine Beep 2" by Beetlemuse, CC0. https://freesound.org/people/Beetlemuse/sounds/671235/
-- `handset-1.ogg`: "Phone, old wired handset, pick up hang up" by TRP, CC0. https://freesound.org/people/TRP/sounds/616840/
-- `door-1.ogg`: "Door Closing and Opening" by shaunhillyard, CC0. https://freesound.org/people/shaunhillyard/sounds/830497/
-- `step-carpet-1.ogg`: "SFX_Indoor_CarpetSteps" by RIFORKA, CC0. https://freesound.org/people/RIFORKA/sounds/801034/
-- `step-gravel-1.ogg`: "walking home gravel summer 01 44 no cars no gate" by soozenextthing, CC0. https://freesound.org/people/soozenextthing/sounds/645451/
-- `step-grass-1.ogg`: "Footsteps_Mountain_Boots_Grass_Mono" by Nox_Sound, CC0. https://freesound.org/people/Nox_Sound/sounds/556042/
-- `step-mud-1.ogg`: "Walking on Squelchy Mud" by biffa, CC0. https://freesound.org/people/biffa/sounds/657869/
-- `step-tarmac-1.ogg`: "Concrete Footsteps" by SoftDistortionFX, CC0. https://freesound.org/people/SoftDistortionFX/sounds/465299/
-- `room-1.ogg`: "room tone quiet kitchen night with distant city traffic" by kyles, CC0. https://freesound.org/people/kyles/sounds/635732/
-- `night-1.ogg`: "Winter residential area, calm late evening, slight wind" by newlocknew, CC BY 4.0. https://freesound.org/people/newlocknew/sounds/784410/
-- `dig-1.ogg`: "Digging Shovel 4416" by crattray1997, CC BY 4.0. https://freesound.org/people/crattray1997/sounds/574721/
-- `lid-1.ogg`: "Hydraulic log splitter" by richwise, CC0. https://freesound.org/people/richwise/sounds/663946/
-- `bier-1.ogg`: "cart noisy push roll by hard floor squeaky rattly wheel" by kyles, CC0. https://freesound.org/people/kyles/sounds/635488/
-- `van-1.ogg`: "engine idle van diesel truck2 winter nearby" by kyles, CC0. https://freesound.org/people/kyles/sounds/453990/
-- `shot-pistol-1.ogg`: "Small pistol gunshot indoors" by acidsnowflake, CC0. https://freesound.org/people/acidsnowflake/sounds/402789/
-- `shot-rifle-1.ogg`: "Shooting_inside" by ikbenraar, CC0. https://freesound.org/people/ikbenraar/sounds/592264/
-- `shot-shotgun-1.ogg`: "Remington 870" by areniporgen, CC0. https://freesound.org/people/areniporgen/sounds/702672/
-- `bullet-flesh-1.ogg`: "Gore Impact - "LOT OF HEART"" by magnuswaker, CC0. https://freesound.org/people/magnuswaker/sounds/641046/
-- `casing-1.ogg`: "Brass bullet shell casing drop onto concrete, multiple takes" by GrayJoy, CC0. https://freesound.org/people/GrayJoy/sounds/210102/
-- `rack-1.ogg`: "Taurus G2c Slide Racking" by NoonerBear, CC0. https://freesound.org/people/NoonerBear/sounds/589849/
-- `swing-1.ogg`: "Stick - Whoosh 4 (typical stick swing)" by Sadiquecat, CC0. https://freesound.org/people/Sadiquecat/sounds/802462/
-- `stab-1.ogg`: "Sword stab 4" by ihitokage, CC0. https://freesound.org/people/ihitokage/sounds/395365/
-- `blunt-1.ogg`: "Someone is pounding a piece of meat" by HülyeHangok, CC0. https://freesound.org/people/HülyeHangok/sounds/871872/
-- `crack-1.ogg`: "Celery Stick#04" by Bandslam33, CC0. https://freesound.org/people/Bandslam33/sounds/545601/
-- `body-fall-1.ogg`: "body-fall-5" by CosmicEmbers, CC BY 3.0. https://freesound.org/people/CosmicEmbers/sounds/160742/
-- `drip-1.ogg`: "Water Dripping on Concrete" by Elements-Library, CC0. https://freesound.org/people/Elements-Library/sounds/683772/
-- `spurt-1.ogg`: "Gushing Flesh" by magnuswaker, CC0. https://freesound.org/people/magnuswaker/sounds/563315/
-- `room-sandbox-1.ogg`: "Roomtone Warehouse Fans Vents Large" by leonelmail, CC0. https://freesound.org/people/leonelmail/sounds/427861/
+- `shot-pistol-1.ogg`: "Single 9mm pistol gunshot fired indoors in a concrete room, sharp crack, short room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation fTY7yHmOLqybbPo5oIUJ.
+- `shot-pistol-2.ogg`: "Single 9mm pistol gunshot fired indoors in a concrete room, sharp crack, short room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation NTdW1ImHd72binHr0QFy.
+- `shot-rifle-1.ogg`: "Single bolt-action .308 rifle gunshot indoors, loud deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Kd0FtcCVyePbvTXdRBe2.
+- `shot-rifle-2.ogg`: "Single bolt-action .308 rifle gunshot indoors, loud deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Uevg0ssZg7smyh1FnCsh.
+- `shot-shotgun-1.ogg`: "Single 12 gauge shotgun blast indoors, huge deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jeyE8tKgFj7D4iqxddgL.
+- `shot-shotgun-2.ogg`: "Single 12 gauge shotgun blast indoors, huge deep boom, concrete room reverb". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 3d29AQj0if3KQV3dJQyR.
+- `shot-ak-1.ogg`: "Single AK-47 rifle shot indoors, loud sharp crack with heavy body, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation droZgHHx6wc8hnq9PeTE.
+- `shot-ak-2.ogg`: "Single AK-47 rifle shot indoors, loud sharp crack with heavy body, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Qsgu7IUANORuhf3xCTHV.
+- `shot-m4-1.ogg`: "Single M4 carbine 5.56 rifle shot indoors, sharp high crack, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 2Wc97qUDq2fFsUdTwUhq.
+- `shot-m4-2.ogg`: "Single M4 carbine 5.56 rifle shot indoors, sharp high crack, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation y4ohsv7j9fnPF7s2TNsb.
+- `bullet-flesh-1.ogg`: "Bullet hitting a human body, short wet meaty thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Q4yY5fB6jPgXNJiUhnwa.
+- `bullet-flesh-2.ogg`: "Bullet hitting a human body, short wet meaty thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation lOpUxkT3g10tj19lDdM0.
+- `casing-1.ogg`: "Single brass bullet casing dropping and bouncing on a concrete floor, small metallic tinkles". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FtFClQFpeSFXKydcBZmM.
+- `casing-2.ogg`: "Single brass bullet casing dropping and bouncing on a concrete floor, small metallic tinkles". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 90kPyBPYj7IcETBETiGO.
+- `rack-1.ogg`: "Pistol slide racked back and released, crisp metallic clack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation zPW1QhUq4Xslr4YzUk9O.
+- `swing-1.ogg`: "Fast whoosh of a baseball bat swung hard through the air". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation CNGLpOxcP43deQlXaAhY.
+- `swing-2.ogg`: "Fast whoosh of a baseball bat swung hard through the air". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation HUijrtvLpDj5z56i7TH9.
+- `stab-1.ogg`: "Knife stabbed into flesh, short wet squelch". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation tZezBxWza6pdXBlvBoht.
+- `stab-2.ogg`: "Knife stabbed into flesh, short wet squelch". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation RXYULqOejU2cokksYNfO.
+- `blunt-1.ogg`: "Baseball bat hitting a human body, heavy dull thump". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation OI2sDJFmbIaOsZZTNKqN.
+- `blunt-2.ogg`: "Baseball bat hitting a human body, heavy dull thump". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation IcN3SIh1QCuoiKZscrbt.
+- `crack-1.ogg`: "Human bone snapping, sharp dry crack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation BSKeWtKg0a7fxys3zagu.
+- `crack-2.ogg`: "Human bone snapping, sharp dry crack". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FKoQqe7vGv9ukLDGBYIc.
+- `body-fall-1.ogg`: "Human body collapsing limp onto a concrete floor, heavy thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation al7sGkrU2CPb908uDE9K.
+- `body-fall-2.ogg`: "Human body collapsing limp onto a concrete floor, heavy thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation DfhRBdmZ8deW6twwxnlz.
+- `drip-1.ogg`: "Thick liquid dripping onto a concrete floor, slow wet drips". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 0gD9E8a6knKH49NogxQV.
+- `spurt-1.ogg`: "Blood spurting from a wound in rhythmic pulses, wet squirting". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jZVOPUtQ1MHYfUdEZY6H.
+- `room-sandbox-1.ogg`: "Empty concrete warehouse room tone, low steady ventilation hum (5 s loop)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation iDJ3iLRnHho95y7QgCai.
+- `explosion-1.ogg`: "Hand grenade explosion indoors, sharp powerful blast, concrete room, debris rattling". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 4aJhhNqTuCFztSQFDMfs.
+- `explosion-2.ogg`: "Hand grenade explosion indoors, sharp powerful blast, concrete room, debris rattling". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Mr3K5tlH7OolZfAct35d.
+- `pin-1.ogg`: "Grenade pin pulled out and safety lever flicking off, small metallic clicks". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 1sqccsVQ2Bu9rxbyghBZ.
+- `bounce-metal-1.ogg`: "Small heavy metal grenade bouncing and rolling on a concrete floor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation bD5bhuXKWxBFvXxFy0Vn.
+- `skin-1.ogg`: "Sharp knife slicing through skin and flesh, soft wet cut, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation BbsAJmrwf30XmUKJrmVG.
+- `skin-2.ogg`: "Sharp knife slicing through skin and flesh, soft wet cut, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation HstMbZbtpgvQrHM6Sdiz.
+- `bone-1.ogg`: "Knife blade scraping and grinding against bone, gritty scrape, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 3tkth1P3C4H870S9iCUa.
+- `give-1.ogg`: "Raw flesh tearing apart, wet ripping, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Gu5fCKH9MMRvJJ3lAu6v.
+- `wet-1.ogg`: "Wet slippery organs being squeezed and moved by hand, squelching, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 73diVDVcocZfxtjwySNz.
+- `glove-1.ogg`: "Latex medical glove pulled on and snapped at the wrist, close-mic, quiet room". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FEuehljlBv9dejLQ98Qs.
+- `lay-1.ogg`: "Wet heavy slab of raw meat dropped onto a stainless steel table, loud fleshy slap with a little metal ring". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation YXl8CXjRn98ENdRNLcxQ.
+- `step-tarmac-1.ogg`: "Footsteps of hard leather shoes walking on a concrete floor, steady steps, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 2FIbNasdNJnWXQrL5WvX.
+- `step-tarmac-2.ogg`: "Footsteps of hard leather shoes walking on a concrete floor, steady steps, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation UBV19JmAzTT09UYLhUgl.
+- `step-carpet-1.ogg`: "Soft footsteps walking on carpet, steady pace, indoor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation qVzE8NsJxKv7DnkMKTwJ.
+- `step-gravel-1.ogg`: "Footsteps walking on loose gravel, boots crunching, steady pace, outdoors". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation hXOEwmbtMFq0C4U7aQww.
+- `step-grass-1.ogg`: "Footsteps walking through damp grass, boots, steady pace, outdoors at night". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 9Hns8pr2z2postr1B4PP.
+- `step-mud-1.ogg`: "Boots walking through thick wet mud, squelching steps, steady pace". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation FCzY9a4BUz0B8eGgNmLC.
+- `ring-1.ogg`: "Old landline telephone ringing twice in a quiet room". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation xW7qZICSReufHn3tlVva.
+- `beep-1.ogg`: "Short electronic pager beep, three quick tones". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation MWLuT7SXKH1RtHcOyWiN.
+- `handset-1.ogg`: "Plastic telephone handset picked up from its cradle, clunk and click". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 4G222gd2wSDQcIcSGKj0.
+- `door-1.ogg`: "Heavy metal door opening and closing with a latch clunk, echoing corridor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation LiqW6VWdju26JiEMikeF.
+- `room-1.ogg`: "Room tone of a cold tiled basement morgue, faint refrigeration hum, ventilation, no voices (5 s loop)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation QNb3pBrfyHrtn3f4V7uW.
+- `night-1.ogg`: "Quiet rural night ambience, light wind, distant traffic, a few crickets, no music (5 s loop)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation d9dbZ3B8JcjacRLz1enZ.
+- `dig-1.ogg`: "Shovel digging into wet soil and tossing dirt aside, one scoop". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jUYC6PqtRoyhQF84uhjh.
+- `lid-1.ogg`: "Heavy wooden coffin lid closing with a dull thud". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation CuOVD2sRnfQhdVHg4RwA.
+- `bier-1.ogg`: "Metal hospital gurney with squeaky wheels rolled across a tiled floor". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation XAXJB64hyo57Sx33LUfT.
+- `van-1.ogg`: "Diesel van engine idling outside, then the sliding side door opening". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation OKp9PAaVOtZsXdkZFTrD.
