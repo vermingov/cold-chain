@@ -86,7 +86,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         if (t >= limit) { stopAt = limit; break; }
         const length = Math.min(s.leave, limit) - Math.max(s.enter, t);
         const kind = s.part.kind;
-        if (kind === 'bone' || kind === 'skull') {
+        if (kind === 'bone' || kind === 'skull' || kind === 'cartilage') {
             const at = energy, point = origin.add(dir.scale(Math.max(t, s.enter)));
             // A blade is stopped by bone, and does not break it: a heavy one bites into it.
             if (m.blade) {
@@ -116,7 +116,8 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         else if (stopAt === Infinity) stopAt = Math.min(out, limit);
     }
 
-    // The vessels the channel tore, up to where it stopped.
+    // The teeth in its way, and the vessels the channel tore, up to where it stopped.
+    if (!m.blade) npc.bones.teeth.shot(origin, dir, Math.min(stopAt, far));
     for (const hit of vessels) if (hit.t < stopAt) vessel(npc, hit, m);
     // The flesh itself: skin, fat and muscle bleed a little from any wound.
     const deep = Math.min(stopAt, inside[0][1]) - enter.t;
@@ -238,7 +239,7 @@ function shards(npc, at: BABYLON.Vector3, dir: BABYLON.Vector3, count: number, e
         const reach = Math.min(0.12, piece.energy / piece.soft / 100);
         if (reach < 0.01) continue;
         const { spans, vessels } = npc.insides.trace(at, d, reach, piece.channel);
-        for (const s of spans) if (s.part.kind !== 'bone' && s.part.kind !== 'skull') organ(npc, s.part, Math.min(s.leave, reach) - s.enter, piece, 1);
+        for (const s of spans) if (!/bone|skull|cartilage/.test(s.part.kind)) organ(npc, s.part, Math.min(s.leave, reach) - s.enter, piece, 1);
         for (const hit of vessels) vessel(npc, hit, piece);
     }
     if (count > 2) npc.vitals.injure('Bone shattered into the flesh around it', 4);
@@ -262,10 +263,11 @@ function woundText(m, region, deep, through) {
 
 // --- blows -------------------------------------------------------------------------
 
-// Something heavy swung into person `npc` at `point`, moving along `dir` at `speed` m/s with `mass` kg behind it;
-// `stiffness` (N/m) how hard it is, if softer than wood or steel (an empty cardboard box gives far more than the flesh).
-export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: number, speed: number, stiffness?: number) {
-    const v = npc.vitals;
+// Something swung or thrown into person `npc` at `point`, moving along `dir` at `speed` m/s with `mass` kg behind it;
+// `tool` what it is ('fist', 'bat', 'flat', 'edge': bones.ts's TOOLS) or how stiff (N/m), if it is not plainly a bat or
+// a heavy thing (an empty cardboard box gives far more than the flesh, a fist and arm about 9 kN/m).
+export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: number, speed: number, tool?: number | string) {
+    const v = npc.vitals, pain = v.pain;
     const first = v.bleeds.length;
     const { seg } = npc.ragdoll.nearest(point);
     const name = seg?.name ?? 'chest';
@@ -273,7 +275,7 @@ export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: nu
     const energy = 0.5 * mass * speed * speed;
     const base = name.replace(/2?[LR]$/, '');
     // The bone first in its way takes the force the flesh over it lets through (bones.ts); the soft parts take the energy.
-    if (seg) npc.bones.impact(seg, point, dir, mass, speed, stiffness);
+    if (seg) npc.bones.impact(seg, point, dir, mass, speed, tool);
     if (base === 'head') {
         v.concussion = Math.min(1, v.concussion + energy / 160);
         if (energy > 90) v.bleed({ name: 'scalp', rate: 0.0008, clots: 0.01 });
@@ -284,7 +286,8 @@ export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: nu
     } else if (base === 'chest' && energy > 120) {
         v.lungs.leakR = v.lungs.leakR || Math.random() < 0.3;
     }
-    v.pain = Math.min(1, v.pain + energy / 300);
+    // One blow hurts as much as one blow can, whatever it broke.
+    v.pain = Math.min(1, v.pain + energy / 400, pain + 0.45);
     v.injure(`Blunt blow to the ${regionOf(npc, { point })}`, 1 + energy / 100);
     npc.marks.bruise(skin, 0.03 + energy / 6000);
     if (skin) for (const b of v.bleeds.slice(first)) b.source = { mark: skin };

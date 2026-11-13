@@ -42,7 +42,7 @@ export function loadAnatomy(url: string) {
 
 // What each kind of thing looks like when it is seen (the x-ray), and when it is hurt.
 const LOOKS = {
-    bone: [0.86, 0.82, 0.7], skull: [0.86, 0.82, 0.7], brain: [0.78, 0.6, 0.6], brainstem: [0.78, 0.6, 0.6], heart: [0.55, 0.08, 0.08],
+    bone: [0.86, 0.82, 0.7], skull: [0.86, 0.82, 0.7], cartilage: [0.78, 0.8, 0.82], brain: [0.78, 0.6, 0.6], brainstem: [0.78, 0.6, 0.6], heart: [0.55, 0.08, 0.08],
     lung: [0.85, 0.5, 0.52], liver: [0.4, 0.09, 0.07], spleen: [0.38, 0.1, 0.18], kidney: [0.5, 0.15, 0.12], stomach: [0.8, 0.52, 0.48],
     bowel: [0.85, 0.6, 0.55], colon: [0.75, 0.55, 0.45], bladder: [0.85, 0.75, 0.55], pancreas: [0.85, 0.7, 0.5], gallbladder: [0.3, 0.45, 0.2],
     adrenal: [0.85, 0.6, 0.2], muscle: [0.55, 0.15, 0.12], airway: [0.85, 0.75, 0.7], oesophagus: [0.8, 0.5, 0.45],

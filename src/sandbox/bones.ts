@@ -34,15 +34,21 @@
 import * as BABYLON from '@babylonjs/core';
 import { midOf } from './ragdoll.ts';
 import { region, crack, bone, jag, type Cut, type Tri } from './shards.ts';
+import { Teeth } from './teeth.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const AXIS = BABYLON.PhysicsConstraintAxis, LIMIT = BABYLON.PhysicsConstraintAxisLimitMode;
 const ANGULAR = [AXIS.ANGULAR_X, AXIS.ANGULAR_Y, AXIS.ANGULAR_Z];
 
-// Each bone by its name (side left off): its strength in a young adult man, and what lies over it.
-//   bend    N across it before it breaks (three-point bending, at speed)
+// Each bone by its name (side left off): its strength in a young adult man, and what lies over it. The figures and
+// their sources are in dev/research/blunt-trauma.md; laboratory specimens are mostly elderly, so these are the
+// middles of what is reported, and every body varies round them (`grain`).
+//   moment  N m of bending a long bone's shaft takes (three-point bending at speed: Kerrigan 2004, Nyquist 1985,
+//           Kirkish 1996, Pintar 1998; the ulna goes before the radius)
+//   bend    N across a flat bone, measured with a 6.5 cm2 impactor (skull: Yoganandan 1995, Nahum 1968; face: Nahum
+//           1975; clavicle 1.48 kN axial)
 //   twist   N m about its length before it breaks in a spiral
-//   ends    N on its spongy ends (the femur's neck in a fall on the hip, the radius's in a fall on the hand)
-//   axial   N along it (vertebrae, the heel)
+//   ends    N on its spongy ends (the femur's neck in a fall on the hip: Courtney 1995, 7.2 kN young, 3.4 kN old)
+//   axial   N along it (vertebrae: Brinckmann 1989; the neck 2.2 kN in men; the tibia 16.6 kN at speed, Crandall)
 //   pad     N/m: how stiff the flesh over it is (the spring in F = v sqrt(k m))
 //   wide    m: how thick it is where a bullet crosses it (a shaft across, a flat bone through)
 //   blood   litres a closed fracture of it bleeds into the tissues (ATLS: femur 1-1.5, tibia 0.75, humerus 0.5-0.75,
@@ -50,35 +56,63 @@ const ANGULAR = [AXIS.ANGULAR_X, AXIS.ANGULAR_Y, AXIS.ANGULAR_Z];
 //   open    degrees the shaft must bend at the break before its end comes through the skin: the shin's front has
 //           nothing over it but skin, the thigh has the whole quadriceps (none for the fibula, deep in the calf's muscle)
 //   long    [its first bone, the bone at its far end, the ragdoll segment it is in]
-// Sources: femur and tibia bending, Kerrigan et al. 2004 and Nyquist et al. 1985; torsion, Martens et al. 1980 (femur)
-// and ski-binding release data (tibia, ISO 11088); femoral neck in a sideways fall, Courtney et al. 1995 (7.2 kN young,
-// 3.4 kN old); skull, Yoganandan et al. 1995 (4.5-14 kN); mandible, Nahum 1975; lumbar and thoracic bodies, Brinckmann
-// et al. 1989; the trochanter's 71 kN/m, Robinovitch et al. 1991. The arm's figures, the clavicle's and the pelvis's
-// are from cadaver series without one clean number and are rounded to the middle of what is reported.
-type Bone = { bend: number; twist?: number; ends?: number; axial?: number; pad: number; wide?: number; blood: number; open?: number; long?: [string, string, string]; pain: number };
+type Bone = { bend: number; moment?: number; twist?: number; ends?: number; axial?: number; pad: number; wide?: number; blood: number; open?: number;
+    long?: [string, string, string]; pain: number };
 const BONES: Record<string, Bone> = {
-    femur: { bend: 4500, twist: 180, ends: 7000, pad: 40e3, wide: 0.028, blood: 1.25, open: 55, long: ['upperleg01', 'lowerleg01', 'thigh'], pain: 0.6 },
-    tibia: { bend: 3500, twist: 95, ends: 5000, axial: 9000, pad: 300e3, wide: 0.024, blood: 0.75, open: 25, long: ['lowerleg01', 'foot', 'shin'], pain: 0.55 },
-    fibula: { bend: 700, twist: 25, ends: 2000, pad: 100e3, wide: 0.012, blood: 0.1, long: ['lowerleg01', 'foot', 'shin'], pain: 0.3 },
-    humerus: { bend: 2500, twist: 70, ends: 3000, pad: 80e3, wide: 0.022, blood: 0.6, open: 45, long: ['upperarm01', 'lowerarm01', 'upperarm'], pain: 0.5 },
-    radius: { bend: 1300, twist: 20, ends: 3800, pad: 150e3, wide: 0.015, blood: 0.25, open: 30, long: ['lowerarm01', 'wrist', 'forearm'], pain: 0.45 },
-    ulna: { bend: 1500, twist: 20, ends: 2500, pad: 300e3, wide: 0.014, blood: 0.25, open: 30, long: ['lowerarm01', 'wrist', 'forearm'], pain: 0.45 },
-    clavicle: { bend: 1100, axial: 2500, wide: 0.012, pad: 300e3, blood: 0.1, pain: 0.45 },
+    femur: { bend: 4300, moment: 447, twist: 180, ends: 7000, pad: 40e3, wide: 0.028, blood: 1.25, open: 55, long: ['upperleg01', 'lowerleg01', 'thigh'], pain: 0.6 },
+    tibia: { bend: 3500, moment: 312, twist: 95, ends: 5000, axial: 16600, pad: 300e3, wide: 0.024, blood: 0.75, open: 25, long: ['lowerleg01', 'foot', 'shin'], pain: 0.55 },
+    fibula: { bend: 700, moment: 60, twist: 25, ends: 2000, pad: 100e3, wide: 0.012, blood: 0.1, long: ['lowerleg01', 'foot', 'shin'], pain: 0.3 },
+    humerus: { bend: 1330, moment: 230, twist: 70, ends: 3000, pad: 80e3, wide: 0.022, blood: 0.6, open: 45, long: ['upperarm01', 'lowerarm01', 'upperarm'], pain: 0.5 },
+    radius: { bend: 520, moment: 100, twist: 20, ends: 3800, pad: 150e3, wide: 0.015, blood: 0.25, open: 30, long: ['lowerarm01', 'wrist', 'forearm'], pain: 0.45 },
+    ulna: { bend: 630, moment: 94, twist: 20, ends: 2500, pad: 300e3, wide: 0.014, blood: 0.25, open: 30, long: ['lowerarm01', 'wrist', 'forearm'], pain: 0.45 },
+    clavicle: { bend: 1480, axial: 1480, wide: 0.012, pad: 300e3, blood: 0.1, pain: 0.45 },
     scapula: { bend: 3500, wide: 0.006, pad: 40e3, blood: 0.3, pain: 0.4 },
-    ribs: { bend: 2500, wide: 0.01, pad: 100e3, blood: 0.12, pain: 0.45 },
+    rib: { bend: 2500, wide: 0.01, pad: 100e3, blood: 0.12, pain: 0.15 },
     sternum: { bend: 4000, wide: 0.012, pad: 300e3, blood: 0.15, pain: 0.45 },
-    skull: { bend: 6000, wide: 0.008, pad: 500e3, blood: 0, pain: 0.4 },
-    jaw: { bend: 2500, wide: 0.012, pad: 400e3, blood: 0.05, pain: 0.5 },
-    'neck spine': { bend: 3000, axial: 3200, wide: 0.02, pad: 100e3, blood: 0.1, pain: 0.5 },
-    'upper thoracic spine': { bend: 4000, axial: 4500, wide: 0.03, pad: 150e3, blood: 0.2, pain: 0.5 },
-    'lower thoracic spine': { bend: 4000, axial: 5000, wide: 0.03, pad: 150e3, blood: 0.2, pain: 0.5 },
-    'lumbar spine': { bend: 5000, axial: 6000, wide: 0.035, pad: 150e3, blood: 0.3, pain: 0.55 },
+    skull: { bend: 6100, wide: 0.008, pad: 500e3, blood: 0, pain: 0.4 },
+    maxilla: { bend: 1300, wide: 0.006, pad: 300e3, blood: 0.1, pain: 0.5 },
+    zygoma: { bend: 1600, wide: 0.008, pad: 300e3, blood: 0.05, pain: 0.45 },
+    nasal: { bend: 450, wide: 0.004, pad: 300e3, blood: 0, pain: 0.4 },
+    jaw: { bend: 1800, wide: 0.012, pad: 400e3, blood: 0.05, pain: 0.5 },
+    // The hyoid and the voice box are estimates: they break from blows and grips to the front of the neck that leave
+    // the neck's bones whole, and more easily in the old, whose cartilage has turned to brittle bone.
+    hyoid: { bend: 400, wide: 0.004, pad: 100e3, blood: 0.02, pain: 0.45 },
+    larynx: { bend: 700, wide: 0.004, pad: 100e3, blood: 0.03, pain: 0.5 },
+    'cervical vertebra': { bend: 3000, axial: 2240, wide: 0.02, pad: 100e3, blood: 0.05, pain: 0.5 },
+    'thoracic vertebra': { bend: 4000, axial: 4500, wide: 0.03, pad: 150e3, blood: 0.1, pain: 0.5 },
+    'lumbar vertebra': { bend: 5000, axial: 6000, wide: 0.035, pad: 150e3, blood: 0.15, pain: 0.55 },
     sacrum: { bend: 5000, axial: 5000, wide: 0.03, pad: 70e3, blood: 0.5, pain: 0.55 },
     'hip bone': { bend: 8000, wide: 0.015, pad: 70e3, blood: 1.5, pain: 0.65 },
-    kneecap: { bend: 8000, wide: 0.02, pad: 150e3, blood: 0.05, pain: 0.45 },
-    'hand bones': { bend: 800, wide: 0.01, pad: 200e3, blood: 0.03, pain: 0.35 },
-    'foot bones': { bend: 1500, axial: 5000, wide: 0.015, pad: 200e3, blood: 0.1, pain: 0.4 },
+    kneecap: { bend: 6000, wide: 0.02, pad: 150e3, blood: 0.05, pain: 0.45 },
+    // The small bones of the hand and foot (estimates against the forces of a fall on the hand, a punch's knuckles and
+    // a stamped foot): the scaphoid is what a young man breaks falling on his hand, a metacarpal what a punch breaks.
+    scaphoid: { bend: 2400, wide: 0.012, pad: 150e3, blood: 0.02, pain: 0.35 },
+    carpal: { bend: 3000, wide: 0.012, pad: 150e3, blood: 0.02, pain: 0.35 },
+    metacarpal: { bend: 900, wide: 0.009, pad: 200e3, blood: 0.02, pain: 0.35 },
+    finger: { bend: 350, wide: 0.007, pad: 200e3, blood: 0.01, pain: 0.3 },
+    calcaneus: { bend: 4000, axial: 7000, wide: 0.03, pad: 200e3, blood: 0.15, pain: 0.45 },
+    tarsal: { bend: 3000, axial: 7000, wide: 0.02, pad: 200e3, blood: 0.05, pain: 0.4 },
+    metatarsal: { bend: 1000, wide: 0.01, pad: 200e3, blood: 0.03, pain: 0.35 },
+    toe: { bend: 350, wide: 0.008, pad: 200e3, blood: 0.01, pain: 0.3 },
 };
+// The skull by where it is struck, N with a 6.5 cm2 impactor: the temple is thinnest (Nahum: 3.9 kN in men), the
+// forehead 2.7-9.9 kN, the side 4.2-9.6 (Stalnaker); the face far less: the nose lowest of all (never measured, it
+// always broke first), the maxilla 0.63-1.98 kN, the zygoma 0.61-3.47, the mandible 0.82-3.4 from the side and
+// 1.9-4.1 at the chin (Nahum 1975).
+// The eye socket's floor is paper-thin and goes when something broad drives the eye back (estimate: below the cheek);
+// the jaw takes more at the chin than from the side.
+const PLACES = { temple: 3900, forehead: 6300, side: 6100, back: 8000, base: 6100, eye: 1200, chin: 2800 };
+// Which bone of the skull is which place on it.
+const VAULT: [RegExp, string][] = [[/^frontal/, 'forehead'], [/temporal/, 'temple'], [/parietal/, 'side'], [/^occipital/, 'back'], [/sphenoid|ethmoid/, 'base']];
+// What hits: how stiff it is (N/m) and the patch it lands on (cm2). A fist and the arm behind it give (an untrained
+// punch is 0.5-0.85 kN, a boxer's 3.4 kN at 9 m/s: Walilko 2005); a bat is a 6.5 cm cylinder; halving the patch about
+// doubles the chance of a fracture (Yoganandan), so thresholds measured with 6.5 cm2 scale with the patch.
+const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 } };
+// Ribs break by how far the chest is pushed in, not how fast: past a fifth of its depth they break, past two fifths a
+// panel of them breaks in two places (Kroell); the chest is about 23 cm deep and about 40 N/mm stiff to a broad load.
+const CHEST_DEPTH = 0.23, CHEST_STIFF = 40e3;
+// Unprotected head on a hard floor: the speed that fractured cadaver skulls in Gurdjian's drops, m/s.
+const DROP = { forehead: 4.6, back: 4.9, side: 5.7, temple: 5.0 };
 // A long bone's ends: what a break there is called, and the joint it loosens (the ragdoll segment below the joint).
 const ENDS: Record<string, [string, string | null][]> = {
     femur: [['neck (the hip)', 'thigh'], ['lower end, above the knee', 'shin']],
@@ -88,6 +122,11 @@ const ENDS: Record<string, [string, string | null][]> = {
     radius: [['head, at the elbow', 'forearm'], ['lower end, at the wrist', 'hand']],
     ulna: [['top, at the elbow', 'forearm'], ['lower end, at the wrist', 'hand']],
 };
+// What each break of the face is called on the monitor ($side where it is one-sided).
+const FACE = { hyoid: 'Hyoid bone broken: swallowing and breathing hurt', larynx: 'Voice box broken: hoarse, breathing noisily', nasal: 'Nose broken', blowout: '$Side eye socket\'s floor blown out: the eye sinks and sees double', zygoma: '$Side cheekbone broken and pushed in',
+    lefort1: 'Le Fort I fracture: the upper teeth and palate broken loose', lefort2: 'Le Fort II fracture: the middle of the face broken loose through the nose',
+    lefort3: 'Le Fort III fracture: the face broken off the skull', chin: 'Jaw broken at the chin', body: 'Jaw broken along the $side teeth',
+    angle: 'Jaw broken at the $side angle', condyle: 'Jaw broken at the $side joint', condyles: 'Jaw broken at both joints from the blow to the chin' };
 const WORDS = { transverse: 'transverse fracture', oblique: 'oblique fracture', spiral: 'spiral fracture', butterfly: 'fracture with a butterfly fragment',
     comminuted: 'comminuted fracture', 'drill hole': 'bullet hole through the bone', gutter: 'gouged by the bullet', linear: 'linear fracture',
     depressed: 'depressed fracture, pushed in on the brain', basilar: 'basilar fracture', compression: 'compression fracture', burst: 'burst fracture', simple: 'fracture' };
@@ -110,23 +149,24 @@ const JOINTS = {
     hand: { name: 'wrist', holds: 50, gives: 'wrist' },
     shin: { name: 'knee', holds: 140, gives: 'torn' },
     foot: { name: 'ankle', holds: 60, gives: 'torn' },
+    thigh: { name: 'hip', holds: 250, gives: 'dislocated' },
+    // The neck's facet joints: the upper cervical spine holds about 17 N m twisted (AI-Neck), more bent.
+    head: { name: 'neck', holds: 60, gives: 'facets' },
 };
 // Where a dislocated joint is held (hinge, twist, side; degrees, as the pose controls count them); none for a knee,
 // which once out holds nowhere.
-const OUT = { upperarm: [25, 35, 30], forearm: [45, 0, 0] };
-const LEVER = 0.04;             // m: how far from a joint a blow's force acts on it, the limb's own inertia taking the rest
-// The share of a person's weight that comes down with each part that breaks a fall, when it hits the floor: the hip
-// carries about half the body into it in a fall on the side (Robinovitch et al. 1991), an outstretched hand a few per
-// cent, the elbow giving (Chiu and Robinovitch 1998). A forearm or a thigh landing flat spreads its load over its flesh
-// and breaks nothing at the heights a body falls from here.
-const LANDING = { head: 0.06, chest: 0.3, pelvis: 0.45, upperarm: 0.2, hand: 0.05, shin: 0.12, foot: 0.5 };
+const OUT = { upperarm: [25, 35, 30], forearm: [45, 0, 0], thigh: [45, -30, -20] };
+// The share of a person's weight behind each part that breaks a fall when it hits the floor: the hip carries about
+// half the body into it in a fall on the side (Robinovitch et al. 1991), an outstretched hand a few per cent, the elbow
+// giving (Chiu and Robinovitch 1998), a shoulder or the side of the chest a tenth with the arm taking some.
+const LANDING = { head: 0.06, chest: 0.1, pelvis: 0.4, hand: 0.05, foot: 0.5 };
+const LEVER = 0.05;             // m: a blow's force on the joint it lands at acts over about an eighth of the limb
 const STRUCK = { head: 0.08, chest: 0.3, belly: 0.2, pelvis: 0.4, upperarm: 0.04, upperarm2: 0.035, forearm: 0.022, forearm2: 0.022, hand: 0.008,
     thigh: 0.15, thigh2: 0.12, shin: 0.06, shin2: 0.05, foot: 0.02 };
 // The bone a blow to each segment lands on when the line it came along misses every bone.
-const UNDER = { head: 'skull', chest: 'ribs', belly: 'lower thoracic spine', pelvis: 'hip bone', upperarm: 'humerus', forearm: 'ulna', hand: 'hand bones',
-    thigh: 'femur', shin: 'tibia', foot: 'foot bones' };
+const UNDER = { head: 'frontal bone', pelvis: 'hip bone', upperarm: 'humerus', forearm: 'ulna', hand: 'third metacarpal bone',
+    thigh: 'femur', shin: 'tibia', foot: 'second metatarsal bone' };
 
-const HARD = 5e6;               // N/m: a bat, a toolbox, a floor; next to flesh, as good as rigid
 const PERFORATE = 0.2;          // J/mm2 of a bullet's face to break through bone: twice skin's 0.1 (Sellier and Kneubuehl)
 const CLOT = 0.002;             // how fast a fracture's bleeding slows: what it loses in all is its rate over this
 const FLOOR = 0;
@@ -135,11 +175,29 @@ const RAD = Math.PI / 180;
 export type Break = {
     part: string; key: string; side: 'L' | 'R' | ''; type: string; how: string; ratio: number; where: string; end: number; s: number; hit: number;
     at: BABYLON.Vector3; dir: BABYLON.Vector3; owner: any; open: boolean; seg: any; count: number; level: string; text: string;
-    cut?: Cut; through?: boolean; wound?: any; out?: BABYLON.Vector3; tris?: (Tri & { bare?: boolean })[]; lines?: [Cut, (p: BABYLON.Vector3) => boolean][]; meshes?: BABYLON.Mesh[];
+    place?: string; cut?: Cut; through?: boolean; wound?: any; out?: BABYLON.Vector3; tris?: (Tri & { bare?: boolean })[]; lines?: [Cut, (p: BABYLON.Vector3) => boolean][]; meshes?: BABYLON.Mesh[];
 };
 
-const keyOf = (name: string) => name.replace(/^(left|right) /, '');
-const sideOf = (name: string): 'L' | 'R' | '' => (/^left/.test(name) ? 'L' : /^right/.test(name) ? 'R' : '');
+// A bone's kind, from its name (tools/anatomy.py keeps the source's names): what BONES has it under.
+const KINDS: [RegExp, string][] = [[/ rib$/, 'rib'], [/cervical vertebra$|^atlas$|^axis$/, 'cervical vertebra'], [/thoracic vertebra$/, 'thoracic vertebra'],
+    [/lumbar vertebra$/, 'lumbar vertebra'], [/^frontal bone$|parietal bone$|temporal bone$|^occipital bone$|^sphenoid bone$|^ethmoid$/, 'skull'],
+    [/maxilla$|palatine bone$/, 'maxilla'], [/zygomatic bone$/, 'zygoma'], [/nasal bone$|lacrimal bone$|^vomer$/, 'nasal'], [/^mandible$/, 'jaw'],
+    [/^hyoid bone$/, 'hyoid'], [/cartilage$/, 'larynx'], [/scaphoid$/, 'scaphoid'], [/(lunate|triquetral|pisiform|trapezium|capitate|hamate)$/, 'carpal'],
+    [/metacarpal bone$/, 'metacarpal'], [/phalanx of .*(finger|thumb)$/, 'finger'], [/calcaneus$/, 'calcaneus'],
+    [/(talus|cuboid bone|cuneiform bone|navicular bone of \w+ foot)$/, 'tarsal'], [/metatarsal bone$/, 'metatarsal'], [/phalanx of .*toe$/, 'toe'],
+    [/patella$/, 'kneecap']];
+const FACE_BONES = new Set(['maxilla', 'zygoma', 'nasal']);
+const keyOf = (name: string) => KINDS.find(([re]) => re.test(name))?.[1] ?? name.replace(/^(left|right) /, '');
+const sideOf = (name: string): 'L' | 'R' | '' => (/(^| )left /.test(name) ? 'L' : /(^| )right /.test(name) ? 'R' : '');
+const NUMBER = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+// A vertebra's level ('C5', 'T12', 'L1') or a rib's number, from its name.
+const levelOf = (name: string) => {
+    if (name === 'atlas') return 'C1';
+    if (name === 'axis') return 'C2';
+    const n = NUMBER.findIndex((w) => name.includes(w + ' ')) + 1;
+    return / rib$/.test(name) ? `${n}` : `${name.includes('cervical') ? 'C' : name.includes('thoracic') ? 'T' : 'L'}${n}`;
+};
+const ribName = (side: string, n: number) => `${side} ${NUMBER[n - 1]} rib`;
 const wordOf = (side) => (side === 'L' ? 'left' : 'right');
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -165,6 +223,9 @@ export class Bones {
     declare breaks: Break[];
     declare joints: Map<string, string>;
     declare epidural: any;
+    // How far the jaw hangs open, degrees, broken or out of its joints: the face (face.ts) lets it hang that far.
+    declare jawHangs: number;
+    declare teeth: Teeth;
     declare meshes: BABYLON.Mesh[];
     declare _vy: Map<any, number>;
     declare _born: number;
@@ -179,13 +240,14 @@ export class Bones {
         this.cortical = clamp(1 - 0.006 * (this.age - 30), 0.6, 1);
         this.spongy = clamp(1 - 0.012 * (this.age - 30), 0.4, 1);
         this.build = Math.pow(npc.ragdoll.mass / 75, 2 / 3);
-        // Two men of one age and size still differ, bone by bone, by a tenth or so.
-        this.grain = new Map(Object.keys(BONES).flatMap((k) => ['left ', 'right ', ''].map((s) => [s + k, 0.9 + Math.random() * 0.2])));
+        this.grain = new Map();
         this.damage = new Map();
         this.breaks = [];
         this.joints = new Map();
         this.meshes = [];
         this.epidural = null;
+        this.jawHangs = 0;
+        this.teeth = new Teeth(npc);
         this._vy = new Map();
         this._born = npc.world.frame;
         this._observer = npc.world.scene.onAfterPhysicsObservable.add(() => this.update());
@@ -193,52 +255,150 @@ export class Bones {
 
     // --- strength --------------------------------------------------------------------------
 
-    // What bone `name` takes now in one way of loading it: 'bend', 'twist', 'ends' or 'axial'.
-    strength(name: string, way: 'bend' | 'twist' | 'ends' | 'axial') {
-        const b = BONES[keyOf(name)];
-        const base = b[way] ?? b.bend;
-        const spongy = way === 'ends' || way === 'axial' || /spine|sacrum|kneecap/.test(name);
-        const cracked = 1 - 0.5 * (this.damage.get(name) ?? 0);
-        return base * (spongy ? this.spongy : this.cortical) * this.build * (this.grain.get(name) ?? 1) * cracked;
+    // Two men of one age and size still differ, bone by bone, by a tenth or so either way.
+    _grain(name: string) {
+        if (!this.grain.has(name)) this.grain.set(name, 0.9 + Math.random() * 0.2);
+        return this.grain.get(name);
     }
 
-    // A load on bone `name`, `how` it came ('blow', 'fall', 'wrench'): `force` N across it, `twist` N m about it, `axial`
-    // N along it, at `at` (world) going `dir`; `end` 0 or 1 for a load on a long bone's end (a fall on the hip or the
-    // hand). Breaks it if it is more than the bone takes, and cracks it a little if it comes near. The break, or null.
-    load(name: string, how: string, { force = 0, twist = 0, axial = 0, at = null, dir = null, end = -1 }: { force?: number; twist?: number; axial?: number; at?: BABYLON.Vector3; dir?: BABYLON.Vector3; end?: number }) {
+    // What bone `name` takes now in one way of loading it: 'moment' (N m, a shaft bent), 'bend' (N across a flat bone),
+    // 'twist', 'ends' or 'axial'; `base` instead of the table's figure where the place on the bone decides it (the skull).
+    strength(name: string, way: 'moment' | 'bend' | 'twist' | 'ends' | 'axial', base = 0) {
+        const b = BONES[keyOf(name)];
+        const figure = base || (b[way] ?? b.bend);
+        const spongy = way === 'ends' || way === 'axial' || /vertebra|^atlas$|^axis$|sacrum|patella|calcaneus/.test(name);
+        const cracked = 1 - 0.5 * (this.damage.get(name) ?? 0);
+        return figure * (spongy ? this.spongy : this.cortical) * this.build * this._grain(name) * cracked;
+    }
+
+    // A load on bone `name`, `how` it came ('blow', 'fall', 'wrench'): `force` N across it over `area` cm2 (or, for a
+    // long bone's shaft, `moment` N m bending it), `twist` N m about it, `axial` N along it, at `at` (world) going `dir`;
+    // `end` 0 or 1 for a load on a long bone's end (a fall on the hip or the hand). Breaks it if it is more than the bone
+    // takes, and cracks it a little if it comes near. The break, or null.
+    load(name: string, how: string, { force = 0, moment = 0, area = 6.5, twist = 0, axial = 0, at = null, dir = null, end = -1 }:
+        { force?: number; moment?: number; area?: number; twist?: number; axial?: number; at?: BABYLON.Vector3; dir?: BABYLON.Vector3; end?: number }) {
         const key = keyOf(name), b = BONES[key];
         if (!b || !this.npc.insides.parts.some((p) => p.name === name)) return null;
-        const ways: [string, number][] = [['bend', force / this.strength(name, end >= 0 ? 'ends' : 'bend')], ['twist', twist / this.strength(name, 'twist')],
-            ['axial', axial / this.strength(name, 'axial')]];
+        const rest = this._rest(name, at, dir, end);
+        // A shaft struck across is bent between the limb's two ends; the limb is not held at them, so the lever is an
+        // eighth of its length rather than the quarter of a bone on two supports.
+        if (b.long && rest.end < 0 && !moment) moment = (force * this._axis(name).length) / 8;
+        const spread = clamp((area / 6.5) ** 0.3, 0.6, 1.8);
+        const across = b.long && rest.end < 0 ? moment / this.strength(name, 'moment')
+            : force / (this.strength(name, end >= 0 ? 'ends' : 'bend', PLACES[rest.place]) * spread);
+        const ways: [string, number][] = [['bend', across], ['twist', twist / this.strength(name, 'twist')], ['axial', axial / this.strength(name, 'axial')]];
         const [way, ratio] = ways.reduce((a, w) => (w[1] > a[1] ? w : a));
         if (ratio < 1) {
             // Miner's rule, roughly: a load at half the strength does a little harm, one near it a lot.
             if (ratio > 0.5) this.damage.set(name, Math.min(0.9, (this.damage.get(name) ?? 0) + 0.25 * ratio ** 4));
             return null;
         }
-        const rest = this._rest(name, at, dir, end);
         let type = 'simple';
         // (A long bone's spongy end crumples rather than snapping: a fracture there, or one in pieces.)
         if (b.long && rest.end >= 0) type = ratio < 2 ? 'simple' : 'comminuted';
-        else if (b.long) type = way === 'twist' ? 'spiral' : way === 'axial' ? 'oblique' : ratio < 1.4 ? (how === 'fall' ? 'oblique' : 'transverse') : ratio < 2.2 ? 'butterfly' : 'comminuted';
-        else if (key === 'skull') type = rest.base ? 'basilar' : how === 'blow' && ratio > 1.8 ? 'depressed' : 'linear';
-        else if (/spine|sacrum/.test(key) && way === 'axial') type = ratio < 1.5 ? 'compression' : 'burst';
+        else if (b.long) type = way === 'twist' ? 'spiral' : way === 'axial' ? 'oblique' : ratio < 1.6 ? (how === 'fall' ? 'oblique' : 'transverse') : ratio < 3 ? 'butterfly' : 'comminuted';
+        else if (key === 'skull') type = rest.base ? 'basilar' : ratio > 1.8 && area < 15 ? 'depressed' : 'linear';
+        else if (FACE_BONES.has(key)) type = this._face(key, rest.place, ratio, area, rest);
+        else if (key === 'jaw') type = this._jaw(rest);
+        else if (key === 'hyoid' || key === 'larynx') type = key;
+        else if (/vertebra|sacrum/.test(key) && way === 'axial') type = ratio < 1.5 ? 'compression' : 'burst';
         else if (ratio > 2.2) type = 'comminuted';
         return this._break(name, type, how, ratio, rest);
     }
 
-    // Something of `mass` kg at `speed` m/s along `dir` into segment `seg` at `point` (world), its own stiffness
-    // `stiffness` N/m: the force on the first bone in its way, which takes it as load() says. Returns the force.
-    impact(seg, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: number, speed: number, stiffness = HARD) {
+    // Something of `mass` kg at `speed` m/s along `dir` into segment `seg` at `point` (world): `tool` says what it is
+    // (TOOLS' names) or how stiff it is (N/m); unsaid, a light fast thing is a bat and anything else a flat heavy thing.
+    // The first bone in its way takes the force the flesh over it lets through; the chest is pushed in as a whole. A
+    // blow breaks at most the one thing it lands on. Returns the force.
+    impact(seg, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: number, speed: number, tool?: number | string) {
         const base = seg.name.replace(/[LR]$/, '');
+        const what = typeof tool === 'string' ? TOOLS[tool] : tool !== undefined ? { k: tool, area: tool < 2e4 ? 40 : tool < 1e5 ? 30 : 25 } : mass < 1.2 && speed > 10 ? TOOLS.bat : TOOLS.flat;
         const behind = this.npc.ragdoll.mass * (STRUCK[base] ?? 0.05);
         const m = (mass * behind) / (mass + behind);
+        if (base === 'chest' || base === 'belly') return this._chest(point, dir, what, mass, speed, 'blow');
+        // A blow to the mouth meets the teeth first, through the lips (about 100 kN/m), over its own width.
+        if (seg.name === 'head') {
+            const lips = speed * Math.sqrt((1 / (1 / 100e3 + 1 / what.k)) * m);
+            this.teeth.blow(point, dir, lips, Math.sqrt(what.area / Math.PI) / 100, this._mouthOpen() > 8);
+        }
         const bone = this._struck(seg, point, dir);
         if (!bone) return 0;
-        const k = 1 / (1 / BONES[keyOf(bone.name)].pad + 1 / stiffness);
+        const k = 1 / (1 / BONES[keyOf(bone.name)].pad + 1 / what.k);
         const force = speed * Math.sqrt(k * m);
-        if (!this.load(bone.name, 'blow', { force, at: bone.at, dir })) this._atJoint(point, dir, force);
+        if (this.load(bone.name, 'blow', { force, area: what.area, at: bone.at, dir })) return force;
+        // Struck with the mouth open, a jaw that holds is knocked out of its joints instead.
+        const key = keyOf(bone.name), half = force > 0.5 * this.strength(bone.name, 'bend') * clamp((what.area / 6.5) ** 0.3, 0.6, 1.8);
+        if (key === 'jaw' && this._mouthOpen() > 12 && half) this._jawOut();
+        // A finger or toe struck end on or across is put out of joint before its bone breaks.
+        else if ((key === 'finger' || key === 'toe') && half && !this.joints.has(bone.name)) {
+            this.joints.set(bone.name, 'dislocated');
+            this.npc.vitals.pain = Math.min(1, this.npc.vitals.pain + 0.2);
+            this.npc.vitals.injure(`${cap(bone.name.replace(/^\w+ phalanx of /, ''))} dislocated, bent out of line`, 2);
+        }
+        else this._atJoint(point, dir, force);
         return force;
+    }
+
+    // The chest pushed in by something of `mass` kg at `speed` along `dir`, landing on `tool`'s patch at `point`: how
+    // far in, against how far this person's ribs go (a fifth of the chest's depth young, less with age: Kroell; Zhou's
+    // age factors), says how many ribs break, whether a panel of them breaks loose, and whether the sternum goes.
+    _chest(point: BABYLON.Vector3, dir: BABYLON.Vector3, tool: { k: number; area: number }, mass: number, speed: number, how: string) {
+        const rd = this.npc.ragdoll, behind = rd.mass * 0.3, m = (mass * behind) / (mass + behind);
+        const k = 1 / (1 / CHEST_STIFF + 1 / tool.k);
+        const force = speed * Math.sqrt(k * m);
+        const inward = force / CHEST_STIFF / CHEST_DEPTH;
+        const onset = 0.2 * clamp(1 - 0.011 * (this.age - 30), 0.45, 1) * this._grain('ribs');
+        const chest = rd.byName.get('chest'), v = this.npc.vitals;
+        const front = V3.Dot(dir, chest.node.getDirection(V3.Forward())) < -0.5;
+        this._commotio(point, dir, tool, speed, chest);
+        // Not quite enough to break them, from the front: the ribs' cartilage is torn off the breastbone instead.
+        if (inward < onset) {
+            if (front && inward > 0.75 * onset && !this.joints.has('sternum')) {
+                this.joints.set('sternum', 'torn');
+                v.pain = Math.min(1, v.pain + 0.25);
+                v.injure('Ribs torn from the breastbone: every breath hurts', 4);
+            }
+            return force;
+        }
+        const side = this._leftOf(point) ? 'left' : 'right';
+        // As many ribs as it pushed in far enough, round the one it landed on, and no more than its width covers (a bat's
+        // 6.5 cm, two or three). Past twice what breaks one, a run of three or more breaks in two places: a flail panel,
+        // sucked in as the rest of the chest goes out (Kroell), with the lung bruised under it and torn by the ends.
+        const ratio = inward / onset, count = clamp(1 + Math.floor((ratio - 1) * 4), 1, clamp(Math.round(Math.sqrt(tool.area) / 1.5), 1, 10));
+        const from = clamp(this._ribAt(side, point, dir) - Math.floor((count - 1) / 2), 1, 13 - count);
+        const flail = ratio >= 2 && count >= 3;
+        for (let n = from; n < from + count; n++) this._break(ribName(side, n), flail ? 'flail' : 'simple', how, ratio, this._rest(ribName(side, n), point, dir), 0, 1, true);
+        const s = side === 'left' ? 'L' : 'R';
+        v.injure(count > 1 ? `${cap(side)} ribs ${from} to ${from + count - 1} broken${flail ? ', each in two places: flail chest' : ''}` : `${cap(side)} ${NUMBER[from - 1]} rib broken`, flail ? 7 : 5);
+        if (flail) v.lungs[s] = Math.max(0.05, v.lungs[s] - 0.3);
+        if (ratio > 1.8) { v.lungs[`leak${s}`] = true; this.npc.insides.hurt(`${side} lung`); v.injure(`Broken ribs tore the ${side} lung`, 7); }
+        if (front && ratio > 1.5) this._break('sternum', 'simple', how, ratio, this._rest('sternum', point, dir));
+        return force;
+    }
+
+    // The number of the rib a blow at `point` along `dir` lands on, on `side`: the first in its way, or the nearest.
+    _ribAt(side: string, point: BABYLON.Vector3, dir: BABYLON.Vector3) {
+        const own = (p) => p.name.startsWith(side) && / rib$/.test(p.name);
+        const first = this.npc.insides.trace(point.subtract(dir.scale(0.15)), dir, 0.35, 0, own).spans[0];
+        if (first) return Number(levelOf(first.part.name));
+        let best = 6, near = Infinity;
+        for (const part of this.npc.insides.parts.filter(own)) {
+            const d = V3.Distance(V3.TransformCoordinates(V3.FromArray(part.source.centre), this.npc.restToWorld(part.owner)), point);
+            if (d < near) { near = d; best = Number(levelOf(part.name)); }
+        }
+        return best;
+    }
+
+    // A hard, fast blow over the heart landing in the fifteen to thirty milliseconds before the T wave's peak sends a
+    // normal heart into fibrillation (commotio cordis; Link 1998: 9 of 10 such hits): a thousandth or two of the cycle.
+    _commotio(point: BABYLON.Vector3, dir: BABYLON.Vector3, tool: { k: number }, speed: number, chest) {
+        const v = this.npc.vitals;
+        if (speed < 8 || tool.k < 1e5 || !v.beating || !this._leftOf(point) || V3.Dot(dir, chest.node.getDirection(V3.Forward())) > -0.5) return;
+        const window = 0.015 * (v.hr / 60);
+        if (v.beat > 0.33 - window && v.beat < 0.33) {
+            v.arrest('fibrillating');
+            v.injure('Struck over the heart between beats: the heart is fibrillating', 10);
+        }
     }
 
     // A bullet into bone `part` (an Insides part) at `at` (world) along `dir`, with `energy` J left, `calibre` m across,
@@ -307,24 +467,64 @@ export class Bones {
             p = p ?? ax.a.add(ax.u.scale(s * ax.length));
             owner = s <= 0.5 ? ax.near : ax.far;
             d = dir ? V3.TransformNormal(dir, toRest(owner)).normalize() : across(ax.u, new V3(0, 0, 1));
-            return { p, d, owner, s, end: end >= 0 ? end : s < 0.2 ? 0 : s > 0.8 ? 1 : -1, base: false };
+            return { p, d, owner, s, end: end >= 0 ? end : s < 0.2 ? 0 : s > 0.8 ? 1 : -1, base: false, place: '' };
         }
         const centre = V3.FromArray(entries[0].source.centre);
         p = at ? V3.TransformCoordinates(at, toRest(owner)) : centre;
         d = dir ? V3.TransformNormal(dir, toRest(owner)).normalize() : new V3(0, -1, 0);
-        // The skull's base: below the ears and toward the back, where a fall on the back of the head lands.
-        const base = keyOf(name) === 'skull' && p.y < centre.y - 0.035;
-        return { p, d, owner, s: 0.5, end: -1, base };
+        const place = keyOf(name) === 'jaw' ? this._jawPlace(p) : this._place(name, p);
+        // The skull's base: its floor (sphenoid), or the back of it below the eyes, where a fall on the back of the head lands.
+        const base = place === 'base' || (place === 'back' && p.y < this.npc.person.byName['eye.L'].head.y - 0.03);
+        return { p, d, owner, s: 0.5, end: -1, base, place };
     }
+
+    // Which place on the head a point of bone `name` (rest space) is: round an eye (the person's own eye bones) it is
+    // the eye socket, whatever bone it is; otherwise the vault's bones are its forehead, temples, sides, back and floor.
+    _place(name: string, p: BABYLON.Vector3) {
+        if (!/maxilla|zygomatic|frontal|nasal|lacrimal|ethmoid/.test(name)) return VAULT.find(([re]) => re.test(name))?.[1] ?? '';
+        const eyes = ['eye.L', 'eye.R'].map((e) => this.npc.person.byName[e].head);
+        if (eyes.some((e) => Math.abs(p.x - e.x) < 0.02 && Math.abs(p.y - e.y) < 0.022 && p.z > e.z - 0.035)) return 'eye';
+        return VAULT.find(([re]) => re.test(name))?.[1] ?? '';
+    }
+
+    // Which part of the jaw: its chin, its body along the teeth, its angle below the ear, or its condyle in the joint.
+    _jawPlace(p: BABYLON.Vector3) {
+        const joint = this.npc.person.byName['jaw'].head;
+        if (V3.Distance(p, joint) < 0.03 || p.y > joint.y - 0.015) return 'condyle';
+        if (Math.abs(p.x) < 0.018) return 'chin';
+        return p.z < joint.z + 0.03 ? 'angle' : 'body';
+    }
+
+    // A break of a bone of the face (`key`) from a blow at `place` on it: the nose; an eye socket's floor blown out by
+    // something broad pressing the eye in; the cheekbone; or the upper jaw broken off at one of Le Fort's three levels,
+    // by how high and how hard.
+    _face(key: string, place: string, ratio: number, area: number, rest) {
+        if (place === 'eye' && area >= 20) return 'blowout';
+        if (key === 'nasal') return 'nasal';
+        if (key === 'zygoma') return 'zygoma';
+        // Struck low, at the mouth, it goes above the teeth (I); across the nose, through it (II); and only a very heavy blow
+        // high on the face takes the whole of it off the skull (III).
+        const low = rest.p.y < this.npc.person.byName['eye.L'].head.y - 0.045;
+        return low ? (ratio > 3 ? 'lefort2' : 'lefort1') : ratio > 3 ? 'lefort3' : 'lefort2';
+    }
+
+    // How the jaw breaks where it was struck: at the chin the force goes up both sides to the condyles, which break.
+    _jaw(rest) { return rest.place === 'chin' && Math.random() < 0.5 ? 'condyles' : rest.place; }
 
     // The first bone in a blow's way into segment `seg` at `point` along `dir`, or the bone under that segment.
     _struck(seg, point: BABYLON.Vector3, dir: BABYLON.Vector3) {
-        const { spans } = this.npc.insides.trace(point.subtract(dir.scale(0.15)), dir, 0.45, 0, (p) => p.kind === 'bone' || p.kind === 'skull');
+        // A blow to the head reaches the skull and jaw and no further (not the neck behind them); a blow anywhere reaches
+        // the bones under that skin, never the spine at the back of the trunk.
+        const head = seg.name === 'head';
+        const bony = (p) => p.kind === 'bone' || p.kind === 'skull' || p.kind === 'cartilage';
+        const ofHead = (p) => p.kind === 'skull' || /maxilla|zygomatic|nasal|lacrimal|palatine|vomer|mandible|hyoid|cartilage/.test(p.name);
+        const reach = (p) => bony(p) && !/vertebra|^atlas$|^axis$|sacrum/.test(p.name) && (head ? ofHead(p) : !ofHead(p));
+        const { spans } = this.npc.insides.trace(point.subtract(dir.scale(0.15)), dir, head ? 0.3 : 0.4, 0, reach);
         const first = spans[0];
         if (first) return { name: first.part.name, at: point.subtract(dir.scale(0.15)).add(dir.scale(first.enter)) };
         const under = UNDER[seg.name.replace(/2?[LR]$/, '')];
         if (!under) return null;
-        const side = seg.name.endsWith('L') ? 'left ' : seg.name.endsWith('R') ? 'right ' : /ribs|hip/.test(under) ? (this._leftOf(point) ? 'left ' : 'right ') : '';
+        const side = seg.name.endsWith('L') ? 'left ' : seg.name.endsWith('R') ? 'right ' : /hip/.test(under) ? (this._leftOf(point) ? 'left ' : 'right ') : '';
         return { name: side + under, at: point };
     }
 
@@ -336,31 +536,31 @@ export class Bones {
 
     // --- a break ------------------------------------------------------------------------------
 
-    _break(name: string, type: string, how: string, ratio: number, rest, calibre = 0) {
+    _break(name: string, type: string, how: string, ratio: number, rest, calibre = 0, count = 1, quiet = false) {
         const key = keyOf(name), b = BONES[key], side = sideOf(name);
         const br: Break = { part: name, key, side, type, how, ratio, where: '', end: rest.end, s: rest.s, hit: rest.s, at: rest.p, dir: rest.d, owner: rest.owner,
-            open: how === 'shot', seg: null, count: 1, level: '', text: '' };
+            open: how === 'shot', seg: null, count, level: '', text: '' };
         if (b.long) br.where = rest.end < 0 ? 'shaft' : ENDS[key][rest.end][0];
         // A shaft that lets go parts at the ragdoll's mid joint, the only place the limb and its skin can bend: drawn far
         // from it, the bone would part in one place and the leg bend in another, and the bone's end would stand out of the
         // leg. So it parts within a few centimetres of the middle; a bullet's pieces stay where the bullet went.
         if (br.where === 'shaft' && UNSTABLE.has(type)) br.s = clamp(br.s, 0.45, 0.55);
         // A second break of a bone already broken there makes the first worse, not a new one.
-        const same = this.breaks.find((o) => o.part === name && o.where === br.where && Math.abs(o.s - br.s) < 0.15);
+        const same = this.breaks.find((o) => o.part === name && o.where === br.where && (b.long ? Math.abs(o.s - br.s) < 0.15 : o.type === type && V3.Distance(o.at, br.at) < 0.04));
         if (same && !b.long) return same;
         if (same) {
             if (UNSTABLE.has(type) && GIVE[type][0] > (GIVE[same.type]?.[0] ?? 0) && same.seg) { same.type = type; this._loosen(same); }
             return same;
         }
-        if (key === 'ribs') br.count = clamp(1 + Math.floor((ratio - 1) * 1.5), 1, 7);
-        if (key === 'ribs' || /spine/.test(key)) br.level = this._level(name, rest.p, br.count);
+        if (/rib|vertebra/.test(key)) br.level = levelOf(name);
+        br.place = rest.place;
         this.breaks.push(br);
         this.npc.insides.hurt(name);
         this._body(br);
         this._draw(br, calibre);
         this._partner(br);
         br.text = this._words(br);
-        this.npc.vitals.injure(br.text, /femur|hip|spine|skull|sacrum/.test(key) ? 7 : key === 'ribs' && br.type === 'flail' ? 7 : 5);
+        if (!quiet) this.npc.vitals.injure(br.text, /femur|hip|vertebra|skull|sacrum|larynx/.test(key) ? 7 : 5);
         const world = V3.TransformCoordinates(br.at, this.npc.restToWorld(br.owner));
         this.npc.world.sound?.shot('crack', { at: world.asArray(), gain: clamp(0.5 + b.bend / 8000, 0.5, 1) });
         return br;
@@ -380,27 +580,11 @@ export class Bones {
         this._break(name, br.type === 'comminuted' ? 'comminuted' : 'transverse', br.how, br.ratio, rest);
     }
 
-    // Which ribs or which vertebrae, from the height of `p` in the part's own span.
-    _level(name: string, p: BABYLON.Vector3, count: number) {
-        const src = this.npc.insides.parts.find((x) => x.name === name).source;
-        const [lo, hi] = src.bounds;
-        const t = clamp((hi[1] - p.y) / (hi[1] - lo[1]), 0, 0.999);
-        const key = keyOf(name);
-        if (key === 'ribs') {
-            const first = clamp(1 + Math.floor(t * 12) - Math.floor((count - 1) / 2), 1, 13 - count);
-            return count > 1 ? `${first} to ${first + count - 1}` : `${first}`;
-        }
-        const [letter, from, n] = { 'neck spine': ['C', 1, 7], 'upper thoracic spine': ['T', 1, 6], 'lower thoracic spine': ['T', 7, 6], 'lumbar spine': ['L', 1, 5] }[key] as [string, number, number];
-        return `${letter}${from + Math.floor(t * n)}`;
-    }
-
     _words(br: Break) {
-        const named = cap(br.part);
-        if (br.key === 'ribs') {
-            const what = br.count > 1 ? `${cap(wordOf(br.side))} ribs ${br.level} broken` : `${cap(wordOf(br.side))} rib ${br.level} broken`;
-            return br.type === 'flail' ? `${what}, each in two places: flail chest` : what;
-        }
-        if (br.level) return `${named.replace(/ spine$/, '')} spine: ${WORDS[br.type] ?? 'fracture'} of ${br.level}`;
+        const named = cap(br.part), side = br.at.x < 0 ? 'left' : 'right';
+        if (FACE[br.type]) return FACE[br.type].replace('$side', side).replace('$Side', cap(side));
+        if (br.key === 'rib') return `${named} broken${br.type === 'flail' ? ' in two places' : ''}`;
+        if (br.level) return `${named} (${br.level}): ${WORDS[br.type] ?? 'fracture'}`;
         const where = br.where ? ` of the ${br.where}` : '';
         return `${named}: ${WORDS[br.type] ?? 'fracture'}${where}${br.open ? ', open' : ''}`;
     }
@@ -432,27 +616,38 @@ export class Bones {
             return;
         }
         switch (br.key) {
-            case 'ribs': {
+            case 'rib': {
+                // Every breath hurts and is held short. (A run of them, a flail panel and a torn lung are _chest's.)
                 const s = side || 'R';
-                // Every breath hurts and is held short; past twice what breaks one rib, a run of them breaks in two places and
-                // the loose panel is sucked in as the rest of the chest goes out (Kroell's flail), and the ends tear the lung.
-                if (br.count >= 3 && br.ratio > 2.6) br.type = 'flail';
-                v.lungs[s] = Math.max(0.05, v.lungs[s] - 0.03 * br.count - (br.type === 'flail' ? 0.3 : 0));
-                if (br.ratio > 2.2 || br.how === 'shot') { v.lungs[`leak${s}`] = true; npc.insides.hurt(`${wordOf(s)} lung`); v.injure(`Broken ribs tore the ${wordOf(s)} lung`, 7); }
+                v.lungs[s] = Math.max(0.05, v.lungs[s] - 0.03);
+                if (br.how === 'shot') { v.lungs[`leak${s}`] = true; npc.insides.hurt(`${wordOf(s)} lung`); }
                 return;
             }
             case 'sternum':
                 if (br.ratio > 2) { v.pump = Math.max(0, v.pump - 0.12); v.injure('Heart bruised against the spine', 6); }
                 return;
-            case 'clavicle':
+            case 'clavicle': {
+                // The strut that holds the shoulder out is gone: the shoulder drops forward and down, and the arm hangs.
+                const arm = rd.byName.get('upperarm' + side);
+                if (arm) arm.broken = true;
+                v.injure(`The ${wordOf(side)} shoulder drops forward and down`, 3);
+                return;
+            }
             case 'scapula':
-                if (br.key === 'clavicle') { const arm = rd.byName.get('upperarm' + side); if (arm) arm.broken = true; }
                 return;
             case 'skull':
+            case 'maxilla':
+            case 'zygoma':
+            case 'nasal':
                 return this._skull(br);
-            case 'jaw':
-                if (br.ratio > 1.6) { v.airway = Math.max(0.2, v.airway - 0.25); v.injure('Jaw broken on both sides: the tongue falls back', 5); }
+            case 'hyoid':
+            case 'larynx':
+                // The voice box crushed swells shut over the next minutes; the hyoid less so.
+                v.airway = Math.max(0.1, v.airway - (br.key === 'larynx' ? 0.45 : 0.2));
+                v.bleed({ name: br.part, rate: 0.0003, internal: true, clots: 0.01 });
                 return;
+            case 'jaw':
+                return this._jawBroken(br);
             case 'hip bone':
             case 'sacrum':
                 if (br.key === 'hip bone' || br.ratio > 1.3) npc.legGone = true;
@@ -464,11 +659,12 @@ export class Bones {
                 npc.legGone = true;
                 return;
             }
-            case 'foot bones':
+            case 'calcaneus':
+            case 'tarsal':
                 if (br.how === 'fall') npc.legGone = true;
                 return;
         }
-        if (/spine/.test(br.key)) this._spine(br);
+        if (/vertebra/.test(br.key)) this._spine(br);
     }
 
     // A broken shaft's two halves, held as the kind of break holds them.
@@ -489,12 +685,11 @@ export class Bones {
     _skull(br: Break) {
         const npc = this.npc, v = npc.vitals;
         if (br.how === 'shot') return;     // the bullet's path through the brain is wounds.ts's
+        if (FACE[br.type]) return this._faceBroken(br);
         v.concussion = Math.min(1, v.concussion + 0.3 + 0.2 * br.ratio);
-        const src = npc.insides.parts.find((p) => p.name === 'skull').source;
         // Over the temple the bone is thinnest and the middle meningeal artery runs in a groove on its inside: a break
         // there tears it, and the blood collects between bone and brain, a lucid interval, then the brain is pressed.
-        const temple = Math.abs(br.at.x - src.centre[0]) > 0.045 && br.at.y > src.centre[1] - 0.04 && br.at.y < src.centre[1] + 0.03;
-        if (temple && !this.epidural) {
+        if (br.place === 'temple' && !this.epidural) {
             this.epidural = v.bleed({ name: 'middle meningeal artery', rate: 0.0004, arterial: true, internal: true, clots: 0.0015 });
             v.injure('Artery torn under the temple: bleeding inside the skull', 8);
         }
@@ -509,9 +704,60 @@ export class Bones {
         }
     }
 
+    // A face broken: a nose bleeds from the nostrils, the upper jaw's breaks bleed into the mouth and nose, and the higher
+    // Le Fort breaks let the middle of the face fall back onto the airway and leak brain fluid from the nose.
+    _faceBroken(br: Break) {
+        const v = this.npc.vitals;
+        v.concussion = Math.min(1, v.concussion + 0.1 + (br.type === 'lefort3' ? 0.4 : 0));
+        if (br.type === 'nasal' || br.type === 'lefort2' || br.type === 'lefort3') {
+            v.bleed({ name: 'nose', rate: br.type === 'nasal' ? 0.0004 : 0.0012, clots: 0.006, source: { mark: this._skinOver(br) } });
+        }
+        if (br.type.startsWith('lefort')) this.teeth.loosen(true);
+        if (br.type === 'lefort1' || br.type === 'lefort2') v.bleed({ name: 'mouth', rate: 0.0006, clots: 0.006, source: { mark: this._skinOver(br) } });
+        if (br.type === 'lefort2') v.airway = Math.max(0.2, v.airway - 0.15);
+        if (br.type === 'lefort3') {
+            v.airway = Math.max(0.2, v.airway - 0.35);
+            v.injure('Clear fluid running from the nose', 6);
+        }
+    }
+
+    // A jaw broken: it hangs a little and will not close true; broken on both sides (or at both joints) it hangs further
+    // and the tongue, with nothing in front to hold it, falls back onto the airway. A break along the teeth is open into
+    // the mouth and bleeds there.
+    _jawBroken(br: Break) {
+        const v = this.npc.vitals, both = br.type === 'condyles' || br.ratio > 2.2;
+        this.jawHangs = Math.max(this.jawHangs, both ? 18 : 10);
+        if (both) { v.airway = Math.max(0.2, v.airway - 0.2); v.injure('The broken jaw lets the tongue fall back', 6); }
+        if (br.type === 'body' || br.type === 'chin') this.teeth.loosen(false);
+        if (br.type === 'body' || br.type === 'chin') v.bleed({ name: 'mouth', rate: 0.0004, clots: 0.008, source: { mark: this._skinOver(br) } });
+    }
+
+    // A jaw knocked out of its joints with the mouth open: it locks open and cannot be closed.
+    _jawOut() {
+        if (this.joints.has('jaw')) return;
+        this.joints.set('jaw', 'dislocated');
+        this.jawHangs = Math.max(this.jawHangs, 28);
+        this.npc.vitals.pain = Math.min(1, this.npc.vitals.pain + 0.3);
+        this.npc.vitals.injure('Jaw dislocated: locked open', 5);
+    }
+
+    // How far the mouth is open now, degrees: the jaw bone's turn from where it rests.
+    _mouthOpen() {
+        const bone = this.npc.person.byName['jaw'].bone, rest = new Q();
+        bone.getRestPose().decompose(undefined, rest, undefined);
+        const now = bone.rotationQuaternion ?? Q.FromRotationMatrix(bone.getLocalMatrix());
+        return (2 * Math.acos(Math.min(1, Math.abs(Q.Dot(rest, now)))) * 180) / Math.PI;
+    }
+
+    // The skin over break `br` (a crossing, as npc.surface gives): where blood from it comes out.
+    _skinOver(br: Break) {
+        const at = V3.TransformCoordinates(br.at, this.npc.restToWorld(br.owner)), out = V3.TransformNormal(br.dir, this.npc.restToWorld(br.owner)).normalize().scale(-1);
+        return this.npc.surface(at.add(out.scale(0.08)), out.scale(-1), 0.12).find((h) => h.kind === 'skin') ?? null;
+    }
+
     _spine(br: Break) {
         const npc = this.npc, v = npc.vitals, rd = npc.ragdoll;
-        const joint = rd.byName.get(br.key === 'neck spine' ? 'head' : br.key === 'lumbar spine' ? 'belly' : 'chest');
+        const joint = rd.byName.get(br.key === 'cervical vertebra' ? 'head' : br.key === 'lumbar vertebra' ? 'belly' : 'chest');
         if (br.type === 'burst' || br.type === 'comminuted' || br.ratio > 1.8) this._widen(joint, [0, 2], 0.3);
         // A burst vertebra drives bone back into the canal: past half again what crushes it, into the cord.
         if ((br.type === 'burst' && br.ratio > 1.3) || br.type === 'comminuted') this.cord(br.level);
@@ -635,11 +881,11 @@ export class Bones {
             const [[cut, along], ...more] = radiating(br.ratio > 1.4 ? 2 : 1, 0, 0.07);
             return { take: near(0.075), cut, near: along, lines: more } as Look;
         }
-        if (br.key === 'ribs') {
-            // Each rib broken where the blow landed: a cut down through the run of them; a flail run broken in two places,
-            // the panel between pushed in.
-            const t = across(V3.Cross(V3.Up(), n), new V3(n.z, 0, -n.x)), span = br.count * 0.024, other = c.add(t.scale(0.07));
-            const ribs = (p: BABYLON.Vector3) => Math.abs(p.y - c.y) < span / 2 && V3.Distance(p, c) < 0.15;
+        if (br.key === 'rib') {
+            // Broken where the blow landed: a cut down through it across its run; in a flail panel broken in two places, the
+            // piece between pushed in.
+            const t = across(V3.Cross(V3.Up(), n), new V3(n.z, 0, -n.x)), other = c.add(t.scale(0.07));
+            const ribs = (p: BABYLON.Vector3) => V3.Distance(p, c) < 0.15;
             const look: Look = { take: ribs, cut: plane(t, 0.003), near: ribs, lines: [] };
             if (br.type === 'flail') {
                 look.lines.push([plane(t, 0.003, other), ribs]);
@@ -648,7 +894,7 @@ export class Bones {
             }
             return look;
         }
-        if (/spine|sacrum/.test(br.key)) {
+        if (/vertebra|sacrum/.test(br.key)) {
             // Across the vertebral body at its level; burst, its pieces pushed out all round, some back into the canal.
             const flat = (p: BABYLON.Vector3) => Math.hypot(p.x - c.x, p.z - c.z) < 0.06;
             const look: Look = { take: (p) => flat(p) && Math.abs(p.y - c.y) < 0.03, cut: (p) => p.y - c.y + jag(p, 0.0015), near: flat, lines: [] };
@@ -678,73 +924,111 @@ export class Bones {
         if (this.epidural?.lost > 0.03) npc.vitals.brainDamage = Math.max(npc.vitals.brainDamage, (this.epidural.lost - 0.03) * 2);
     }
 
-    // A segment that was coming down and has just been stopped by the floor: the force of it, on what it landed on.
+    // A segment that was coming down and has just been stopped by the floor: what it landed on takes the force. What
+    // the body lowers under its own control is not a fall (a foot set down in a step, a knee bent to sit): while a
+    // part's muscles are working on it they take the first 3 m/s of its landing, and only what is left over counts.
+    // The hip, a hand put out and the feet are counted whole, with their own tests.
     _falls(settling: boolean) {
         const rd = this.npc.ragdoll;
         for (const seg of rd.segments) {
             seg.body.getLinearVelocityToRef(_v);
             const before = this._vy.get(seg) ?? 0;
             this._vy.set(seg, _v.y);
-            if (settling || before > -2 || _v.y < before * 0.4 || rd.lowest(seg) > FLOOR + 0.06) continue;
-            this._land(seg, -before);
+            // (Stopped: it lost most of the speed it had downward, in one step, at the floor.)
+            if (settling || before > -2.5 || _v.y < before * 0.4 || rd.lowest(seg) > FLOOR + 0.06) continue;
+            this._land(seg, _v.y - before);
         }
     }
 
-    _land(seg, speed: number) {
+    // Segment `seg` stopped by the floor, its speed changed by `dv` m/s.
+    _land(seg, dv: number) {
         const rd = this.npc.ragdoll, base = seg.name.replace(/[LR]$/, ''), side = seg.name.endsWith('L') ? 'L' : 'R', word = wordOf(side);
         if (!(base in LANDING)) return;
-        // A limb brings the body's weight down with it only if the body is coming down too: a foot or a hand dropped on
-        // its own is a kilo of flesh.
-        rd.byName.get('pelvis').body.getLinearVelocityToRef(_w);
-        const trunk = base === 'head' || base === 'chest' || base === 'pelvis';
-        // (Feet carry it only landed on upright, the hips over them.)
-        const upright = base !== 'foot' || rd.byName.get('pelvis').node.position.y - seg.node.position.y > 0.6;
-        const m = trunk || (-_w.y > speed * 0.5 && upright) ? rd.mass * LANDING[base] : seg.mass;
+        const held = seg.motor?.on && base !== 'pelvis' && base !== 'hand' && base !== 'foot';
+        if (held) dv -= 3;
+        if (dv < 0.5) return;
+        const m = rd.mass * LANDING[base];
         const at = rd.worldPoint(seg, seg.centre, new V3());
         at.y = rd.lowest(seg);
         const down = new V3(0, -1, 0);
-        const hit = (name: string, k = BONES[keyOf(name)].pad, end = -1) => this.load(name, 'fall', { force: speed * Math.sqrt(k * m), at, dir: down, end });
-        const crush = (name: string, k: number, share = 1) => this.load(name, 'fall', { axial: share * speed * Math.sqrt(k * m), at, dir: down });
         // Which side is down, for a body landing on its side: its right is pointing up or down.
         const onSide = (s) => { const r = s.node.getDirection(V3.Right()); return Math.abs(r.y) > 0.55 ? (r.y > 0 ? 'left' : 'right') : null; };
         switch (base) {
-            case 'head': {
-                hit('skull');
-                // Head first with the body coming down on top of it: the neck is crushed along its length (a diver's burst
-                // fracture of the fifth or sixth vertebra).
-                const chest = rd.byName.get('chest');
-                chest.body.getLinearVelocityToRef(_w);
-                if (chest.node.position.y > seg.node.position.y + 0.15 && -_w.y > speed * 0.6) this.load('neck spine', 'fall', { axial: speed * Math.sqrt(100e3 * rd.mass * 0.3), at, dir: down });
-                return;
-            }
+            case 'head': return this._headDown(seg, dv, at);
             case 'pelvis': {
+                // On the side, the greater trochanter takes it and the femur's neck behind it is what breaks in the old.
+                // Sat down hard, the buttocks give (about 30 kN/m) and half of what is left goes up the spine: the old crush
+                // a lumbar vertebra.
                 const low = onSide(seg);
-                // On the side: the greater trochanter takes it, and the femur's neck behind it is what breaks in the old.
-                if (low) hit(`${low} femur`, 71e3, 0) ?? hit(`${low} hip bone`, 71e3);
-                else crush('sacrum', 70e3, 0.6);
+                if (low) this.load(`${low} femur`, 'fall', { force: dv * Math.sqrt(71e3 * m), at, dir: down, end: 0 });
+                else if (dv > 3.5) this.load('first lumbar vertebra', 'fall', { axial: 0.5 * dv * Math.sqrt(30e3 * m) });
                 return;
             }
-            case 'chest': { const low = onSide(seg); if (low) hit(`${low} ribs`); return; }
-            // The point of the shoulder, in a fall on that side: the clavicle is crushed along its length.
-            case 'upperarm':
-                if (onSide(rd.byName.get('chest')) === word) crush(`${word} clavicle`, 80e3) ?? hit(`${word} humerus`, 80e3, 0);
+            case 'chest':
+                if (onSide(seg)) this._chest(at, down, { k: 5e6, area: 300 }, m, dv, 'fall');
                 return;
-            // A fall onto the outstretched hand: the end of the radius (Colles').
-            // If the radius holds, a young man's elbow can be levered out of its socket instead: an estimate, the hand's
-            // force (Chiu and Robinovitch) over the centimetre or so the olecranon gives it, so that only a hard fall does it.
-            case 'hand': {
-                const force = speed * Math.sqrt(100e3 * m);
-                if (!hit(`${word} radius`, 100e3, 1) && m > seg.mass) this._overload(rd.byName.get('forearm' + side), 0, force * 0.012);
+            // A fall onto the outstretched hand: the end of the radius (Colles'), in the old.
+            case 'hand':
+                rd.byName.get('pelvis').body.getLinearVelocityToRef(_w);
+                // (A young man's radius holds, and the scaphoid behind the thumb breaks instead.)
+                // (What it brings down is the body's speed, not the hand's: a hand is light and flung faster than the fall.)
+                if (-_w.y > dv * 0.5) {
+                    const force = Math.min(dv, -_w.y) * Math.sqrt(100e3 * m);
+                    if (!this.load(`${word} radius`, 'fall', { force, at, dir: down, end: 1 })) this.load(`${word} scaphoid`, 'fall', { force, at, dir: down });
+                }
                 return;
+            case 'foot': {
+                // Feet first from a height, the hips over them: the knees and the heel pad take most of it (30 kN/m all
+                // told), the heel bursts past about 7 kN, the shin's lower end past 16 kN, and from higher still what is
+                // left goes up the spine and crushes a lumbar vertebra. A step or a jump off a chair is nothing like that.
+                rd.byName.get('pelvis').body.getLinearVelocityToRef(_w);
+                const upright = rd.byName.get('pelvis').node.position.y - seg.node.position.y > 0.6 && -_w.y > dv * 0.5;
+                if (!upright || dv < 4) return;
+                const force = dv * Math.sqrt(30e3 * m);
+                this.load(`${word} calcaneus`, 'fall', { axial: force, at, dir: down });
+                this.load(`${word} tibia`, 'fall', { axial: force, at, dir: down, end: 1 });
+                if (dv > 6) this.load('first lumbar vertebra', 'fall', { axial: force * 0.5 });
             }
-            case 'shin': hit(`${word} kneecap`); return;
-            case 'foot':
-                // Feet first from a height: the heel bursts, the shin's lower end is driven into the ankle, and what is left
-                // of the force goes up the spine and crushes a lumbar vertebra.
-                crush(`${word} foot bones`, 200e3);
-                crush(`${word} tibia`, 200e3, 0.8);
-                if (speed > 5) this.load('lumbar spine', 'fall', { axial: 0.5 * speed * Math.sqrt(200e3 * rd.mass * 0.6) });
-                return;
+        }
+    }
+
+    // The head stopped by the floor, unprotected: whether the skull breaks is the speed it hit at against the speeds
+    // that broke cadaver skulls dropped onto steel (Gurdjian: the forehead 4.6 m/s, the back 4.9, the side 5.6-5.8),
+    // scaled by this skull's strength. Head first with the body coming down on top of it, the neck is crushed along its
+    // length as well (a diver's burst fracture: the neck holds about 2.2 kN).
+    _headDown(seg, dv: number, at: BABYLON.Vector3) {
+        // The bone it landed on: the first of the skull up from the floor where it touched.
+        const rd = this.npc.ragdoll, up = new V3(0, 1, 0);
+        const first = this.npc.insides.trace(at.subtract(up.scale(0.03)), up, 0.2, 0, (p) => p.kind === 'skull').spans[0];
+        const name = first?.part.name ?? 'occipital bone', rest = this._rest(name, at, up.scale(-1));
+        const speed = DROP[rest.place] ?? DROP.back;
+        const strong = this.strength(name, 'bend', PLACES.side) / PLACES.side;
+        const ratio = (dv / speed) ** 2 / strong;
+        if (ratio >= 1) this._break(name, rest.base ? 'basilar' : 'linear', 'fall', ratio, rest);
+        const chest = rd.byName.get('chest');
+        chest.body.getLinearVelocityToRef(_w);
+        if (rd.byName.get('pelvis').node.position.y > seg.node.position.y + 0.5 && -_w.y > dv * 0.6) {
+            const axial = dv * Math.sqrt(100e3 * rd.mass * 0.3);
+            // Short of bursting the vertebra, the neck buckles forward and its facets ride over each other and lock.
+            if (!this.load('fifth cervical vertebra', 'fall', { axial }) && axial > 0.6 * this.strength('fifth cervical vertebra', 'axial')) this._facets(axial > 0.8 * this.strength('fifth cervical vertebra', 'axial'));
+        }
+    }
+
+    // The facet joints between the fifth and sixth neck vertebrae dislocated: one side out locks the head turned and
+    // stiff; both out lets the vertebra slide forward over the next, which bruises or cuts the cord.
+    _facets(both: boolean) {
+        if (this.joints.has('facets')) return;
+        this.joints.set('facets', both ? 'dislocated' : 'locked');
+        const v = this.npc.vitals, neck = this.npc.ragdoll.byName.get('head');
+        v.pain = Math.min(1, v.pain + 0.4);
+        if (both) {
+            this._widen(neck, [0, 2], 0.3);
+            v.injure('Neck facets dislocated at C5-C6 on both sides: the vertebra slid forward', 8);
+            this.cord('C5');
+        } else {
+            const a = this.npc.ragdoll.angles(neck, [0, 0, 0]);
+            this._range(neck, a.map((x) => x - 0.15), a.map((x) => x + 0.15));
+            v.injure('Neck facet locked out at C5-C6: the head held turned and stiff', 5);
         }
     }
 
@@ -773,7 +1057,11 @@ export class Bones {
         const joint = `${side ? cap(word) + ' ' : ''}${j.name}`;
         switch (j.gives) {
             case 'dislocated':
-                this._dislocate(seg, `${joint} dislocated`);
+                // (Struck, a shoulder or elbow is driven out only well past what holds it: they go out by leverage.)
+                if (torque > holds * 3) this._dislocate(seg, `${joint} dislocated`);
+                return;
+            case 'facets':
+                if (torque > holds * 2) this._facets(torque > holds * 3);
                 return;
             case 'wrist':
                 // Bent back past its range, the wrist breaks the radius's end (the lever is the 3 cm to the carpus), or sprains.
@@ -781,7 +1069,7 @@ export class Bones {
                 return;
             case 'torn':
                 // A knee forced well past its range comes apart altogether, and takes the artery behind it.
-                if (base === 'shin' && torque > holds * 1.6) {
+                if (base === 'shin' && torque > holds * 2.5) {
                     this._dislocate(seg, `${joint} dislocated`);
                     const tube = this.npc.insides.tubes.find((t) => t.name === `${word} popliteal artery`);
                     v.bleed({ name: `${word} popliteal artery`, rate: 0.006, arterial: true, internal: true, clots: 0.004, source: tube ? { tube, at: 0 } : undefined });
@@ -859,7 +1147,8 @@ export class Bones {
             if (!br.seg || br.through || !BONES[br.key].open) continue;
             rd.angles(br.seg, a);
             const bend = Math.hypot(a[0], a[2]) / RAD;
-            if (bend > BONES[br.key].open) this._through(br);
+            // (A clean transverse break has to be pushed further out of line before an end gets through.)
+            if (bend > BONES[br.key].open * (br.type === 'transverse' ? 1.5 : 1)) this._through(br);
         }
     }
 
@@ -912,5 +1201,6 @@ export class Bones {
     dispose() {
         this.npc.world.scene.onAfterPhysicsObservable.remove(this._observer);
         for (const m of this.meshes) m.dispose();
+        this.teeth.dispose();
     }
 }

@@ -98,7 +98,7 @@ const SEGMENTS = (s) => [
     [`forearm${s}`, `lowerarm01.${s}`, 0.009, 'capsule', J(`upperarm2${s}`, 'elbow', [`elbow${s}`, -6, 150], [null, -5, 5], 15, 80)],
     [`forearm2${s}`, midOf('lowerarm01', s), 0.008, 'capsule', LOCK(`forearm${s}`, 'elbow')],
     [`hand${s}`, `wrist.${s}`, 0.006, 'box', J(`forearm2${s}`, 'elbow', [`wrist${s}`, -75, 75], [null, -25, 25], 70, 25)],
-    [`thigh${s}`, `upperleg01.${s}`, 0.06, 'capsule', J('pelvis', 'x', [`hipFlex${s}`, -25, 125], [`hipAbduct${s}`, -30, 50], 40, 320)],
+    [`thigh${s}`, `upperleg01.${s}`, 0.06, 'capsule', J('pelvis', 'x', [`hipFlex${s}`, -30, 125], [`hipAbduct${s}`, -30, 50], 40, 320)],
     [`thigh2${s}`, midOf('upperleg01', s), 0.05, 'capsule', LOCK(`thigh${s}`, 'x')],
     [`shin${s}`, `lowerleg01.${s}`, 0.023, 'capsule', J(`thigh2${s}`, 'x', [`knee${s}`, -6, 150], [null, -4, 4], 8, 280)],
     [`shin2${s}`, midOf('lowerleg01', s), 0.02, 'capsule', LOCK(`shin${s}`, 'x')],

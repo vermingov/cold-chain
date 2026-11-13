@@ -38,18 +38,19 @@ COVER = 0.006       # and a bone: skin and a little muscle over a rib or a hip
 SCALP = 0.006
 SIDES = (('Right', 'R'), ('Left', 'L'))
 
-# Parts carried by the trunk's stretches: name, kind, the source's names, millimetres to a corner.
+ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth']
+
+# Parts carried by the trunk's stretches: name, kind, the source's names, millimetres to a corner. Every bone is a part
+# of its own, named as the source names it (lower case): the game breaks them one by one. Small ones are thinned harder.
 TRUNK = [(n, k, p, c) for n, k, p, c in ORGANS if n not in ('spine', 'pelvis', 'aorta', 'vena cava')] + [
     ('heart', 'heart', [r'^Wall of ventricle$', r'^Wall of (left|right) atrium$'], 6.0),
     ('trachea', 'airway', [r'^Trachea$', r'^Right main bronchus proper$', r'^Left main bronchus$'], 3.0),
     ('oesophagus', 'oesophagus', [r'^Esophagus$'], 3.0),
     ('diaphragm', 'muscle', [r'^Diaphragm$'], 9.0),
     ('sternum', 'bone', [r'^Manubrium$', r'^Body of sternum$', r'^Xiphoid process$'], 4.0),
-    ('right ribs', 'bone', [r'^Right \w+ rib$'], 6.0),
-    ('left ribs', 'bone', [r'^Left \w+ rib$'], 6.0),
-    ('upper thoracic spine', 'bone', [r'^(First|Second|Third|Fourth|Fifth|Sixth) thoracic vertebra$'], 5.0),
-    ('lower thoracic spine', 'bone', [r'^(Seventh|Eighth|Ninth|Tenth|Eleventh|Twelfth) thoracic vertebra$'], 5.0),
-    ('lumbar spine', 'bone', [r'^(First|Second|Third|Fourth|Fifth) lumbar vertebra$'], 5.0),
+] + [(f'{s.lower()} {n} rib', 'bone', [rf'^{s} {n} rib$'], 6.0) for s, _ in (('Right', 'R'), ('Left', 'L')) for n in ORDINALS] + [
+    (f'{n} thoracic vertebra', 'bone', [rf'^{n.capitalize()} thoracic vertebra$'], 5.5) for n in ORDINALS] + [
+    (f'{n} lumbar vertebra', 'bone', [rf'^{n.capitalize()} lumbar vertebra$'], 6.0) for n in ORDINALS[:5]] + [
     ('sacrum', 'bone', [r'^Sacrum$'], 6.0),
     ('right hip bone', 'bone', [r'^Right hip bone$'], 4.5),
     ('left hip bone', 'bone', [r'^Left hip bone$'], 4.5),
@@ -65,28 +66,67 @@ LUNGS = [(f'{s.lower()} lung', [rf'^{s} .*bronchial tree$', rf'^{s} main bronchu
          for s, _ in SIDES]
 SWELL = 1.14
 
+# The skull's bones as one, only to fit the head (head_fit); each is then a part of its own.
+SKULL_FIT = [r'^Frontal bone$', r'^(Left|Right) parietal bone$', r'^(Left|Right) temporal bone$', r'^Occipital bone$', r'^Sphenoid bone$',
+             r'^(Left|Right) maxilla$', r'^(Left|Right) zygomatic bone$']
 HEAD = [
-    ('skull', 'skull', [r'^Frontal bone$', r'^(Left|Right) parietal bone$', r'^(Left|Right) temporal bone$', r'^Occipital bone$',
-                        r'^Sphenoid bone$', r'^(Left|Right) maxilla$', r'^(Left|Right) zygomatic bone$'], 5.0),
-    ('jaw', 'bone', [r'^Mandible$'], 3.0),
+    ('frontal bone', 'skull', [r'^Frontal bone$'], 5.0),
+    ('occipital bone', 'skull', [r'^Occipital bone$'], 5.0),
+    ('sphenoid bone', 'skull', [r'^Sphenoid bone$'], 4.5),
+    ('ethmoid', 'skull', [r'^Ethmoid$'], 4.0),
+    ('vomer', 'bone', [r'^Vomer$'], 3.0),
+] + [part for s in ('Left', 'Right') for part in [
+    (f'{s.lower()} parietal bone', 'skull', [rf'^{s} parietal bone$'], 5.0),
+    (f'{s.lower()} temporal bone', 'skull', [rf'^{s} temporal bone$'], 4.5),
+    (f'{s.lower()} maxilla', 'bone', [rf'^{s} maxilla$'], 4.0),
+    (f'{s.lower()} zygomatic bone', 'bone', [rf'^{s} zygomatic bone$'], 3.5),
+    (f'{s.lower()} nasal bone', 'bone', [rf'^{s} nasal bone$'], 2.0),
+    (f'{s.lower()} lacrimal bone', 'bone', [rf'^{s} lacrimal bone$'], 2.5),
+    (f'{s.lower()} palatine bone', 'bone', [rf'^{s} palatine bone$'], 3.0),
+]] + [
+    ('mandible', 'bone', [r'^Mandible$'], 3.0),
+    ('hyoid bone', 'bone', [r'^Hyoid bone$'], 2.0),
+    ('thyroid cartilage', 'cartilage', [r'^Thyroid cartilage$'], 3.0),
+    ('cricoid cartilage', 'cartilage', [r'^Cricoid cartilage$'], 2.5),
     ('brain', 'brain', [r'gyrus$', r'^(Left|Right) occipital lobe$', r'^Orbital gyrus$', r'^White matter of (left|right) cerebral hemisphere$'], 8.0),
     ('cerebellum', 'brain', [r'^Cerebellum$'], 6.0),
     ('brainstem', 'brainstem', [r'^Medulla oblongata$', r'^Pons$', r'^Midbrain$'], 4.0),
-    ('neck spine', 'bone', [r'^Atlas$', r'^Axis$', r'^(Third|Fourth|Fifth|Sixth|Seventh) cervical vertebra$'], 4.0),
-]
+    ('atlas', 'bone', [r'^Atlas$'], 3.0),
+    ('axis', 'bone', [r'^Axis$'], 3.0),
+] + [(f'{n} cervical vertebra', 'bone', [rf'^{n.capitalize()} cervical vertebra$'], 4.0) for n in ORDINALS[2:7]]
+
+FINGERS = ['thumb', 'index finger', 'middle finger', 'ring finger', 'little finger']
+TOES = ['big toe', 'second toe', 'third toe', 'fourth toe', 'little toe']
 
 
 def limb_parts(s):
+    l = s.lower()
+    phalanges = lambda digits: [(f'{k} phalanx of {l} {d}', 'bone', [rf'^{k.capitalize()} phalanx of {l} {d}$'], 2.5)
+                                for d in digits for k in ('proximal', 'middle', 'distal') if not (k == 'middle' and d in ('thumb', 'big toe'))]
     return {
-        'upper arm': [(f'{s.lower()} humerus', 'bone', [rf'^{s} humerus$'], 3.0)],
-        'forearm': [(f'{s.lower()} radius', 'bone', [rf'^{s} radius$'], 2.5), (f'{s.lower()} ulna', 'bone', [rf'^{s} ulna$'], 2.5)],
-        'hand': [(f'{s.lower()} hand bones', 'bone', [rf'{s.lower()} (index finger|middle finger|ring finger|little finger|thumb)$',
-                                                       rf'^{s} \w+ metacarpal bone$', rf'^{s} (capitate|hamate|lunate|pisiform|scaphoid|trapezium|trapezoid|triquetral)$'], 4.0)],
-        'thigh': [(f'{s.lower()} femur', 'bone', [rf'^{s} femur$'], 3.5), (f'{s.lower()} kneecap', 'bone', [rf'^{s} patella$'], 2.5)],
-        'shin': [(f'{s.lower()} tibia', 'bone', [rf'^{s} tibia$'], 3.5), (f'{s.lower()} fibula', 'bone', [rf'^{s} fibula$'], 2.5)],
-        'foot': [(f'{s.lower()} foot bones', 'bone', [rf'{s.lower()} (big|second|third|fourth|little) toe$', rf'^{s} \w+ metatarsal bone$',
-                                                       rf'^{s} (calcaneus|talus|cuboid bone|navicular bone|\w+ cuneiform bone)$'], 4.5)],
+        'upper arm': [(f'{l} humerus', 'bone', [rf'^{s} humerus$'], 3.0)],
+        'forearm': [(f'{l} radius', 'bone', [rf'^{s} radius$'], 2.5), (f'{l} ulna', 'bone', [rf'^{s} ulna$'], 2.5)],
+        'hand': [(f'{l} {b}', 'bone', [rf'^{s} {b}$'], 3.0) for b in ('scaphoid', 'lunate', 'triquetral', 'pisiform', 'trapezium', 'capitate', 'hamate')]
+            + [(f'{l} {n} metacarpal bone', 'bone', [rf'^{s} {n} metacarpal bone$'], 3.0) for n in ORDINALS[:5]] + phalanges(FINGERS),
+        'thigh': [(f'{l} femur', 'bone', [rf'^{s} femur$'], 3.5), (f'{l} patella', 'bone', [rf'^{s} patella$'], 2.5)],
+        'shin': [(f'{l} tibia', 'bone', [rf'^{s} tibia$'], 3.5), (f'{l} fibula', 'bone', [rf'^{s} fibula$'], 2.5)],
+        'foot': [(f'{l} {b}', 'bone', [rf'^{s} {b}$'], 4.5) for b in ('calcaneus', 'talus', 'cuboid bone', 'medial cuneiform bone', 'intermediate cuneiform bone',
+                                                                         'lateral cuneiform bone')]
+            + [(f'navicular bone of {l} foot', 'bone', [rf'^Navicular bone of {l} foot$'], 4.0)]
+            + [(f'{l} {n} metatarsal bone', 'bone', [rf'^{s} {n} metatarsal bone$'], 4.0) for n in ORDINALS[:5]] + [
+                (n, k, p, c + 1.0) for n, k, p, c in phalanges(TOES)],
     }
+
+
+# A finger's bones go with the finger's own bone (the person's finger bones curl it), not with the hand: the rig's
+# finger1 is the thumb (its metacarpal, then two phalanges), finger2 to finger5 the index to the little finger.
+def finger_bone(name, side):
+    digit = next(i for i, d in enumerate(FINGERS) if name.endswith(d) or (d == 'thumb' and name.endswith('first metacarpal bone'))) + 1
+    if digit == 1:
+        k = 1 if 'metacarpal' in name else 2 if name.startswith('proximal') else 3
+    else:
+        k = 1 if name.startswith('proximal') else 2 if name.startswith('middle') else 3
+    return f'finger{digit}-{k}.{side}'
 
 
 # Vessels and the cord, as paths: name, kind, the source's names, millimetres of path to a point, where it runs.
@@ -216,7 +256,7 @@ def main():
     # The neck is the line from the breastbone to the crown, but how far forward a head sits on it differs between two
     # men: the skull is then moved to sit inside the person's own head, a scalp's thickness in from the back and top.
     fitted = segment(a['notch'], a['crown'], b['notch'], b['crown'], give=0.1)
-    skull = fitted(turned(read_named(source, names, HEAD[0][2])[0]))
+    skull = fitted(turned(read_named(source, names, SKULL_FIT)[0]))
     skin, _ = skin_of(header, arrays)
     scalp = skin[skin[:, 1] > skull[:, 1].min() + 0.06]
     shift = np.array([0.0, min(0.0, scalp[:, 1].max() - SCALP - skull[:, 1].max()), scalp[:, 2].min() + SCALP - skull[:, 2].min()])
@@ -295,13 +335,16 @@ def main():
         corners, faces = thin(turned(corners), faces, cell / 1000)
         add(name, kind, 'neck01', head_fit(corners), faces)
 
-    for s, _ in SIDES:
+    for s, k in SIDES:
         for seg, listed in limb_parts(s).items():
             carry, bone = limbs[(s, seg)][:2]
             for name, kind, patterns, cell in listed:
                 corners, faces = read_named(source, names, patterns)
                 corners, faces = thin(turned(corners), faces, cell / 1000)
-                add(name, kind, bone, carry(corners), faces)
+                corners = carry(corners)
+                # (A finger's bones and the thumb's metacarpal ride on the finger's own bone; the rest of the hand on the wrist.)
+                own = finger_bone(name, k) if ('phalanx' in name and 'toe' not in name) or name.endswith('first metacarpal bone') else bone
+                add(name, kind, own, corners, faces)
 
     # The paths. A point on a limb belongs to whichever segment of it the point lies along.
     def place(points, where):

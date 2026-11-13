@@ -696,3 +696,33 @@ the story's first night moved to `story.html` untouched.
 Not done: dismemberment, NPCs getting back up or moving about, blood running
 down skin, wall/clothing blood beyond soak, voices. Frame time measured
 headless uncapped: 9 ms idle, 17 ms with two ragdolls bleeding.
+
+### Blood, 2026-11-13
+
+Rebuilt as physics (numbers in `src/sandbox/fluid.ts`: 1060 kg/m3, 3.5 mPa s,
+0.056 N/m; a drip is Tate's 0.05 ml).
+
+- `blood.ts`: drops slowed by real drag for their size (Schiller-Naumann:
+  mist stops within a metre, drips fall nearly free), log-normal sizes;
+  stains sized by Reynolds number, elongated by 1/sin of the impact angle,
+  spined past We 400; big drops on walls run down them. Arteries throw a
+  pulsatile rope (`stream`, Bernoulli speed from the pressure wave in
+  `vitals.beat`, breaking into drops after ~0.25 s). Bodies lying in a pool
+  take it up; dragged ones leave striated smears; the player's soles print
+  (fading tiles). Thin-instance marks: write into our own buffer, then
+  `thinInstanceBufferUpdated` (`thinInstanceSetMatrixAt` refuses an index
+  >= the count, so marks were never written before).
+- `floor.ts`: 12.5 mm grid of depth, lubrication flow (h^3/3mu), dry floor
+  wetted only past ~2.5 mm (contact-angle pinning), a floor ±2 mm uneven,
+  clotting and drying; drawn by one plane (Puddle plugin), tiles sent with
+  texSubImage2D (`fluid.sendPart`).
+- `soak.ts`: cloth as an 8 mm voxel grid in rest space (3D texture read in
+  hider.ts), wicking with a sharp front, gravity drainage past field
+  capacity, overflow downhill, drips at hems. Empty cubes beside cloth copy
+  their neighbour, or stains fade along the grid.
+- `film.ts`: skin film sheet (thickness, wetness) drawn by FilmLayer with
+  Beer-Lambert colour, gloss and a bent normal. `runs.ts`: beads held until
+  ~0.012 ml/sin(slope), then running; wet tracks followed; a wound's stream
+  is one run fed from its bleed; hangs and drips only at low points.
+- Measured (RIG_GPU, RIG_UNCAP, three people bleeding): blood + bleeding +
+  runs about 1.5 ms of a 12 ms frame. Scripts in ~/.cache/cold-chain/blood/.

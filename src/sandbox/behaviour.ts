@@ -24,7 +24,7 @@ const G = 9.81;
 const FLOOR = 0;                // the hall's floor: what feet, knees and hands push on
 const TOUCH = 0.035;            // m: a segment this close to the floor is on it
 const REACH = 0.72;             // m: the longest step that still catches a fall
-const STEPS = 5;                // stumbling steps before the legs give up
+const STEPS = 7;                // stumbling steps before the legs give up
 const TILT = 0.4;               // rad: a body leaning this far out past its feet has gone
 const RAD = Math.PI / 180;
 
@@ -297,7 +297,7 @@ export class Behaviour {
 
     _stand(dt) {
         const npc = this.npc, v = npc.vitals, rd = this.rd;
-        const pelvis = rd.byName.get('pelvis');
+        const pelvis = rd.byName.get('pelvis'), chest = rd.byName.get('chest');
         const feet = ['L', 'R'].map((side) => rd.byName.get('foot' + side));
         // A foot stepping is not stood on, even before it leaves the floor: the weight goes over the other one first.
         const down = feet.filter((f) => rd.lowest(f) < FLOOR + TOUCH && f !== this.step?.swing);
@@ -307,6 +307,7 @@ export class Behaviour {
         // wherever they are: a step lands one at a time; a hard blow swings the pelvis or the chest further than this on
         // its own, and they come back), sunk, or off the floor.
         const lean = Math.atan2(Math.max(0, outside(footprint(rd, feet).hull, this.com.x, this.com.z)), this.com.y - FLOOR);
+        (this as any)._why = 'lean=' + lean.toFixed(2) + ' comY=' + this.com.y.toFixed(2) + '/' + (this.heights.stand.pelvis * 0.72).toFixed(2) + ' air=' + this.air.toFixed(2) + ' will=' + this.will.toFixed(2) + ' can=' + this._canStand();
         if (npc.grabbed || !this._canStand() || this.will < 0.3 || lean > TILT
             || this.com.y < this.heights.stand.pelvis * 0.72 || (this.air = feet.some((f) => rd.lowest(f) < FLOOR + TOUCH) ? 0 : this.air + dt) > 0.25) {
             this._go('fall');
@@ -341,7 +342,20 @@ export class Behaviour {
 
         // The planted legs hold the hips at standing height over wherever the feet are: after a step one leg reaches
         // forward and the other back, and pulled back straight under the body they dragged the new foot back with them.
-        for (const foot of down) this._legTo(foot.name.slice(-1), foot.node.position, pose, f, FLOOR + this.heights.stand.hip);
+        // As high as standing, or as high as every planted leg can reach from where its foot is: feet apart, the hips are
+        // lower. (Every leg held to full height in a stride pushed against the other through the floor, shoved the body
+        // on and buckled a knee.)
+        let hipY = FLOOR + this.heights.stand.hip;
+        for (const foot of down) {
+            const side = foot.name.slice(-1), leg = this.leg[side], hip = rd.byName.get('thigh' + side).node.position, ankle = foot.node.position;
+            const reach = 0.97 * (leg.a + leg.b), across = Math.hypot(ankle.x - hip.x, ankle.z - hip.z);
+            hipY = Math.min(hipY, ankle.y + Math.sqrt(Math.max(0, reach * reach - across * across)));
+        }
+        // Not into a crouch, though: a long stride is stood in with the legs reaching, the hips a little lower.
+        hipY = Math.max(hipY, FLOOR + this.heights.stand.hip - 0.1);
+        // On one foot mid-step, the leg holds the hips up under the pelvis as it is, and leaves its lean alone: levelling
+        // it through the one planted leg pushed the body on over that foot, toward the way it was already falling.
+        for (const foot of down) this._legTo(foot.name.slice(-1), foot.node.position, pose, f, hipY, !this.step);
         this._react(pose, dt);
 
         // The ankle strategy: the body swayed back over the middle of the feet as a whole, as hard as the feet can push
@@ -365,17 +379,41 @@ export class Behaviour {
             sway.y = 0;
             const lever = sway.length() > 1e-6 ? inside(ground.hull, this.com.x, this.com.z, -sway.x, -sway.z) : 0;
             const most = G * lever * legs / height;
+            (this as any)._dbg = { want: sway.length(), most, lever, v: Math.hypot(this.vel.x, this.vel.z), down: down.length, aimDist: Math.hypot(aim.x - this.com.x, aim.z - this.com.z) };
             if (sway.length() > most) sway.scaleInPlace(most / sway.length());
+            // And the catch a stumble makes: steps never land exactly where they should, and a body that has to step
+            // again for every one that fell short never stops. Whatever foot is down slows the body's going, up to a
+            // quarter of its weight, as long as it is going no faster than legs can catch (a hard shove still puts them
+            // down). (Only while stepping, a light shove that should have been stood was stepped after, step after step.)
+            const speed = Math.hypot(this.vel.x, this.vel.z);
+            if (speed > 0.01 && speed < 1.4) sway.addInPlace(new V3(this.vel.x, 0, this.vel.z).scaleInPlace(-Math.min(2.6 * legs, 5 * speed) / speed));
             this.muscles.lean(sway, height, down, dt);
             // And turned to face where they mean to, as hard as the soles' grip allows.
             _t.set(0, clamp(this.muscles.toward(pelvis, facing, 40, 40, Infinity, _v).y, -40 * legs, 40 * legs), 0);
             pelvis.body.applyAngularImpulse(_t.scale(dt));
+            // The trunk kept upright over the legs, the hip strategy, as far as the muscles round the hips and back
+            // hold it: without it a stride pitched the pelvis forty degrees over the front leg and took the body down.
+            if (!(globalThis as any).__noUp) for (const [seg, most] of [[pelvis, 90], [chest, 50]] as [any, number][]) {
+                this.muscles.toward(seg, facing, 25, 12, most * legs, _t);
+                _t.y = 0;
+                seg.body.applyAngularImpulse(_t.scaleInPlace(dt));
+            }
         });
 
         // A step only once the weight is clearly going past the feet: a sway that tips just over the edge is swayed back.
-        if (!this.step && down.length === 2 && outside(ground.hull, xi.x, xi.z) > (this.settle > 0 ? 0.1 : 0.08)) {
+        // A foot that has come off the floor without being stepped (the trailing one, left behind as the weight goes over
+        // the other) is stepped at once: left hanging, it was nothing to stand on.
+        const lifted = down.length === 1 ? feet.find((foot) => !down.includes(foot)) : null;
+        if (!this.step && (lifted || (down.length === 2 && outside(ground.hull, xi.x, xi.z) > (this.settle > 0 ? 0.1 : 0.08)))) {
             if (this.steps >= STEPS || V3.Distance(xi, centre) > REACH * 1.4) { this._go('fall'); return this._fall(dt); }
-            this._startStep(xi, f, r, feet);
+            this._startStep(xi, f, r, feet, lifted?.name.slice(-1));
+            // Caught already over the planted foot, the lifted one only closes up beside it, and they stand.
+            if (lifted && outside(ground.hull, xi.x, xi.z) < 0.04) {
+                const at = down[0].node.position, out = lifted.name.endsWith('R') ? 1 : -1;
+                this.step.to = new V3(at.x, FLOOR, at.z).addInPlace(r.scale(0.2 * out));
+                this.step.closing = true;
+                this.steps--;
+            }
         }
         if (this.step) this._stepping(dt, pose, f, xi, r);
         else if (outside(ground.hull, xi.x, xi.z) < -0.02) this.steps = 0;
@@ -383,32 +421,36 @@ export class Behaviour {
     }
 
     // A step to where the weight is going: the trailing foot forward or back, or the foot on the side it is falling to.
-    _startStep(xi: BABYLON.Vector3, f, r, feet) {
+    _startStep(xi: BABYLON.Vector3, f, r, feet, only?: string) {
         const mid = feet[0].node.position.add(feet[1].node.position).scale(0.5);
         const to = xi.subtract(mid);
         to.y = 0;
         const along = V3.Dot(to, f), across = V3.Dot(to, r);
-        let side;
-        if (Math.abs(across) > Math.abs(along) * 0.7) side = across > 0 ? 'R' : 'L';
-        else if (this.steps && this.lastStep) side = this.lastStep === 'L' ? 'R' : 'L';
-        else side = V3.Dot(feet[0].node.position, to) < V3.Dot(feet[1].node.position, to) ? 'L' : 'R';
+        // The first step is the trailing foot's, or the foot on the side the weight is going to; then the feet take turns
+        // (stepping sideways, the inside foot follows the outside one).
+        let side = only;
+        if (!side && this.steps && this.lastStep) side = this.lastStep === 'L' ? 'R' : 'L';
+        else if (!side && Math.abs(across) > Math.abs(along) * 0.7) side = across > 0 ? 'R' : 'L';
+        else if (!side) side = V3.Dot(feet[0].node.position, to) < V3.Dot(feet[1].node.position, to) ? 'L' : 'R';
         this.lastStep = side;
         const swing = this.rd.byName.get('foot' + side);
         const here = this.rd.worldPoint(swing, swing.centre, new V3());
         const landing = this._landing(xi, side, r);
-        // A longer step takes longer.
-        this.step = { side, swing, from: new V3(here.x, FLOOR, here.z), to: landing, t: 0, length: clamp(0.22 + 0.3 * V3.Distance(here, landing), 0.25, 0.45) };
+        // A quick step, a little longer the further it goes: a reactive step is a quarter to a third of a second.
+        this.step = { side, swing, from: new V3(here.x, FLOOR, here.z), to: landing, t: 0, length: clamp(0.18 + 0.15 * V3.Distance(here, landing), 0.2, 0.3) };
         this.steps++;
     }
 
-    // Where a step should land to catch the weight going to `xi`: a little past it, on its own side of the planted foot
-    // (a step to the right is the right foot's, and lands right of the left), and no further than a leg reaches.
+    // Where a step should land to catch the weight going to `xi`: past it, on its own side of the planted foot (a step
+    // to the right is the right foot's, and lands right of the left), and no further than a leg reaches. Past it by
+    // more the faster the body is going: a foot put down just at the capture point leaves the floor nothing to brake
+    // with (the weight arrives over the edge of the sole), and the next step is needed at once.
     _landing(xi: BABYLON.Vector3, side, r) {
         const stance = this.rd.byName.get('foot' + (side === 'L' ? 'R' : 'L')).node.position;
         const planted = new V3(stance.x, FLOOR, stance.z);
         const to = xi.subtract(planted);
         to.y = 0;
-        let target = xi.add(to.normalizeToNew().scale(0.1));
+        let target = xi.add(to.normalizeToNew().scale(0.1 + 0.08 * Math.hypot(this.vel.x, this.vel.z)));
         target.y = FLOOR;
         const out = side === 'R' ? 1 : -1;
         const sideways = V3.Dot(target.subtract(planted), r) * out;
@@ -424,21 +466,19 @@ export class Behaviour {
     _stepping(dt, pose, f, xi, r) {
         const st = this.step, rd = this.rd;
         st.t += dt;
-        const s = clamp(st.t / st.length), lift = 0.12 * Math.sin(Math.PI * s);
-        if (s < 0.8) st.to = this._landing(xi, st.side, r);
+        const s = clamp(st.t / st.length), lift = 0.06 * Math.sin(Math.PI * s);
+        if (s < 0.95 && !st.closing) st.to = this._landing(xi, st.side, r);
         const at = V3.Lerp(st.from, st.to, smooth(s));
         const middle = new V3(at.x, FLOOR + this.foot.middle + lift, at.z);
         const ankle = middle.subtract(f.scale(this.foot.ahead));
         ankle.y = FLOOR + this.foot.ankle + lift;
         this._legTo(st.side, ankle, pose, f);
         pose['ankle' + st.side] += 8 * Math.sin(Math.PI * s);
-        const other = st.side === 'L' ? 'R' : 'L';
-        pose['knee' + other] = (pose['knee' + other] || 0) + 10;
         // The foot carried to its place by the leg's own muscles, the hip taking the pull.
-        const most = 150 * this.strength['leg' + st.side];
-        this.act((dt) => this.muscles.push(st.swing, this.muscles.reach(st.swing, middle, 200, 6, most, _t), [rd.byName.get('pelvis')], dt));
-        const landed = rd.lowest(st.swing) < FLOOR + TOUCH && V3.Distance(rd.worldPoint(st.swing, st.swing.centre, _v).set(_v.x, FLOOR, _v.z), st.to) < 0.12;
-        if ((s >= 1 && landed) || st.t > st.length + 0.3) this.step = null;
+        const most = 220 * this.strength['leg' + st.side];
+        this.act((dt) => this.muscles.push(st.swing, this.muscles.reach(st.swing, middle, 300, 6, most, _t), [rd.byName.get('pelvis')], dt));
+        // Down when it touches: a foot kept hovering for its mark let the weight run on past the other one.
+        if ((s >= 1 && rd.lowest(st.swing) < FLOOR + TOUCH) || st.t > st.length + 0.15) this.step = null;
     }
 
     // What a standing body is doing about the last blow (hit()), laid over its pose: quick in, easing off.
@@ -447,7 +487,8 @@ export class Behaviour {
         if (!r) return;
         r.t += dt;
         if (r.t > r.length) { this.react = null; return; }
-        const e = Math.min(1, r.t / 0.15) * (1 - smooth((r.t - r.length * 0.4) / (r.length * 0.6))) * (0.5 + 0.5 * r.hard);
+        // Keeping their feet comes first: mid-step the body does not double over or let a leg go.
+        const e = Math.min(1, r.t / 0.15) * (1 - smooth((r.t - r.length * 0.4) / (r.length * 0.6))) * (0.5 + 0.5 * r.hard) * (this.step ? 0.2 : 1);
         const more = (changes) => { for (const [k, a] of Object.entries(changes)) pose[k] = (pose[k] || 0) + (a as number) * e; };
         if (r.kind === 'winded') {
             // Winded: folded over the blow, knees giving a little, both arms in over it.
@@ -481,11 +522,12 @@ export class Behaviour {
     }
 
     // The leg's joints (pose controls) that put its ankle at `ankle` (world) with the foot level with the floor, from
-    // the hip where it is or, given `hipY`, from the hip at that height under a pelvis upright and facing ahead: what
-    // the leg should be for the body to stand over that foot, so that the hip holds the pelvis to it.
-    _legTo(side, ankle: BABYLON.Vector3, pose, f, hipY?: number) {
-        const rd = this.rd, leg = this.leg[side], pelvis = rd.byName.get('pelvis');
-        const turn = hipY === undefined ? pelvis.node.rotationQuaternion : Q.RotationAxis(BABYLON.Axis.Y, this.heading);
+    // the hip where it is or, given `hipY`, from the hip at that height under the pelvis set upright where it faces now:
+    // what the leg should be for the body to stand over that foot, so that the hip holds the pelvis upright to it. (Set
+    // to the way they mean to face instead, a pelvis twisted by a blow fought the planted leg and dragged the foot.)
+    _legTo(side, ankle: BABYLON.Vector3, pose, f, hipY?: number, upright = true) {
+        const rd = this.rd, leg = this.leg[side], pelvis = rd.byName.get('pelvis'), q = pelvis.node.rotationQuaternion;
+        const turn = hipY === undefined || !upright ? q : Q.RotationAxis(BABYLON.Axis.Y, Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x)));
         Q.InverseToRef(turn, _q);
         ankle.subtractToRef(rd.byName.get('thigh' + side).node.position, _v);
         if (hipY !== undefined) _v.y = ankle.y - hipY;
