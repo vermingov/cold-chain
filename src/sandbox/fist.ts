@@ -13,7 +13,7 @@ const V3 = BABYLON.Vector3;
 
 // The knuckles, in the eye's frame (x right, y up, z ahead), m.
 const DOWN = new V3(0.2, -0.5, 0.12);       // hanging, below the picture
-const COCKED = new V3(0.17, -0.15, 0.08);   // drawn back beside the cheek
+const COCKED = new V3(0.14, -0.09, 0.2);    // drawn back beside the jaw, at the bottom corner of the view (further in is out of it)
 const MISS = new V3(0.02, -0.04, 0.6);      // the arm's end, nothing met
 const ELBOW = new V3(0.22, -0.32, -0.15);   // the forearm runs back from the fist toward about here
 const SPEED = 7;                             // m/s at the hand, the most
@@ -60,7 +60,7 @@ export class Fist {
     // true if something was there to stop them.
     punch({ aim, land }: { aim?: () => number | null; land?: (speed: number, ahead: number) => boolean } = {}) {
         const from = this.t >= 0 ? this.at.clone() : DOWN.clone();
-        const up = 0.11 * Math.min(1, Math.max(0.35, V3.Distance(from, COCKED) / V3.Distance(DOWN, COCKED)));
+        const up = 0.16 * Math.min(1, Math.max(0.35, V3.Distance(from, COCKED) / V3.Distance(DOWN, COCKED)));
         this.keys = [{ at: from, t: 0, turn: 0, ease: smooth }, { at: COCKED, t: up, turn: 0, ease: smooth }, { at: MISS, t: up + 1, turn: 1, ease: drive }];
         this.contact = Infinity;
         this.t = 0;

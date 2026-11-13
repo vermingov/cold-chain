@@ -800,8 +800,9 @@ float bruiseGloss = 0.0;
         pale = max(pale, mid * exp(-age / 6.0));
     }
     float n1 = bruiseNoise(vBruiseRest * 160.0), n2 = bruiseNoise(vBruiseRest * 1400.0), n3 = bruiseNoise(vBruiseRest * 48.0);
+    float b = bt.y * clamp(1.0 + pat * 0.85, 0.3, 2.2) * (0.62 + 0.5 * n3 + 0.3 * (n1 - 0.5));
     // The dermis full of blood is as dark as a bruise gets: blood under that does not show through it.
-    float b = 0.65 * (1.0 - exp(-bt.y / 0.65)) * clamp(1.0 + pat * 0.85, 0.3, 2.2) * (0.62 + 0.5 * n3 + 0.3 * (n1 - 0.5));
+    b = 0.8 * (1.0 - exp(-b / 0.8));
     // A thin edge shows only in places; pinpoint bleeds round a fresh one.
     b = max(0.0, b - 0.07 * (1.0 - n1));
     b += step(0.92, n2) * smoothstep(0.08, 0.2, bt.y) * (1.0 - smoothstep(0.3, 0.7, bt.y)) * 0.3 * (1.0 - smoothstep(0.2, 0.6, bt.z));

@@ -69,7 +69,7 @@ export async function openSandbox(engine, canvas, hud) {
     const models = new Models(scene, { cast: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) });
 
     const world: any = {
-        scene, camera, canvas, player, blood, models, npcs: [] as Npc[], frame: 0, dt: 1 / 60, bodyOf: new WeakMap(),
+        scene, camera, canvas, player, blood, models, people, npcs: [] as Npc[], frame: 0, dt: 1 / 60, bodyOf: new WeakMap(),
         shadows: { addShadowCaster: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) },
         sound: null,
     };
