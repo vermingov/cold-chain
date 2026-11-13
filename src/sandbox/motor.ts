@@ -27,6 +27,8 @@ export type Strength = { trunk: number; neck: number; armL: number; armR: number
 
 const _q = new Q(), _q2 = new Q(), _local = new Q(), _v = new V3(), _w = new V3(), _a = new V3(), _now = [0, 0, 0];
 const NONE = new Set<string>();
+const _c = new V3();
+const STEP = 1 / 120;       // s: every physics step (sandbox.ts)
 const GUARD = 0.8;          // s: how slowly a guarded limb's aim follows where it lies
 
 export class Muscles {
@@ -151,7 +153,13 @@ export class Muscles {
         const s = Math.hypot(_q2.x, _q2.y, _q2.z), angle = 2 * Math.atan2(s, _q2.w);
         out.set(_q2.x, _q2.y, _q2.z).scaleInPlace(s > 1e-6 ? angle / s : 0);
         seg.body.getAngularVelocityToRef(_a);
-        out.scaleInPlace(rate).subtractInPlace(_a.scaleInPlace(2 * Math.sqrt(rate))).scaleInPlace(inertia);
+        // The damping no more than one step can take out of this segment's own spin (half of it): a push worked out
+        // from where it is now and given for the whole of a step overshoots past that, and a pelvis turned toward
+        // its heading with the whole body's 40 kg m2 of damping, on 0.1 kg m2 of its own, was flung one way and the
+        // other every step (0.7 to 1 rad/s of buzz, standing still, carried down to the feet).
+        seg.spin ??= Math.min(...['x', 'y', 'z'].map((k) => seg.body.getMassProperties().inertia[k]));
+        const damp = Math.min(2 * Math.sqrt(rate) * inertia, 0.5 * seg.spin / STEP);
+        out.scaleInPlace(rate * inertia).subtractInPlace(_a.scaleInPlace(damp));
         const n = out.length();
         if (n > most) out.scaleInPlace(most / n);
         return out;
@@ -159,9 +167,18 @@ export class Muscles {
 
     // The force that carries `seg`'s middle toward `at` like a damped spring (`rate` per second squared) for `mass`
     // kg, no more than `most` N.
-    reach(seg, at: BABYLON.Vector3, rate: number, mass: number, most: number, out: BABYLON.Vector3) {
+    // Damped against how `carrier` moves there when given (a hand on a wound of an arm or the trunk, which sway: damped
+    // against the room, the hand fought every sway of what it held, and the two arms shook each other, 8 to 16 rad/s).
+    reach(seg, at: BABYLON.Vector3, rate: number, mass: number, most: number, out: BABYLON.Vector3, carrier = null) {
         this.ragdoll.worldPoint(seg, seg.centre, _v);
         seg.body.getLinearVelocityToRef(_a);
+        if (carrier) {
+            // (The carrier's own velocity at that point: its middle's, and its spin about it.)
+            carrier.body.getLinearVelocityToRef(_w);
+            _a.subtractInPlace(_w);
+            carrier.body.getAngularVelocityToRef(_w);
+            _a.subtractInPlace(V3.Cross(_w, _v.subtract(this.ragdoll.worldPoint(carrier, carrier.centre, _c))));
+        }
         at.subtractToRef(_v, out).scaleInPlace(rate).subtractInPlace(_a.scaleInPlace(2 * Math.sqrt(rate))).scaleInPlace(mass);
         const n = out.length();
         if (n > most) out.scaleInPlace(most / n);

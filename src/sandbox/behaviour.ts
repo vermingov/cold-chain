@@ -733,14 +733,14 @@ export class Behaviour {
         // it on into what stopped it.
         if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.6 : 0.75;
         if (g.hold) return;
-        const chest = rd.byName.get('chest');
+        const chest = rd.byName.get('chest'), carrier = this.wound?.seg ?? null;
         if (touching) {
             // Pressed into the skin a little, as firmly as it hurts.
             const into = at.subtract(out.scale(0.03)), most = 12 * this.will * how;
-            this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, into, 25, 1.5, most, _t), [chest], dt));
+            this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, into, 25, 1.5, most, _t, carrier), [chest], dt));
         } else {
             const most = 30 * this.will * how;
-            this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, to, 60, 1.5, most, _t), [chest], dt));
+            this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, to, 60, 1.5, most, _t, carrier), [chest], dt));
         }
     }
 
