@@ -607,7 +607,8 @@ export class Behaviour {
             const hand = this.rd.byName.get('hand' + side);
             if (!lying && !this.rd.cutOff(hand)) {
                 const belly = this.rd.byName.get('belly'), g = belly.geo;
-                const cradle = this.rd.worldPoint(belly, new V3(g.c.x + (side === 'L' ? 0.07 : -0.07), g.c.y + g.h.y * 0.5, g.c.z + g.h.z + 0.05), new V3());
+                // (Low on the belly and not far across: the other arm reaches over it to the wound.)
+                const cradle = this.rd.worldPoint(belly, new V3(g.c.x + (side === 'L' ? 0.04 : -0.04), g.c.y - g.h.y * 0.2, g.c.z + g.h.z + 0.05), new V3());
                 const reach = this._armTo(side, cradle), all = smooth(e * 2.5);
                 for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
                 pose['curl' + side] = 35;
@@ -1132,17 +1133,18 @@ function handAt(arm, x: number[], out: BABYLON.Vector3) {
 // The ways of holding an arm a reach is tried from (_armTo): up in front of the chest, across it high and low, in front
 // of the belly, down by the side, down in front of the thigh.
 const SEEDS = [[-60, 40, 0, 95], [-80, 65, 25, 105], [-45, 80, -30, 125], [-30, 20, 60, 85], [10, 25, 10, 60], [-45, 25, -20, 25]];
-// The forearm kept out of the trunk's boxes (_armTo): at the elbow, half way down it and near the wrist, by about its
-// flesh (m). The hand itself is meant to come to the body.
-const ALONG = [0, 0.5, 0.75], FLESH = [0.04, 0.036, 0.03];
+// The forearm and hand kept out of the trunk's boxes (_armTo): at the elbow, half way down it, near the wrist, the
+// hand's middle and the fingertips, by about their flesh (m). (The hand only as far as its palm: it is meant to come to
+// the body; let through, it went across the front of the chest through the chest's box and stopped on it.)
+const ALONG = [0, 0.5, 0.75, 1, 1.2], FLESH = [0.04, 0.036, 0.03, 0.018, 0.008];
 
 // What a reach misses by, as a list (_r, its length returned): the hand from _goal, then how deep each point of the
 // forearm is in the trunk.
-const _r = new Array(6).fill(0), _r2 = new Array(6).fill(0), _J = [_r.slice(), _r.slice(), _r.slice(), _r.slice()];
+const _r = new Array(8).fill(0), _r2 = new Array(8).fill(0), _J = [_r.slice(), _r.slice(), _r.slice(), _r.slice()];
 function misses(arm, x: number[], r: number[]) {
     handAt(arm, x, _now);
     r[0] = _now.x - _goal.x; r[1] = _now.y - _goal.y; r[2] = _now.z - _goal.z;
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < ALONG.length; k++) {
         _pt.copyFrom(_fore).scaleInPlace(ALONG[k]).addInPlace(_elbow);
         let deep = 0;
         for (const b of arm.boxes) {
