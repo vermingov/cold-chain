@@ -118,6 +118,8 @@ const HAND = {
     CUP: [0.07, 0.14], VARY: 0.12, CONVERGE: 0.6, THUMB_TURN: 100,
 };
 
+const _rest = Q.Identity();
+
 // Degrees in, radians out. Poses are written in degrees because people think
 // about joints in degrees.
 const RAD = Math.PI / 180;
@@ -243,6 +245,7 @@ export class Person {
     declare byName: Record<string, any>;
     declare skeleton: BABYLON.Skeleton;
     declare hinges: Record<string, any>;
+    declare halves: BABYLON.Bone[][];
 
     // `dead` is drawn in a body's colours rather than a person's, and has
     // no hair that `bald` takes away.
@@ -350,6 +353,8 @@ export class Person {
             this.byName[b.name] = { bone, index: i, head: V3.FromArray(b.head), tail: V3.FromArray(b.tail) };
         });
         this.skeleton = sk;
+        // Each finger joint's half-turn bone (people.py: the skin over the joint is on it) and the phalanx it halves.
+        this.halves = header.bones.filter((b) => /^finger\d-\dh\./.test(b.name)).map((b) => [this.byName[b.name].bone, this.byName[b.name.replace('h.', '.')].bone]);
     }
 
     // Work out, for each hinge, the axis that turns the way its name says.
@@ -470,6 +475,11 @@ export class Person {
 
     // --- posing ---------------------------------------------------------------
 
+    // Every finger joint's half-turn bone turned half as far as the phalanx past it, wherever that was put.
+    halve() {
+        for (const [half, bone] of this.halves) half.setRotationQuaternion(Q.Slerp(_rest, bone.rotationQuaternion ?? _rest, 0.5), BABYLON.Space.LOCAL);
+    }
+
     // `pose` is a map of control name to degrees. Anything not named stays at
     // rest. Called every frame by whoever owns the person.
     //
@@ -514,6 +524,7 @@ export class Person {
             }
             b.bone.setRotationQuaternion(total, BABYLON.Space.LOCAL);
         }
+        this.halve();
         this._face();
         if (ground === 'skin') this._settle();
         else if (ground) this._ground(CONTACTS[ground]);

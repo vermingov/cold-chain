@@ -94,6 +94,7 @@ export class Muscles {
             // (Into a quaternion of its own: `_turn` works in _q2, and given it to fill as well it squared each finger's
             // turn, so a guard's half-closed hands bent every finger joint twice over, out flat and splayed.)
             for (const f of this.fingers) if (!rd.cutOff(f.hand)) f.bone.setRotationQuaternion(this._turn([f.turns], pose, new Q()), BABYLON.Space.LOCAL);
+            rd.person.halve();
         }
     }
 

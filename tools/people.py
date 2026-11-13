@@ -325,6 +325,15 @@ def quantise(per_vertex):
 # along it: each vertex keeps how much it belongs to that finger, as MakeHuman
 # painted it, and that share goes from bone to bone across each joint over
 # BLEND of the finger's length either side of the plane that halves the joint.
+# Blended straight from one bone to the next, the skin over a knuckle bent 90
+# degrees is the average of two places a quarter turn apart and falls in toward
+# the joint, to 0.7 of its distance at best (it measured 0.38 cm over the MCP of
+# a fist where a metacarpal head puts it 1 cm out): the knuckles pinched and the
+# palm side collapsed. So each finger joint has a bone of its own that turns
+# half as far as the phalanx beyond it (`finger3-1h.R`, posed by person.ts), and
+# the skin over the joint goes to it: the skin on the joint's middle plane turns
+# rigidly round the joint's centre and keeps its distance, and either side of it
+# the blend is between turns half as far apart.
 
 HAND = {'SHIFT': 0.13, 'DEPTH': (0.33, 0.36, 0.32), 'BLEND': (0.09, 0.055, 0.045), 'CMC': 0.3}
 
@@ -383,22 +392,32 @@ def hands(bones, body, skin_faces, weights):
                     b['tail'] = new[k + 1]
             ways = [unit(new[0] - meta['head']), unit(new[1] - new[0]), unit(new[2] - new[1]), unit(old[3] - new[2])]
             planes = [(new[k], unit(ways[k] + ways[k + 1]), HAND['BLEND'][k] * length) for k in range(3)]
-            chains.append(([index_of[b['name']] for b in [meta] + phalanges], planes))
+            # A half-turn bone at each joint (person.ts turns it half as far as the phalanx past it), on the parent.
+            halves = []
+            for k, b in enumerate(phalanges):
+                halves.append(len(bones))
+                bones.append({'name': f'finger{f}-{k + 1}h.{side}', 'parent': (meta if k == 0 else phalanges[k - 1])['name'],
+                              'head': new[k], 'tail': b['tail']})
+            chains.append(([index_of[b['name']] for b in [meta] + phalanges], halves, planes))
         thumb, proximal = bone('finger1-1'), bone('finger1-2')
         thumb['head'] = thumb['head'] - (proximal['head'] - thumb['head']) * HAND['CMC']
 
-        for chain, planes in chains:
+        for chain, halves, planes in chains:
             for v, w in enumerate(weights):
                 share = sum(w.pop(b, 0.0) for b in chain)
                 if share <= 0:
                     continue
-                # How far past each joint the vertex is, 0 to 1 across the blend.
-                past = []
+                # How far past each joint the vertex is, 0 to 1 across the blend: the first half goes from the bone
+                # before it to the joint's half-turn bone, the second from that to the bone after it.
+                bone_part, half_part, rest = [], [], 1.0
                 for at, normal, half in planes:
                     x = min(1.0, max(0.0, ((body[v] - at) @ normal + half) / (2 * half)))
-                    past.append(x * x * (3 - 2 * x))
-                parts = [1 - past[0], past[0] * (1 - past[1]), past[0] * past[1] * (1 - past[2]), past[0] * past[1] * past[2]]
-                for b, part in zip(chain, parts):
+                    x = x * x * (3 - 2 * x)
+                    before, after = max(0.0, 1 - 2 * x), max(0.0, 2 * x - 1)
+                    bone_part.append(rest * before)
+                    half_part.append(rest * (1 - before - after))
+                    rest *= after
+                for b, part in zip(chain + halves, bone_part + [rest] + half_part):
                     if part > 1e-4:
                         w[b] = w.get(b, 0.0) + share * part
 
