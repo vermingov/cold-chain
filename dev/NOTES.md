@@ -781,3 +781,41 @@ had written code (src/sandbox/fist.ts, a `fist` hold in table/arm.ts, weapons.ts
 - New: a bandage (dress one wound, timed, soaks through, slows arterial/organ bleeding, stops venous/capillary) and a
   medkit (dresses every wound in turn), hung on the arsenal.
 - Then: performance under heavy carnage across many people (blood, dismemberment, gore), measured on a quiet machine.
+
+## 0.8.19 (2026-11-13, cloud session): the paused jobs, hands, a test map, the story removed
+Checked headless on SwiftShader (frames stepped by hand, numbers read back); nothing seen in real time on a GPU.
+- Reset (K) crash: the cut faces' material borrowed the room's reflection probe and was disposed with its textures,
+  killing the probe; every wet material then read a dead probe's null matrix (`_cacheMatrix`). dismember.ts disposes
+  only its own material and textures. Grenades no longer dispose the grenade model's shared materials. K lets go first.
+- Havok crash (the live build's black screen, wasm-function[708]/[110]/[348]): Havok 1.3.10-1.3.14 corrupts its heap
+  when a POSITION motor is set back to NONE; a later motor call traps. Ragdoll.hold never sets NONE: a limp joint keeps
+  a motor of no force (moves the same as none, to 1e-7 m). Shown in raw Havok and in the game (400 cycles x3, no trap).
+- Standing bounce: sub-steps were each frame's own length (16.6 ms in two, 17 ms in three), moving where joints and the
+  floor settle. Every step is now 1/120 s, the rest carried to the next frame; the 1/30 s cap stays. Pelvis bob at 12-22
+  ms frames 1.2-1.6 cm to 0.3-0.65 cm.
+- Severed pieces: dead tone on their joints, fingers of a cut-off hand unposed, no flinch or tending for a cut-off piece.
+- Punch: the arm (fist.ts) never showed (`world.people` was missing). It aims as it leaves the cocked hand, lands on the
+  frame the knuckles arrive, stops at the skin, at the fist's real speed (~670 N). Arm solved from the shoulder, wrist
+  straight, forearm roll split over both forearm bones, a work-jacket sleeve. motor.ts squared every finger turn (a
+  shared scratch quaternion); fixed.
+- Bruising on the real clock: nothing at the blow, redness in seconds, swelling over minutes, colour over tens of
+  minutes to hours, blue over hours; the shown blood saturates (plum, never black).
+- Bandage and medkit (dressing.ts): 4 s a wound, gauze pad or roll on the skin's bones, soaks and browns, overflows;
+  venous to 5%, arterial to 35%, organ to 75%. Sounds still wanted: gauze packet, unrolling, medkit zip.
+- Hands rebuilt in tools/people.py from the original MakeHuman inputs (unchanged rebuild byte-identical first): MCP
+  joints 13% of the finger toward the wrist, joint centres a third into the finger, thumb CMC back, metacarpals kept,
+  weights split round the new joints, a half-turn helper bone at each finger joint. Coupled curl, cascade, palm cup;
+  NPC poses retuned (relaxed, guard fists, brace, limp).
+- Organs: no scripted spill; bowel, colon and stomach are verlet ropes held by the wall and their attachments, out only
+  through an opening they fit, carried by belly pressure and gravity (pistol and close shotgun holes keep them in).
+  Blood on hit organs; cavity sparkle (a bump in metres) and the striped mesentery sheets gone; a slash is a lens slit.
+  The organs' look was still being worked on (wound edge, vessels, sheen, a glassy dome in shotgun holes).
+- Test map (map.ts): 22 x 22 m hall with grid test textures, ramp, stairs, 1/2/3 m ledges, a balcony, cover walls, a
+  corridor, crates; the player steps and falls; N spawns on any top; people stand on ledges (behaviour.ts floor under
+  them); blood lands on raised tops as growing stains (only the floor flows).
+- The story mode and the table are removed (src/game, src/yard, src/map, src/table except arm.ts, their pages, tools
+  and assets). The fault line shows the error message on Firefox. The rig runs as root.
+- Blender MCP for cloud sessions: .mcp.json runs `blender-mcp`, installed by the GoreGame environment's setup script.
+
+Left: the dark smudge on chin and neck; K grows ~20 materials and 22 textures a reset (not dressing-related); the
+little-finger crease in a full fist; the X-ray hand bones don't cup; performance under carnage (next).

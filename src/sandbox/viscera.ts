@@ -930,7 +930,7 @@ class Loop {
                 if (kind === 'colon') k *= (1 + 0.2 * toward) * (1 - 0.06 * Math.pow(Math.max(0, Math.cos(Math.atan2(sn, c) - (2 * Math.PI) / 3)), 30) - 0.06 * Math.pow(Math.max(0, Math.cos(Math.atan2(sn, c) + (2 * Math.PI) / 3)), 30));
                 else k *= 1 + (kind === 'stomach' ? 0.3 : 0.4) * toward;
                 const inner = nx * cx + ny * cy + nz * cz;
-                k *= 1 - 0.28 * fold * Math.max(0, inner) * (0.75 + 0.25 * Math.sin(f * 9 + s2)) + 0.04 * fold * Math.max(0, -inner);
+                k *= 1 - 0.14 * fold * Math.max(0, inner) + 0.03 * fold * Math.max(0, -inner);
                 pos[o] = x + nx * r * k; pos[o + 1] = y + ny * r * k; pos[o + 2] = z + nz * r * k;
             }
         }
