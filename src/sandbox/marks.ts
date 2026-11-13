@@ -223,28 +223,35 @@ export class Marks {
         this._dirty.add(this.depth);
     }
 
-    // The lips of an opening right through the body's wall (viscera.ts): its edge through skin crossings `edge` (in
-    // order, all round it), and out from it, in a band about `lip` metres wide, the wall's layers as its cut face shows
-    // them: the skin's cut edge, the fat under it, the white sheath, then the muscle, deeper the nearer the hole, and
-    // a little blood in them. A torn wall draws back unevenly, so the band is wider here and narrower there. (Inside the edge,
-    // no skin is drawn.) The depth runs down evenly across the band, so that each layer shows as wide as it is thick
-    // in it; flat steps of depth showed one layer only, the fat, as a band of one colour.
-    lip(edge, lip: number) {
+    // The lips of an opening right through the body's wall (viscera.ts) or torn open by a bullet's way out (wounds.ts):
+    // its edge through skin crossings `edge` (in order, all round it), and out from it, in a band about `lip` metres
+    // wide, the layers as its cut or torn face shows them: the skin's cut edge, the fat under it, the white sheath, then
+    // the muscle, deeper the nearer the hole. A torn wall draws back unevenly, so the band is wider here and narrower
+    // there. (Inside the edge, no skin is drawn.) Each layer takes the share of the band its thickness is of the face
+    // seen: skin about 2 mm, the fat `fat` metres where it is (Derraik 2014: 18 mm on a man's belly; a few on a forearm),
+    // and some 20 mm of torn muscle in view (an estimate). Blood lies over all of it, most in the muscle and the hole,
+    // so the fat shows as glimpses through it (dev/research/stab-wounds.md, gunshot-blood.md). (A band of even depth
+    // steps showed one layer only, the fat, as a band of one colour; one where the depth ran down evenly showed the fat
+    // over half its width, clean and yellow.)
+    lip(edge, lip: number, fat = 0.014) {
         const g = this.depth.getContext() as CanvasRenderingContext2D, n = edge.length;
         const px = (m: number) => Math.max(1, m * edge[0].scale * SIZE);
         const phase = Math.random() * 6;
         const wide = edge.map((_, k) => lip * (0.55 + 0.5 * (0.5 + 0.5 * Math.sin(k * 0.6 + phase) * Math.sin(k * 0.21 + phase * 1.7)) + 0.2 * Math.random()));
+        // Where across the band (0 its outer edge, 1 the hole) each layer ends, and the depth in millimetres Gore draws
+        // that layer at: the skin's edge to 1.6, the fat to 9.5, the sheath to 12, the muscle on to 16 (Gore below).
+        const total = 0.002 + fat + 0.02, skinEnd = 0.002 / total, fatEnd = skinEnd + fat / total;
+        const depthAt = (u: number) => (u < skinEnd ? 0.8 + 0.8 * (u / skinEnd)
+            : u < fatEnd ? 1.6 + 7.9 * ((u - skinEnd) / (fatEnd - skinEnd))
+            : u < fatEnd + 0.04 ? 9.5 + 2.5 * ((u - fatEnd) / 0.04) : 12 + 4 * Math.min(1, (u - fatEnd - 0.04) / (1 - fatEnd - 0.04)));
         g.save();
         g.globalCompositeOperation = 'lighten';
         g.lineCap = 'round';
         g.filter = 'blur(1px)';
-        const STEPS = 10;
+        const STEPS = 20;
         for (let s = 0; s < STEPS; s++) {
-            // From the band's outer edge (out = 1: the skin's cut edge, 1 mm deep) to the hole (the muscle, 14 mm on the
-            // sheet's scale, where Gore draws it red; deeper it draws a wound's dark depths). A little blood in it, most
-            // in the muscle: more and it covers the layers.
-            const out = 1 - s / STEPS, deep = 0.03 + 0.33 * (1 - out);
-            g.strokeStyle = `rgb(${Math.round(255 * deep)},${Math.round(255 * (0.08 + 0.5 * deep))},0)`;
+            const u = s / STEPS, out = 1 - u, deep = depthAt(u) / 40;
+            g.strokeStyle = `rgb(${Math.round(255 * deep)},${Math.round(255 * (0.45 + 0.45 * u))},0)`;
             for (let k = 0; k < n; k++) {
                 const a = edge[k].uv, b = edge[(k + 1) % n].uv;
                 if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.04) continue;
@@ -366,7 +373,8 @@ float goreWet = 0.0;
         // yellow, blood lying in them.
         float lob = mix(0.5, goreNoise(gu * 350.0 + 5.0) * 0.65 + goreNoise(gu * 800.0 + 9.0) * 0.35, glob);
         float inFat = smoothstep(1.6, 3.0, d) * (1.0 - smoothstep(8.5, 10.0, d));
-        vec3 fat = mix(vec3(0.76, 0.55, 0.24), vec3(0.9, 0.74, 0.4), smoothstep(0.3, 0.7, lob));
+        // Fat at a fresh cut is a pale cream to light yellow, never orange (dev/research/wounds.md sec. 0).
+        vec3 fat = mix(vec3(0.82, 0.70, 0.48), vec3(0.93, 0.86, 0.66), smoothstep(0.3, 0.7, lob));
         // Torn muscle: bundles of fibres running one way, ragged, darker between them.
         vec3 muscle = vec3(0.44, 0.09, 0.07) * (0.7 + 0.5 * mix(0.5, goreNoise(gu * vec2(180.0, 1400.0) + 2.0), gmid));
         // The skin's cut edge, rolled a little outward, paler at its rim.
@@ -381,7 +389,9 @@ float goreWet = 0.0;
         float ly = goreNoise((gu + vec2(0.0, goreTexel.y)) * 350.0 + 5.0) - goreNoise((gu - vec2(0.0, goreTexel.y)) * 350.0 + 5.0);
         normalW = normalize(normalW + (gt * gs * lx + gb * gs * ly) * 1.5 * inFat * glob);
         // Blood fills a fresh wound from the bottom and wells over its lips; on a cut face it lies in the hollows.
-        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, goreNoise(gu * 400.0), gmid));
+        // In patches a few millimetres across, thick here and thin there, so what is under it shows through in places.
+        float bloodPatch = mix(0.5, goreNoise(gu * 90.0 + 3.0), glob);
+        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, goreNoise(gu * 400.0), gmid)) * (0.55 + 0.9 * bloodPatch);
         blood += smoothstep(0.42, 0.22, lob) * 0.55 * smoothstep(1.5, 4.0, d) * smoothstep(0.0, 0.03, gm.g);
         surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
         surfaceAlbedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);

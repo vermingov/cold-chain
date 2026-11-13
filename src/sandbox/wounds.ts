@@ -158,7 +158,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         if (k === 0 || h.t >= stopAt || m.slash) return;
         const out = k % 2 === 1, size = out ? exitSize(m, fragments) : m.calibre;
         npc.wound(h, out ? 'out' : 'in', size);
-        if (out && !m.blade) tear(npc, h, size, npc.ragdoll.nearest(h.point).seg?.name === 'head');
+        if (out && !m.blade) tear(npc, h, size, npc.ragdoll.nearest(h.point).seg?.name);
         if (out) { exitAt = h.point; exitHit = h; h.open = true; }    // (open: a hole a dressing can go on, dressing.ts)
     });
     if (exited) for (const h of surface) if (h.kind === 'cloth' && h.t > skins[skins.length - 1].t) {
@@ -329,10 +329,15 @@ function exitSize(m: Missile, fragments: number) {
     return Math.min(0.075, m.calibre * (rifle ? 1.6 + Math.random() * 1.6 : 1 + Math.random() * 0.8) * fragments);
 }
 
+// How thick the fat under the skin is, by where (metres), for what a torn edge shows of it: a man's belly about 14 mm at
+// a normal weight (tissue-mechanics.md sec. 1: 13.8 mm, JCDR; 17.9 mm at BMI 28, Derraik 2014); elsewhere estimates.
+const FAT_UNDER = { head: 0.004, forearm: 0.004, hand: 0.002, upperarm: 0.006, shin: 0.005, foot: 0.003, thigh: 0.01, chest: 0.008, belly: 0.014, pelvis: 0.014 };
+
 // A bullet's way out, torn right through the skin (not a picture on it): one slit (lax skin), two crossing (a star), or
 // three (a star over bone: the scalp), `size` across. The lips turned out, the fat showing in them, no scraped ring
 // (DiMaio 1999 ch. 4). Through the hole, the wound's track into the body (hider.ts draws the body's inside).
-function tear(npc, h, size: number, overBone: boolean) {
+function tear(npc, h, size: number, seg = 'chest') {
+    const overBone = seg === 'head', fat = FAT_UNDER[seg.replace(/2?[LR]$/, '')] ?? 0.008;
     const n = h.restNormal, side = V3.Cross(n, Math.abs(n.y) < 0.9 ? V3.Up() : V3.Right()).normalize(), up = V3.Cross(n, side);
     const arms = overBone ? 3 : size < 0.012 ? 1 : 1 + Math.floor(Math.random() * 2), turn = Math.random() * Math.PI;
     for (let k = 0; k < arms; k++) {
@@ -351,7 +356,7 @@ function tear(npc, h, size: number, overBone: boolean) {
             const on = npc.surface(w.at.add(w.normal.scale(0.1)), w.normal.scale(-1), 0.2).find((s) => s.kind === 'skin');
             if (on) edge.push(on);
         }
-        if (edge.length > 2) npc.marks.lip(edge, 0.0015 + size * 0.04);
+        if (edge.length > 2) npc.marks.lip(edge, 0.0015 + size * 0.04, fat);
     }
 }
 
