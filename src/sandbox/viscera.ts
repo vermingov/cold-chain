@@ -962,16 +962,20 @@ class Loop {
 const COS = Float32Array.from({ length: SIDES }, (_, s) => Math.cos((s / (SIDES - 1)) * Math.PI * 2));
 const SIN = Float32Array.from({ length: SIDES }, (_, s) => Math.sin((s / (SIDES - 1)) * Math.PI * 2));
 
-// The nearest point to (x, y, z) on the segment from capsule `c`'s end a to its end b.
+// The nearest point to (x, y, z) on the segment from capsule `c`'s end a to its end b, into NEAR (read it before the
+// next call: it is asked for every point of every loop six times a frame, and a new array each time was most of the
+// garbage a frame made).
+const NEAR = new Float64Array(3);
 function nearestOnSegment(x: number, y: number, z: number, c) {
     const ux = c.b.x - c.a.x, uy = c.b.y - c.a.y, uz = c.b.z - c.a.z, uu = ux * ux + uy * uy + uz * uz || 1e-9;
     const t = Math.max(0, Math.min(1, ((x - c.a.x) * ux + (y - c.a.y) * uy + (z - c.a.z) * uz) / uu));
-    return [c.a.x + ux * t, c.a.y + uy * t, c.a.z + uz * t];
+    NEAR[0] = c.a.x + ux * t; NEAR[1] = c.a.y + uy * t; NEAR[2] = c.a.z + uz * t;
+    return NEAR;
 }
 
 function distToSegment(x: number, y: number, z: number, c) {
-    const [nx, ny, nz] = nearestOnSegment(x, y, z, c);
-    return Math.hypot(x - nx, y - ny, z - nz);
+    const near = nearestOnSegment(x, y, z, c);
+    return Math.hypot(x - near[0], y - near[1], z - near[2]);
 }
 
 // Half the width of an opening `half` metres ([half its length, half its width at most]) at `x` metres along it from its

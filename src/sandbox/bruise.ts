@@ -65,6 +65,8 @@ const SETTLES = 21600;          // seconds for that to slow to a third, as it cl
 const SINKS = 1.7e-7;           // m/s: how fast blood that shows creeps downhill
 const TRACKS = 5e-7;            // m/s: and deep blood, along the planes between the layers (brow to lids in a day)
 const SPLITS = 1.6;             // damage over bone past which skin splits under one more blow
+const MET = 0.012;              // m: a layer standing further off the skin than this is never met by its swelling
+const SQUEEZE = 0.3;            // of the swelling a tight dressing presses back (a compression bandage's job)
 
 // What hits (bones.ts's TOOLS): how stiff it is (N/m) and the patch it lands on (cm2).
 const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 } };
@@ -146,6 +148,9 @@ export class Bruise {
     declare spent: number;
     declare _unknown: number;
     declare materials: BABYLON.Material[];
+    declare press: Float32Array;
+    declare riders: Rider[];
+    declare _carry: boolean;
 
     constructor(npc) {
         this.npc = npc;
@@ -262,18 +267,34 @@ export class Bruise {
         mesh.setVerticesBuffer(this.buffer.createVertexBuffer('bruiseTint', 0, 4));
         mesh.setVerticesBuffer(this.buffer.createVertexBuffer('bruiseShift', 4, 3));
         mesh.setVerticesBuffer(this.buffer.createVertexBuffer('bruiseTilt', 7, 3));
-        // (the brows' material made this person's own, to move them with the skin)
+        // (the brows' and hair's materials made this person's own, to move them with the skin; the clothes' are already)
         const multi = mesh.material as BABYLON.MultiMaterial, subs = multi.subMaterials.slice();
         this.materials = [];
         person.header.parts.forEach((p, k) => {
-            if (p.kind !== 'brows' || !subs[k]) return;
+            if ((p.kind !== 'brows' && p.kind !== 'hair') || !subs[k]) return;
             subs[k] = subs[k].clone(`${subs[k].name}:${mesh.name}`);
             new BruiseLayer(subs[k], this, false);
             this.materials.push(subs[k]);
         });
         multi.subMaterials = subs;
+        const worn = (npc.clothes?.material as BABYLON.MultiMaterial)?.subMaterials;
+        person.header.parts.forEach((p, k) => { if (p.worn && worn?.[k]) new BruiseLayer(worn[k], this, false); });
         this.dirty = new Uint8Array(n);
         this.changed = [];
+        // What lies on the skin is carried out by its swelling where the swelling reaches it: the clothes and the hair
+        // (corners of this same mesh) and dressings (ride()). A sleeve standing off is met only once the skin has come
+        // out to it, a tight one or a dressing at once; and a tight layer presses back (`press`).
+        this.press = new Float32Array(M);
+        this.riders = [];
+        this._carry = false;
+        // (Hair presses on nothing.)
+        for (const hair of [false, true]) {
+            const layers: number[] = [];
+            for (const p of person.header.parts) if (hair ? p.kind === 'hair' : p.worn) for (let v = p.vertexStart; v < p.vertexStart + p.vertexCount; v++) layers.push(v);
+            const at = new Float32Array(layers.length * 3);
+            layers.forEach((v, k) => at.set([pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]], k * 3));
+            if (layers.length) this.ride(null, at, 0, hair ? 0 : 0.3, Int32Array.from(layers));
+        }
         this.at = new Float32Array(RECORDS * 4);
         this.axis = new Float32Array(RECORDS * 4);
         this.face = new Float32Array(RECORDS * 4);
@@ -677,7 +698,7 @@ export class Bruise {
     _touch(i: number) {
         const cap = 0.003 + 0.006 * this.lax[i];
         const swollen = this.oed[i] + HAEMATOMA * (this.pool[i] + this.blood[i]);
-        const h = (this.h[i] = cap * (1 - Math.exp(-swollen / cap)) * this.rim[i]);
+        const h = (this.h[i] = cap * (1 - Math.exp(-swollen / cap)) * this.rim[i] * (1 - SQUEEZE * this.press[i]));
         const w = this.sent, blue = 1 - Math.exp(-this.age[i] / BLUES);
         const moved = !(Math.abs(h - w[i * 4 + 3]) < 6e-5);
         if (!moved && Math.abs(this.ery[i] - w[i * 4]) < 0.004 && Math.abs(this.blood[i] - w[i * 4 + 1]) < 0.004 && Math.abs(blue - w[i * 4 + 2]) < 0.02) return;
@@ -705,6 +726,7 @@ export class Bruise {
         gx -= along * nx; gy -= along * ny; gz -= along * nz;
         const sx = nx * h[i] + this.shift[i * 3], sy = ny * h[i] + this.shift[i * 3 + 1], sz = nz * h[i] + this.shift[i * 3 + 2];
         const D = this.data;
+        this._carry = true;
         for (let k = this.vStart[i]; k < this.vStart[i + 1]; k++) {
             const v = this.vList[k], o = v * STRIDE, f = -this.flip[v];
             D[o] = this.ery[i]; D[o + 1] = this.blood[i]; D[o + 2] = blue; D[o + 3] = h[i] * 100;
@@ -716,6 +738,7 @@ export class Bruise {
 
     // What changed, up to the card: the corners changed, in runs (gaps of a few corners sent along with them).
     _send() {
+        if (this._carry) this._carried();
         const changed = this.changed;
         if (!changed.length) return;
         changed.sort((a, b) => a - b);
@@ -742,7 +765,79 @@ export class Bruise {
         }
     }
 
+    // A layer over the skin to be carried out by its swelling: corners at rest positions `at` (x, y, z each), standing
+    // `base` m off the skin where they lie on it, pressing on it by `tight` (0 to 1) where they do. `mesh` given, the
+    // layer is a mesh of its own (a dressing) and is given its own shift to read; otherwise it is corners `slots` of
+    // this person's mesh.
+    ride(mesh: BABYLON.Mesh | null, at: ArrayLike<number>, base: number, tight: number, slots: Int32Array | null = null): Rider {
+        const n = at.length / 3, place = new Int32Array(n).fill(-1), gap = new Float32Array(n), P = this.pos, N = this.nor, p = new V3();
+        for (let k = 0; k < n; k++) {
+            p.set(at[k * 3], at[k * 3 + 1], at[k * 3 + 2]);
+            let best = MET;
+            this._around(p, MET, (i, d) => {
+                const off = (p.x - P[i * 3]) * N[i * 3] + (p.y - P[i * 3 + 1]) * N[i * 3 + 1] + (p.z - P[i * 3 + 2]) * N[i * 3 + 2];
+                if (off > -0.003 && d < best) { best = d; place[k] = i; gap[k] = Math.max(0, off - base); }
+            });
+        }
+        const r: Rider = { mesh, buffer: null, data: this.data, stride: STRIDE, offset: 4, slots, place, gap, tight };
+        if (mesh) {
+            r.data = new Float32Array(n * 3);
+            r.stride = 3;
+            r.offset = 0;
+            r.buffer = new BABYLON.Buffer(this.npc.world.scene.getEngine(), r.data, true, 3);
+            mesh.setVerticesBuffer(r.buffer.createVertexBuffer('bruiseShift', 0, 3));
+        }
+        this.riders.push(r);
+        this._pressed();
+        this._carry = true;
+        this._carried();
+        return r;
+    }
+
+    unride(r: Rider) {
+        const k = this.riders.indexOf(r);
+        if (k < 0) return;
+        this.riders.splice(k, 1);
+        r.buffer?.dispose();
+        this._pressed();
+    }
+
+    // How hard what lies on each place presses on it: a tight layer touching it all of its own `tight`, nothing from one
+    // standing 3 mm or more off. Places whose press changed are put back on the clock to swell to it.
+    _pressed() {
+        const was = this.press.slice();
+        this.press.fill(0);
+        for (const r of this.riders) {
+            for (let k = 0; k < r.place.length; k++) {
+                const i = r.place[k];
+                if (i >= 0) this.press[i] = Math.max(this.press[i], r.tight * (1 - smooth(0, 0.003, r.gap[k])));
+            }
+        }
+        for (let i = 0; i < this.count; i++) if (this.press[i] !== was[i] && this.oed[i] + this.pool[i] + this.blood[i] > 0) this._wake(i);
+    }
+
+    // Every layer moved out by as much of the swelling under it as reaches it.
+    _carried() {
+        this._carry = false;
+        const h = this.h, N = this.nor, S = this.shift;
+        for (const r of this.riders) {
+            let lo = Infinity, hi = -1;
+            for (let k = 0; k < r.place.length; k++) {
+                const i = r.place[k];
+                if (i < 0) continue;
+                const out = Math.max(0, h[i] - r.gap[k]), v = r.slots ? r.slots[k] : k, o = v * r.stride + r.offset, D = r.data;
+                const x = N[i * 3] * out + S[i * 3], y = N[i * 3 + 1] * out + S[i * 3 + 1], z = N[i * 3 + 2] * out + S[i * 3 + 2];
+                if (Math.abs(D[o] - x) + Math.abs(D[o + 1] - y) + Math.abs(D[o + 2] - z) < 2e-5) continue;
+                D[o] = x; D[o + 1] = y; D[o + 2] = z;
+                if (!r.buffer) { if (!this.dirty[v]) { this.dirty[v] = 1; this.changed.push(v); } }
+                else { lo = Math.min(lo, k); hi = k; }
+            }
+            if (r.buffer && hi >= 0) r.buffer.updateDirectly(r.data.subarray(lo * 3, (hi + 1) * 3), lo * 3, hi - lo + 1);
+        }
+    }
+
     dispose() {
+        for (const r of this.riders) r.buffer?.dispose();
         this.buffer.dispose();
         for (const m of this.materials) m.dispose();
     }
@@ -816,6 +911,10 @@ float bruiseGloss = 0.0;
 }
 #endif
 `;
+
+// A layer carried by the swelling (Bruise.ride).
+type Rider = { mesh: BABYLON.Mesh | null; buffer: BABYLON.Buffer | null; data: Float32Array; stride: number; offset: number; slots: Int32Array | null;
+    place: Int32Array; gap: Float32Array; tight: number };
 
 export class BruiseLayer extends BABYLON.MaterialPluginBase {
     declare bruise: Bruise;

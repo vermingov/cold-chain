@@ -260,7 +260,9 @@ export class Npc {
 
     // The matrix from the body at rest to the world now, for what bone `owner` carries.
     restToWorld(owner) {
-        return BABYLON.Matrix.Translation(-owner.head.x, -owner.head.y, -owner.head.z).multiply(owner.bone.getAbsoluteMatrix()).multiply(this.person.mesh.getWorldMatrix());
+        // (Multiplied in place: one new matrix, not three. It is asked for for every run, loop and bruise every frame.)
+        const m = BABYLON.Matrix.Translation(-owner.head.x, -owner.head.y, -owner.head.z);
+        return m.multiplyToRef(owner.bone.getAbsoluteMatrix(), m).multiplyToRef(this.person.mesh.getWorldMatrix(), m);
     }
 
     // A place on the body at rest as a crossing like surface()'s: triangle `t` (an offset into the index), `w` how
