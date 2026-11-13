@@ -26,6 +26,19 @@ export async function openSandbox(engine, canvas, hud) {
     scene.clearColor = new BABYLON.Color4(0.02, 0.02, 0.022, 1);
     const havok = await HavokPhysics();
     scene.enablePhysics(new V3(0, -9.81, 0), new BABYLON.HavokPlugin(true, havok));
+    // Never a step longer than a hundred and twentieth of a second: a frame is cut into as many as that takes. One long
+    // step (up to a tenth of a second, on a hitch) tore the people's joints apart and sank them into the floor, and at
+    // a sixtieth a standing body still sagged and sprang on its legs by four centimetres.
+    // Before each, the people push on what they push on (behaviour.ts).
+    const physics = scene.getPhysicsEngine() as BABYLON.PhysicsEngine;
+    const step = physics._step.bind(physics);
+    physics._step = (delta) => {
+        const pieces = Math.ceil(Math.min(delta, 0.1) * 120 - 1e-6), piece = Math.min(delta, 0.1) / pieces;
+        for (let i = 0; i < pieces; i++) {
+            for (const npc of world.npcs) npc.behaviour.beforeStep(piece);
+            step(piece);
+        }
+    };
 
     const lights = light(scene);
     const surfaces = new Surfaces(scene);
@@ -50,13 +63,15 @@ export async function openSandbox(engine, canvas, hud) {
         shadows: { addShadowCaster: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) },
         sound: null,
     };
+    blood.bodies = () => world.npcs;
     const weapons = new Weapons(world);
     world.weapons = weapons;
     await weapons.load();
 
     let made = 0, lastHurt: Npc | null = null;
     const spawn = async (body, at: BABYLON.Vector3, yaw) => {
-        const number = ++made, bit = 4 + ((number - 1) % 27);
+        // Each person's own collision bit, one bit (a sum like 4 + n once took the floor's bit with it and let them fall through).
+        const number = ++made, bit = 8 << ((number - 1) % 27);
         const npc = await Npc.make(world, people, body, { at, yaw, bit, mass: MASS[body], name: CALLED[body] });
         for (const seg of npc.ragdoll.segments) world.bodyOf.set(seg.body, { npc, seg });
         npc.label = `${CALLED[body]} (${number})`;
@@ -95,8 +110,9 @@ export async function openSandbox(engine, canvas, hud) {
     // Sound starts on the click that starts the sandbox (a page may not sound before one).
     world.start = async () => {
         const sound = await new Sound().load('assets/sounds/', await (await fetch('assets/sounds/manifest.json')).json());
+        await sound.load('assets/cries/', await (await fetch('assets/cries/manifest.json')).json());
         sound.room('cold');
-        world.sound = { shot: (name, o = {}) => { if (sound.has(name)) sound.shot(name, o); }, raw: sound };
+        world.sound = { shot: (name, o = {}) => (sound.has(name) ? sound.shot(name, o) : null), now: () => sound.context.currentTime, raw: sound };
         player.onStep = (_, weight) => world.sound.shot('step-tarmac', { gain: weight * 0.8, most: 0.4 });
         if (sound.has('room-sandbox')) world.tone = sound.stream('room-sandbox');
     };
@@ -137,6 +153,9 @@ function see(npc, on) {
     npc.insides.mesh.setEnabled(on);
     npc.person.mesh.visibility = on ? 0.18 : 1;
     npc.clothes.visibility = on ? 0.06 : 1;
+    // Hair is cut out rather than blended, which ignores the mesh's visibility and hid a broken skull: blended while seen through.
+    const hair = (npc.person.mesh.material as BABYLON.MultiMaterial).subMaterials.filter((m, i) => npc.person.header.parts[i].kind === 'hair');
+    for (const m of hair) m.transparencyMode = on ? BABYLON.Material.MATERIAL_ALPHATESTANDBLEND : BABYLON.Material.MATERIAL_ALPHATEST;
 }
 
 // The hall's lights: two big lamps hung over the middle, each casting shadows, and a little from everywhere.

@@ -14,7 +14,7 @@ const RESERVE = 10;             // seconds a brain stays awake with no blood rea
 const BRAIN_DEATH = 300;        // seconds of no blood to the brain before it is gone for good
 const COLLAPSE = 75;            // seconds a punctured lung takes to collapse
 
-export type Bleed = { name: string; rate: number; arterial: boolean; internal: boolean; clots: number; lost: number; spurts?: boolean; source?: any };
+export type Bleed = { name: string; rate: number; arterial: boolean; internal: boolean; clots: number; lost: number; spurts?: boolean; source?: any; flow?: number; jet?: number };
 
 export class Vitals {
     declare full: number;
@@ -32,7 +32,9 @@ export class Vitals {
     declare reserve: number;
     declare brainDamage: number;
     declare starved: number;
-    declare concussion: number;
+    declare _concussion: number;
+    declare out: number;
+    declare daze: number;
     declare pain: number;
     declare paralysed: { legs: boolean; arms: boolean };
     declare injuries: { text: string; severity: number }[];
@@ -41,6 +43,7 @@ export class Vitals {
     declare beat: number;
     declare onBeat: (() => void) | null;
     declare time: number;
+    declare stopped: number;
 
     constructor(mass = 75) {
         this.full = 0.07 * mass;
@@ -58,7 +61,9 @@ export class Vitals {
         this.reserve = 1;
         this.brainDamage = 0;
         this.starved = 0;
-        this.concussion = 0;
+        this._concussion = 0;
+        this.out = 0;              // seconds left knocked out
+        this.daze = 0;             // 0 to 1: how muddled after a blow to the head, wearing off over minutes
         this.pain = 0;
         this.paralysed = { legs: false, arms: false };
         this.injuries = [];
@@ -67,6 +72,7 @@ export class Vitals {
         this.beat = 0;
         this.onBeat = null;
         this.time = 0;
+        this.stopped = 0;          // seconds since the heart last beat
     }
 
     get lost() { return 1 - this.volume / this.full; }
@@ -77,7 +83,8 @@ export class Vitals {
         const brain = this.brainDamage > 0.04 ? 0 : 1 - this.brainDamage * 10;
         const blood = Math.max(0, Math.min(1, (this.reserve - 0.15) / 0.55));
         const shock = this.lost > 0.38 ? Math.max(0, 1 - (this.lost - 0.38) / 0.08) : 1;
-        return Math.max(0, Math.min(brain, blood, shock, 1 - this.concussion));
+        const knocked = this.out > 0 ? 0.12 : 1 - this.daze * 0.45;
+        return Math.max(0, Math.min(brain, blood, shock, knocked));
     }
     get systolic() { return Math.round(this.map * 1.32); }
     get diastolic() { return Math.round(this.map * 0.84); }
@@ -89,6 +96,25 @@ export class Vitals {
         if (!this.breathing) return 'Not breathing';
         const c = this.conscious;
         return c < 0.35 ? 'Unconscious' : c < 0.75 ? 'Confused' : this.pain > 0.5 ? 'Conscious, in pain' : 'Conscious';
+    }
+
+    // How hard the brain has been shaken by blows to the head, 0 to 1. Only blows to the head add to it. Each blow is
+    // judged as it lands: a hard one knocks a person out for seconds to a minute or so, and they come round muddled;
+    // a lighter one only dazes them. A knockout is a chance, not a certainty, and it does not come from a body blow
+    // at all (dev/research/blunt-trauma.md: concussion follows the head's rotational acceleration, a punch is near the
+    // threshold, a full bat swing well over it).
+    get concussion() { return this._concussion; }
+    set concussion(value: number) {
+        const blow = value - this._concussion;
+        this._concussion = Math.max(0, Math.min(1, value));
+        if (blow <= 0) return;
+        const chance = Math.max(0, Math.min(1, (blow - 0.22) / 0.45));
+        if (Math.random() < chance) this.out = Math.max(this.out, 4 + blow * 70 * (0.5 + Math.random()));
+        this.daze = Math.min(1, this.daze + blow * 0.8);
+        if (this.out > 0) {
+            this.injuries = this.injuries.filter((i) => i.text !== 'Dazed by a blow to the head');
+            this.injure('Knocked out by a blow to the head', 6);
+        } else if (blow > 0.15 && !this.injuries.some((i) => i.text.startsWith('Knocked out'))) this.injure('Dazed by a blow to the head', 3);
     }
 
     bleed(b: Partial<Bleed> & { name: string; rate: number }) {
@@ -128,14 +154,20 @@ export class Vitals {
         } else {
             this.hr += (0 - this.hr) * Math.min(1, dt * 3);
             this.map += (6 - this.map) * Math.min(1, dt / 4);
-            if (this.time % 120 > 119 && this.rhythm === 'fibrillating') this.rhythm = 'none';
+            this.stopped += dt;
+            // Fibrillation runs down to nothing in a few minutes without a shock.
+            if (this.stopped > 180 && this.rhythm === 'fibrillating') this.rhythm = 'none';
         }
 
         // --- blood out
         let out = 0;
+        // With the heart stopped a wound still drains, by its own weight, slower and slower as the blood settles and
+        // clots: a dead man shot in the head still bleeds onto the floor.
+        const drains = this.beating ? 0 : 0.2 * Math.exp(-this.stopped / 300);
         for (const b of this.bleeds) {
-            const push = Math.pow(Math.max(0, this.map) / NORMAL.map, b.arterial ? 1 : 0.6);
-            const lost = b.rate * push * dt;
+            const push = Math.max(Math.pow(Math.max(0, this.map) / NORMAL.map, b.arterial ? 1 : 0.6), b.internal ? 0 : drains);
+            b.flow = b.rate * push;
+            const lost = b.flow * dt;
             b.lost += lost;
             out += lost;
             b.rate *= Math.exp(-b.clots * dt * (b.arterial ? 0.15 : 1));
@@ -156,7 +188,9 @@ export class Vitals {
         if (reaching < 0.5) this.reserve = Math.max(0, this.reserve - dt / RESERVE * (1 - reaching * 2));
         else this.reserve = Math.min(1, this.reserve + dt / 20);
         this.starved = this.reserve <= 0.05 ? this.starved + dt : Math.max(0, this.starved - dt * 0.2);
-        this.concussion = Math.max(0, this.concussion - dt / 40);
+        this._concussion = Math.max(0, this._concussion - dt / 40);
+        this.out = Math.max(0, this.out - dt);
+        this.daze = Math.max(0, this.daze - dt / 240);
         this.pain = Math.max(0, this.pain - dt / 90);
         if (this.starved > BRAIN_DEATH || this.brainDamage > 0.25) this.dead = true;
         if (this.dead) { this.rhythm = this.rhythm === 'sinus' ? 'none' : this.rhythm; this.breathing = false; }

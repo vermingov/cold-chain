@@ -6,14 +6,20 @@
 // using how many texture units a metre of skin takes up where it landed.
 
 import * as BABYLON from '@babylonjs/core';
+const V3 = BABYLON.Vector3;
 
 const SIZE = 2048;
 
 export class Marks {
     declare skin: BABYLON.DynamicTexture;
     declare cloth: BABYLON.DynamicTexture;
+    declare depth: BABYLON.DynamicTexture;
     declare _dirty: Set<BABYLON.DynamicTexture>;
     declare _soaked: Map<any, number>;
+    declare _old: boolean;
+    declare npc: any;
+    declare stains: { at: BABYLON.Vector3; n: BABYLON.Vector3; litres: number; radius: number; i: number }[];
+    declare _frames: number;
     declare _flush: BABYLON.Observer<BABYLON.Scene>;
     declare scene: BABYLON.Scene;
 
@@ -21,6 +27,9 @@ export class Marks {
         this.scene = scene;
         this._dirty = new Set();
         this._soaked = new Map();
+        this._frames = 0;
+        this.npc = npc;
+        this.stains = [];
         const sheet = (name, mesh) => {
             const t = new BABYLON.DynamicTexture(name, { width: SIZE, height: SIZE }, scene, true);
             t.hasAlpha = true;
@@ -36,9 +45,19 @@ export class Marks {
             return t;
         };
         this.skin = sheet(npc.person.mesh.name + '_wounds', npc.person.mesh);
+        // How deep the flesh is open at each place of the skin (red, to 4 cm), and how much blood lies in it (green):
+        // what Gore draws as wounds.
+        this.depth = new BABYLON.DynamicTexture(npc.person.mesh.name + '_depth', { width: SIZE, height: SIZE }, scene, false);
+        this.depth.hasAlpha = false;
+        this.depth.wrapU = this.depth.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        const dg = this.depth.getContext() as CanvasRenderingContext2D;
+        dg.fillStyle = '#000';
+        dg.fillRect(0, 0, SIZE, SIZE);
+        this.depth.update();
         this.cloth = sheet(npc.person.mesh.name + '_stains', npc.clothes);
         // Painted marks go up to the card once a frame, however many were painted.
         this._flush = scene.onBeforeRenderObservable.add(() => {
+            if (++this._frames % 600 === 0) this.age();
             for (const t of this._dirty) t.update();
             this._dirty.clear();
         });
@@ -56,39 +75,95 @@ export class Marks {
     }
 
     // Where something went through: `size` across in metres, `out` for the way out (torn, bigger, everted).
-    hole(hit, size, out) {
+    hole(hit, size, out, ring = true) {
         this._paint(hit, (g, x, y, px) => {
             const r = px(size / 2);
             if (hit.kind === 'cloth') {
                 ragged(g, x, y, r * (out ? 1.4 : 1.1), 'rgba(8,6,6,0.97)', out ? 0.45 : 0.25);
                 return;
             }
-            // A ring of scraped skin round a way in; a split, everted star for a way out.
-            soft(g, x, y, r * (out ? 2.6 : 2.2), out ? 'rgba(120,20,18,0.75)' : 'rgba(115,38,30,0.8)');
-            if (out) ragged(g, x, y, r * 1.3, 'rgba(70,6,6,0.95)', 0.55);
-            soft(g, x, y, r * 1.05, 'rgba(25,2,2,1)');
-            soft(g, x, y, r * 0.6, 'rgba(8,0,0,1)');
+            // Round a bullet's way into skin, a ring about a millimetre wide that it scraped going in: red-brown, drying
+            // darker. A way out has none, and nor, often, has a rifle's way in (dev/research/wounds.md).
+            if (out || !ring) return;
+            const hole = px(Math.max(0.0018, size * 0.25)), band = px(0.0011);
+            soft(g, x, y, hole + band * 1.6, 'rgba(120,52,38,0.85)');
+            soft(g, x, y, hole + band * 0.6, 'rgba(95,30,24,0.9)');
         });
     }
 
-    // A blade drawn across from `a` to `b` (two hits on the same skin): an open line with the fat showing at its lips.
-    cut(a, b, depth) {
-        if (a.kind !== b.kind || Math.hypot(a.uv[0] - b.uv[0], a.uv[1] - b.uv[1]) > 0.05) return;
-        this._paint(a, (g, x, y, px) => {
-            const x2 = b.uv[0] * SIZE, y2 = (1 - b.uv[1]) * SIZE;
-            const w = px(Math.min(0.006, 0.0015 + depth * 0.15));
+    // --- wounds, as depth in the flesh (Gore below draws them) -----------------------------------
+
+    _open(hit, draw) {
+        const g = this.depth.getContext() as CanvasRenderingContext2D;
+        const x = hit.uv[0] * SIZE, y = (1 - hit.uv[1]) * SIZE;
+        const px = (metres) => Math.max(1, metres * hit.scale * SIZE);
+        g.save();
+        g.globalCompositeOperation = 'lighten';
+        draw(g, x, y, px);
+        g.restore();
+        this._dirty.add(this.depth);
+    }
+
+    // A bullet's way into skin: a round hole as wide as the skin let it be (a little under the bullet), its walls
+    // steep, its track going down out of sight and filling with blood.
+    entry(hit, size) {
+        this._open(hit, (g, x, y, px) => {
+            // Skin is elastic: a 9 mm bullet leaves a hole of 3 to 6 mm (dev/research/wounds.md).
+            const r = px(Math.max(0.0017, size * 0.26));
+            const grad = g.createRadialGradient(x, y, 0, x, y, r * 1.15);
+            grad.addColorStop(0, 'rgb(240,240,0)');
+            grad.addColorStop(0.55, 'rgb(225,230,0)');
+            grad.addColorStop(0.8, 'rgb(60,200,0)');
+            grad.addColorStop(1, 'rgb(0,0,0)');
+            g.fillStyle = grad;
+            g.beginPath(); g.arc(x, y, r * 1.15, 0, Math.PI * 2); g.fill();
+        });
+    }
+
+    // A bullet's way out: torn, not punched, ragged and wider, with splits running out of it.
+    exit(hit, size) {
+        this._open(hit, (g, x, y, px) => {
+            const r = px(size * 0.6), n = 13;
+            g.filter = `blur(${Math.max(1, r * 0.12)}px)`;
+            g.fillStyle = 'rgb(170,150,0)';
+            g.beginPath();
+            for (let k = 0; k <= n; k++) {
+                const a = (k / n) * Math.PI * 2, rr = r * (k % 2 ? 0.55 + Math.random() * 0.3 : 1 + Math.random() * 0.7);
+                g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+            }
+            g.fill();
+            g.fillStyle = 'rgb(230,210,0)';
+            g.beginPath(); g.arc(x, y, r * 0.45, 0, Math.PI * 2); g.fill();
+        });
+    }
+
+    // A blade's way in: a slit up to 2 mm shorter than the blade is wide, gaping a little, deep in the middle.
+    stab(hit, wide, turn = Math.random() * Math.PI) {
+        this._open(hit, (g, x, y, px) => {
+            const half = px(Math.max(0.004, wide - 0.002) / 2), dx = Math.cos(turn) * half, dy = Math.sin(turn) * half;
             g.lineCap = 'round';
-            if (a.kind === 'skin') {
-                g.strokeStyle = 'rgba(140,40,32,0.7)';
-                g.lineWidth = w * 2.6;
-                g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
-                g.strokeStyle = 'rgba(220,190,120,0.8)';
-                g.lineWidth = w * 1.4;
+            for (const [w, c] of [[px(0.005), 'rgb(70,60,0)'], [px(0.0028), 'rgb(170,140,0)'], [px(0.0012), 'rgb(250,200,0)']]) {
+                g.lineWidth = w; g.strokeStyle = c;
+                g.beginPath(); g.moveTo(x - dx, y - dy); g.lineTo(x + dx, y + dy); g.stroke();
+            }
+        });
+    }
+
+    // A blade drawn through the skin from `a` to `b`, `deep` metres into the flesh: a slot that gapes as the skin
+    // either side pulls back, shallow at its lips and deepest along its middle, so the fat shows down its sides.
+    // `gapes` is how much of its full gape this stretch opens (a cut gapes most in its middle).
+    cut(a, b, deep, gapes = 1) {
+        if (Math.hypot(a.uv[0] - b.uv[0], a.uv[1] - b.uv[1]) > 0.04) return;
+        const most = Math.min(1, deep / 0.04);
+        this._open(a, (g, x, y, px) => {
+            const x2 = b.uv[0] * SIZE, y2 = (1 - b.uv[1]) * SIZE, gape = Math.min(0.009, 0.0012 + deep * 0.12 * gapes);
+            g.lineCap = 'round';
+            g.filter = 'blur(1px)';
+            for (const [w, share] of [[1, 0.25], [0.6, 0.6], [0.25, 1]]) {
+                g.lineWidth = px(gape * w);
+                g.strokeStyle = `rgb(${Math.round(255 * most * share)},${Math.round(235 * Math.min(1, share * 1.6))},0)`;
                 g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
             }
-            g.strokeStyle = a.kind === 'skin' ? 'rgba(45,3,3,1)' : 'rgba(10,8,8,0.95)';
-            g.lineWidth = w;
-            g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
         });
     }
 
@@ -101,25 +176,40 @@ export class Marks {
         });
     }
 
-    // Blood soaking out round a wound into the skin and the clothes over it, as `litres` more of it comes out.
-    soak(bleed, litres) {
-        const mark = bleed.source?.mark;
-        if (!mark) return;
-        const total = (this._soaked.get(bleed) ?? 0) + litres;
-        const last = this._soaked.get(bleed) ?? 0;
-        this._soaked.set(bleed, total);
-        // Painted again each time another few millilitres have come.
-        if (Math.floor(total / 0.004) === Math.floor(last / 0.004)) return;
-        const r = Math.min(0.2, 0.012 + Math.sqrt(total) * 0.12);
-        const paint = (hit, colour) => this._paint(hit, (g, x, y, px) => soft(g, x, y, px(r), colour));
-        paint(mark, 'rgba(95,4,4,0.16)');
-        if (mark.cloth) paint(mark.cloth, 'rgba(60,2,2,0.2)');
+    // Blood on the skin, running: a streak from one place to the next (runs.ts), `wide` metres across, `mm` thick. Kept
+    // in the skin's film (film.ts), which draws it as blood lying on skin.
+    trail(a, b, wide, mm = 0.1) { this.npc.film?.stroke(a, b, wide, mm); }
+
+    // Blood lying on skin that is not running anywhere: a patch `r` across, `mm` thick.
+    smear(hit, r, mm = 0.15) { this.npc.film?.blot(hit, r, mm); }
+
+    // Blood into cloth at `hit`: the clothes take it in and wick it through themselves (soak.ts). Returns whether the
+    // cloth there is full, after which what comes runs out of it.
+    drink(hit, litres) {
+        const soak = this.npc.soak;
+        if (!soak?.add(hit.rest, litres * 1000)) return true;
+        return soak.fullness(hit.rest) > 1;
+    }
+
+    // Once in a while: blood that has been out a while goes darker and browner as it dries.
+    age() {
+        if (!this._old) return;
+        for (const t of [this.skin, this.cloth]) {
+            const g = t.getContext() as CanvasRenderingContext2D;
+            g.save();
+            g.globalCompositeOperation = 'source-atop';
+            g.fillStyle = 'rgba(40,14,8,0.05)';
+            g.fillRect(0, 0, SIZE, SIZE);
+            g.restore();
+            this._dirty.add(t);
+        }
     }
 
     dispose() {
         this.scene.onBeforeRenderObservable.remove(this._flush);
         this.skin.dispose();
         this.cloth.dispose();
+        this.depth.dispose();
     }
 }
 
@@ -145,3 +235,81 @@ function ragged(g, x, y, r, colour, jag) {
     }
     g.fill();
 }
+
+// --- drawing them ---------------------------------------------------------------------------
+//
+// The skin is never cut away. Where the depth sheet says the flesh is open, the skin's own shader draws what is
+// there: the skin's cut edge, then yellow fat, the white sheath, red muscle going dark with depth, and blood lying in
+// the bottom; and it bends the surface's normal down the walls, so that light falls into a wound and its far wall
+// is lit and its near wall is in shadow. It goes wherever the skin goes, round a face or a finger.
+
+// (noise, for lips that are not ruled lines)
+const GLSL_GORE_NOISE = `
+float goreHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float goreNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(goreHash(i), goreHash(i + vec2(1, 0)), f.x), mix(goreHash(i + vec2(0, 1)), goreHash(i + vec2(1, 1)), f.x), f.y); }
+`;
+
+const GLSL_GORE = `
+#ifdef GORE
+{
+    vec2 gu = vMainUV1;
+    vec3 gdp1 = dFdx(vPositionW), gdp2 = dFdy(vPositionW);
+    vec2 gdu1 = dFdx(gu), gdu2 = dFdy(gu);
+    vec4 gm = texture2D(goreDepth, gu);
+    if (gm.r > 0.004 || gm.g > 0.004) {
+        float hx = texture2D(goreDepth, gu + vec2(goreTexel.x, 0.0)).r - texture2D(goreDepth, gu - vec2(goreTexel.x, 0.0)).r;
+        float hy = texture2D(goreDepth, gu + vec2(0.0, goreTexel.y)).r - texture2D(goreDepth, gu - vec2(0.0, goreTexel.y)).r;
+        // The skin's own directions across its picture, from how both change across the screen.
+        vec3 gn = normalW, gp2 = cross(gdp2, gn), gp1 = cross(gn, gdp1);
+        vec3 gt = gp2 * gdu1.x + gp1 * gdu2.x, gb = gp2 * gdu1.y + gp1 * gdu2.y;
+        float gs = inversesqrt(max(dot(gt, gt), dot(gb, gb)) + 1e-20);
+        normalW = normalize(gn + (gt * gs * hx + gb * gs * hy) * 6.0);
+        // Depth in millimetres, made uneven so that the lips and the layers in the walls wander as real ones do.
+        float d = gm.r * 40.0 * (0.8 + 0.4 * goreNoise(gu * 2600.0)) + (goreNoise(gu * 900.0) - 0.5) * 1.2;
+        vec3 flesh = mix(vec3(0.5, 0.17, 0.15), vec3(0.74, 0.58, 0.36), smoothstep(1.4, 2.6, d));
+        flesh = mix(flesh, vec3(0.68, 0.62, 0.56), smoothstep(9.5, 11.0, d));
+        flesh = mix(flesh, vec3(0.36, 0.06, 0.05), smoothstep(11.5, 13.0, d));
+        flesh = mix(flesh, vec3(0.08, 0.005, 0.004), smoothstep(15.0, 30.0, d));
+        surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(flesh), smoothstep(0.1, 0.9, d));
+        // Blood fills a fresh wound from the bottom and wells over its lips.
+        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * goreNoise(gu * 1500.0));
+        surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
+        surfaceAlbedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);
+    }
+}
+#endif
+`;
+
+export class Gore extends BABYLON.MaterialPluginBase {
+    declare depth: BABYLON.Texture;
+
+    constructor(material, depth) {
+        super(material, 'Gore', 225, { GORE: false });
+        this.depth = depth;
+        this._enable(true);
+    }
+
+    getClassName() { return 'Gore'; }
+
+    prepareDefines(defines) { defines.GORE = true; }
+
+    getSamplers(samplers) { samplers.push('goreDepth'); }
+
+    getUniforms() { return { ubo: [{ name: 'goreTexel', size: 2, type: 'vec2' }] }; }
+
+    bindForSubMesh(ubo) {
+        ubo.updateFloat2('goreTexel', 1 / SIZE, 1 / SIZE);
+        ubo.setTexture('goreDepth', this.depth);
+    }
+
+    getActiveTextures(textures) { textures.push(this.depth); }
+
+    hasTexture(texture) { return texture === this.depth; }
+
+    getCustomCode(shaderType) {
+        if (shaderType !== 'fragment') return null;
+        return { CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef GORE\nuniform sampler2D goreDepth;\n${GLSL_GORE_NOISE}#endif\n`, CUSTOM_FRAGMENT_UPDATE_ALPHA: GLSL_GORE };
+    }
+}
+

@@ -1,52 +1,101 @@
-// Blood out of a body: drops in the air, and what they leave where they land.
+// Blood out of a body: drops and streams in the air, and what they leave
+// where they land.
 //
-// A drop is a point with a speed, falling under gravity with a little drag,
-// drawn as a bead stretched along the way it is going. Where it lands it
-// leaves a splash shaped by how fast and how slantwise it hit, and blood that
-// keeps coming out of something lying on the floor spreads into a pool as
-// wide as its volume makes it at a couple of millimetres deep.
+// A drop is a point with a speed and a size, falling under gravity and
+// slowed by the air as much as its size makes it (a tenth of a millimetre of
+// mist stops within a hand's breadth; a dripped drop falls nearly freely),
+// drawn as a bead stretched along the way it is going. An open artery throws
+// a stream: a rope of blood leaving the wound as fast as the pressure behind
+// it pushes it (Bernoulli), surging with each beat, arcing under gravity, and
+// breaking into drops some way out as streams do (Plateau-Rayleigh).
+//
+// Where a drop lands it leaves a stain as wide as its speed and size spread
+// it, round if it came straight down and long (width over length the sine
+// of the angle it came in at) if it came slantwise, its rim thrown out into
+// spines and droplets if it came hard. Big drops on a wall run down it. On
+// the floor, blood gathers into pools (floor.ts); on a person, it soaks into
+// their clothes (soak.ts) or lies on and runs down their skin (film.ts,
+// runs.ts). Bodies lying in a pool take it up; a body dragged leaves a
+// smear; a foot that stepped in it leaves prints, fewer and fainter as it
+// goes.
 
 import * as BABYLON from '@babylonjs/core';
+import { Floor } from './floor.ts';
+import { DRIP, across, drag, spreads, splashes, volume } from './fluid.ts';
 const V3 = BABYLON.Vector3, M = BABYLON.Matrix;
 
-const MOST = 2500;          // drops in the air at once
-const SPLATS = 5000;        // marks on the room before the oldest go
-const DRAG = 0.6;           // of a drop's speed lost a second to the air
-const DEEP = 0.0025;        // metres: how deep blood stands on a hard floor
-const ML = 0.4;             // millilitres a drawn drop stands for
-const TILES = [4, 2];       // the splash sheet: columns, rows
+const MOST = 3000;          // drops in the air at once
+const SPLATS = 8000;        // marks on the room before the oldest go
+const TILES = [4, 5];       // the splash sheet: columns, rows
+const DRIES = 300;          // seconds for a stain on concrete to go from wet red to dried brown
+const WET = [1, 1, 1], DRY = [0.42, 0.3, 0.26];
+const FREE = 0.12;          // seconds a drop flies before it can land back on a body (it left from one)
+const BREAKS = 0.25;        // seconds a stream holds together before it breaks into drops
+const GATHERS = 0.12;       // ml of drops landing in one place before they count as a pool there
+
+type Stream = { p: BABYLON.Vector3[]; v: BABYLON.Vector3[]; ml: number[]; d: number[]; age: number[]; life: number[]; fed: number };
 
 export class Blood {
     declare scene: BABYLON.Scene;
     declare room: { x: number; z: number; height: number };
+    declare floor: Floor;
     declare n: number;
     declare p: Float32Array;
     declare v: Float32Array;
-    declare size: Float32Array;
+    declare d: Float32Array;
+    declare ml: Float32Array;
+    declare age: Float32Array;
     declare drop: BABYLON.Mesh;
     declare dropMatrices: Float32Array;
+    declare rope: BABYLON.Mesh;
+    declare ropeMatrices: Float32Array;
+    declare beads: BABYLON.Mesh;
+    declare beadMatrices: Float32Array;
+    declare beadCount: number;
+    declare streams: Map<any, Stream>;
     declare marks: BABYLON.Mesh[];
     declare markCount: number[];
     declare markNext: number[];
-    declare pools: BABYLON.Mesh;
-    declare poolList: { at: BABYLON.Vector3; volume: number; i: number; turn: number }[];
+    declare markColours: Float32Array[];
+    declare markMatrices: Float32Array[];
+    declare markChanged: Set<number>;
+    declare markBorn: Float32Array[];
+    declare wallRuns: { kind: number; slot: number; at: BABYLON.Vector3; normal: BABYLON.Vector3; wide: number; length: number; reach: number }[];
+    declare gathering: Map<number, number>;
     declare onLand: ((at: BABYLON.Vector3, speed: number) => void) | null;
+    declare bodies: (() => any[]) | null;
+    declare clock: number;
+    declare touched: number;
+    declare foot: { x: number; z: number; carried: number; walked: number; left: boolean } | null;
+    declare contact: WeakMap<any, BABYLON.Vector3>;
+    declare looks: number;
 
     // `room` is the half-width and half-depth of the floor and the height of its walls; `reflect` what wet blood shows.
     constructor(scene, room, reflect = null) {
         this.scene = scene;
         this.room = room;
+        this.floor = new Floor(scene, Math.max(room.x, room.z), reflect);
         this.n = 0;
         this.p = new Float32Array(MOST * 3);
         this.v = new Float32Array(MOST * 3);
-        this.size = new Float32Array(MOST);
+        this.d = new Float32Array(MOST);
+        this.ml = new Float32Array(MOST);
+        this.age = new Float32Array(MOST);
         this.onLand = null;
+        this.bodies = null;
+        this.clock = 0;
+        this.touched = 0;
+        this.foot = null;
+        this.contact = new WeakMap();
+        this.streams = new Map();
+        this.gathering = new Map();
+        this.wallRuns = [];
 
         const wet = (name, texture) => {
             const m = new BABYLON.PBRMaterial(name, scene);
-            m.albedoColor = new BABYLON.Color3(0.32, 0.018, 0.014);
+            m.albedoColor = new BABYLON.Color3(0.2, 0.011, 0.009);
             m.metallic = 0;
-            m.roughness = 0.12;
+            m.roughness = 0.1;
             m.reflectionTexture = reflect;
             m.environmentIntensity = 0.6;
             if (texture) {
@@ -55,117 +104,215 @@ export class Blood {
                 m.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
                 m.zOffset = -2;
                 m.backFaceCulling = false;
+                // Where the card is clear there is no blood, and nothing to catch the lamp.
+                m.useSpecularOverAlpha = false;
+                m.useRadianceOverAlpha = false;
             }
             return m;
         };
+        // Blood in the air, and beads of it on skin: a deep red that shines.
+        const air = wet('dropBlood', null);
+        air.albedoColor = new BABYLON.Color3(0.16, 0.007, 0.006);
+        air.roughness = 0.06;
+        const instanced = (mesh: BABYLON.Mesh, most: number) => {
+            mesh.material = air;
+            mesh.isPickable = false;
+            const matrices = new Float32Array(most * 16);
+            mesh.thinInstanceSetBuffer('matrix', matrices, 16, false);
+            mesh.thinInstanceCount = 0;
+            mesh.alwaysSelectAsActiveMesh = true;
+            // (A mesh with no instances is still drawn once, at the origin.)
+            mesh.isVisible = false;
+            return matrices;
+        };
         this.drop = BABYLON.MeshBuilder.CreateSphere('drop', { segments: 4, diameter: 1 }, scene);
-        this.drop.material = wet('dropBlood', null);
-        this.drop.isPickable = false;
-        this.dropMatrices = new Float32Array(MOST * 16);
-        this.drop.thinInstanceSetBuffer('matrix', this.dropMatrices, 16, false);
-        this.drop.thinInstanceCount = 0;
-        this.drop.alwaysSelectAsActiveMesh = true;
-        this.drop.isVisible = false;
+        this.dropMatrices = instanced(this.drop, MOST);
+        this.rope = BABYLON.MeshBuilder.CreateCylinder('stream', { height: 1, diameter: 1, tessellation: 7 }, scene);
+        this.ropeMatrices = instanced(this.rope, 600);
+        this.beads = BABYLON.MeshBuilder.CreateSphere('bead', { segments: 6, diameter: 1 }, scene);
+        this.beadMatrices = instanced(this.beads, 400);
+        this.beadCount = 0;
 
         const sheet = splashSheet(scene);
         const material = wet('splatBlood', sheet);
         this.marks = [];
         this.markCount = [];
         this.markNext = [];
+        this.markColours = [];
+        this.markMatrices = [];
+        this.markChanged = new Set();
+        this.markBorn = [];
         const [cols, rows] = TILES;
         for (let k = 0; k < cols * rows; k++) {
             const quad = BABYLON.MeshBuilder.CreatePlane('splat' + k, { size: 1, frontUVs: tile(k), sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
             quad.material = material;
             quad.isPickable = false;
             quad.alwaysSelectAsActiveMesh = true;
-            quad.thinInstanceSetBuffer('matrix', new Float32Array((SPLATS / (cols * rows)) * 16), 16, false);
+            quad.receiveShadows = true;
+            const matrices = new Float32Array((SPLATS / (cols * rows)) * 16);
+            quad.thinInstanceSetBuffer('matrix', matrices, 16, false);
+            // (Drawn whatever the camera sees, so its bounds need not follow its marks.)
+            quad.doNotSyncBoundingInfo = true;
+            this.markMatrices.push(matrices);
+            // Each mark's colour, which goes from wet to dry as it ages.
+            const colours = new Float32Array((SPLATS / (cols * rows)) * 4).fill(1);
+            quad.thinInstanceSetBuffer('color', colours, 4, false);
+            this.markColours.push(colours);
+            this.markBorn.push(new Float32Array(SPLATS / (cols * rows)));
             quad.thinInstanceCount = 0;
             quad.isVisible = false;
             this.marks.push(quad);
             this.markCount.push(0);
             this.markNext.push(0);
         }
-        // Pools: the round soft splash, scaled as they fill.
-        this.pools = BABYLON.MeshBuilder.CreatePlane('pools', { size: 1, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
-        this.pools.isVisible = false;
-        this.pools.material = wet('poolBlood', poolSheet(scene));
-        this.pools.isPickable = false;
-        this.pools.alwaysSelectAsActiveMesh = true;
-        this.pools.thinInstanceSetBuffer('matrix', new Float32Array(256 * 16), 16, false);
-        this.pools.thinInstanceCount = 0;
-        this.poolList = [];
     }
 
-    // Drops thrown out from `at` along `dir` (unit) at `speed` m/s, spread by `cone` (radians); `ml` the blood in all.
+    // --- blood into the air ---------------------------------------------------------------
+
+    // Drops thrown out from `at` along `dir` (unit) at about `speed` m/s, spread by `cone` (radians); `ml` the blood in
+    // all; `big` the drops' size against a spatter drop's 1.6 mm (0.3 is a gunshot's mist). Drops come in all sizes
+    // about that (log-normally); there are as many as the blood makes, each drawn drop standing for several if there are
+    // too many to draw.
     spray(at: BABYLON.Vector3, dir: BABYLON.Vector3, speed: number, ml: number, cone = 0.25, big = 1) {
-        const count = Math.min(200, Math.max(1, Math.round(ml / ML)));
+        const median = 0.0016 * big;
+        const count = Math.max(1, Math.min(400, Math.round(ml / volume(median * 1.4))));
+        const each = ml / count;
+        const side = Math.abs(dir.y) < 0.9 ? V3.Cross(dir, V3.Up()).normalize() : V3.Cross(dir, V3.Right()).normalize();
+        const up = V3.Cross(side, dir);
         for (let k = 0; k < count && this.n < MOST; k++) {
-            const i = this.n++;
-            const s = speed * (0.55 + Math.random() * 0.6);
-            const jx = (Math.random() - 0.5) * 2 * cone, jy = (Math.random() - 0.5) * 2 * cone, jz = (Math.random() - 0.5) * 2 * cone;
-            this.p[i * 3] = at.x; this.p[i * 3 + 1] = at.y; this.p[i * 3 + 2] = at.z;
-            this.v[i * 3] = (dir.x + jx) * s; this.v[i * 3 + 1] = (dir.y + jy) * s; this.v[i * 3 + 2] = (dir.z + jz) * s;
-            this.size[i] = (0.0025 + Math.random() * 0.004) * big;
+            // Smaller drops are thrown faster and wider; within the cone, most go near its middle.
+            const d = median * Math.exp(gauss() * 0.45);
+            const s = speed * (0.6 + Math.random() * 0.6) * Math.pow(median / d, 0.25);
+            const a = cone * Math.sqrt(Math.random()) * Math.pow(median / d, 0.3), t = Math.random() * Math.PI * 2;
+            const ca = Math.cos(a), sa = Math.sin(a);
+            this._add(at.x, at.y, at.z,
+                (dir.x * ca + (side.x * Math.cos(t) + up.x * Math.sin(t)) * sa) * s,
+                (dir.y * ca + (side.y * Math.cos(t) + up.y * Math.sin(t)) * sa) * s,
+                (dir.z * ca + (side.z * Math.cos(t) + up.z * Math.sin(t)) * sa) * s, d, each, 0);
         }
     }
 
-    // Blood leaving a wound at `at` at `rate` litres a second for `dt`: dripping, or into a pool if it is on the floor.
+    // One drop of `ml`, `d` across, let go at `at`: what falls from a chin, a cuff, a shirt-tail.
+    drip(at: BABYLON.Vector3, ml: number, d = across(ml)) {
+        this._add(at.x, at.y, at.z, (Math.random() - 0.5) * 0.02, -0.05, (Math.random() - 0.5) * 0.02, d, ml, FREE);
+    }
+
+    _add(x, y, z, vx, vy, vz, d, ml, age) {
+        if (this.n >= MOST) return;
+        const i = this.n++;
+        this.p[i * 3] = x; this.p[i * 3 + 1] = y; this.p[i * 3 + 2] = z;
+        this.v[i * 3] = vx; this.v[i * 3 + 1] = vy; this.v[i * 3 + 2] = vz;
+        this.d[i] = d;
+        this.ml[i] = ml;
+        this.age[i] = age;
+    }
+
+    // An open artery this frame: `ml` of blood leaving `at` along `dir` at `speed` m/s, as a stream `r` metres across.
+    // `key` is the bleed, so that one stream is one rope from beat to beat.
+    stream(key, at: BABYLON.Vector3, dir: BABYLON.Vector3, speed: number, ml: number, r: number, dt: number) {
+        let s = this.streams.get(key);
+        if (!s) { s = { p: [], v: [], ml: [], d: [], age: [], life: [], fed: 0 }; this.streams.set(key, s); }
+        s.fed = this.clock;
+        // Several points a frame, as if let go through it, so the rope is smooth however slow the frame.
+        const pieces = Math.max(1, Math.min(6, Math.ceil((speed * dt) / 0.012)));
+        for (let k = pieces - 1; k >= 0 && s.p.length < 90; k--) {
+            const t = (k / pieces) * dt;
+            const v = dir.scale(speed);
+            s.p.push(at.add(v.scale(t)).addInPlaceFromFloats(0, -4.9 * t * t, 0));
+            s.v.push(v.addInPlaceFromFloats(0, -9.81 * t, 0));
+            s.ml.push(ml / pieces);
+            s.d.push(r * 2);
+            s.age.push(t);
+            // Thicker streams hold together longer.
+            s.life.push(BREAKS * (0.6 + Math.random() * 0.8) * Math.min(2, Math.max(0.5, (r / 0.0015) ** 1.5)));
+        }
+    }
+
+    // --- blood onto the floor -------------------------------------------------------------
+
+    // Blood leaving a wound at `at` at `rate` litres a second for `dt`, with nothing on the body to take it: it falls
+    // from there, or goes into the floor if it is at the floor.
     run(at: BABYLON.Vector3, rate: number, dt: number, normal: BABYLON.Vector3 | null = null) {
         const ml = rate * dt * 1000;
         if (ml <= 0) return;
-        if (at.y < 0.35) { this.fill(at, ml / 1000); return; }
-        // Drops are drawn for a share of what runs out; the rest goes down the body, unseen.
-        if (Math.random() < Math.min(1, ml / ML)) this.spray(at, normal ?? new V3(0, -1, 0), 0.25, ML, 0.6, 1.2);
+        if (at.y < 0.04) { this.floor.add(at.x, at.z, ml); return; }
+        void normal;
+        // What runs off something gathers into drops and falls one at a time.
+        const key = Math.round(at.x * 50) * 7919 + Math.round(at.z * 50);
+        const have = (this.gathering.get(-key) ?? 0) + ml;
+        if (have >= DRIP) { this.drip(at, have); this.gathering.delete(-key); } else this.gathering.set(-key, have);
     }
 
     // A pool on the floor under `at` takes `litres` more.
-    fill(at: BABYLON.Vector3, litres: number) {
-        const across = (litres) => Math.sqrt(litres / 1000 / (Math.PI * DEEP));
-        let pool = this.poolList.find((p) => Math.hypot(p.at.x - at.x, p.at.z - at.z) < Math.max(0.06, across(p.volume) * 0.8));
-        if (!pool) {
-            if (this.poolList.length >= 256) return;
-            pool = { at: new V3(at.x, 0.0015 + this.poolList.length * 0.00002, at.z), volume: 0, i: this.poolList.length, turn: Math.random() * Math.PI * 2 };
-            this.poolList.push(pool);
-            this.pools.thinInstanceCount = this.poolList.length;
-            this.pools.isVisible = true;
-        }
-        pool.volume += litres;
-        // The blob on the sheet fills about two thirds of it.
-        const r = across(pool.volume) * 3;
-        const m = M.Scaling(r, r, 1).multiply(M.RotationX(Math.PI / 2)).multiply(M.RotationY(pool.turn)).multiply(M.Translation(pool.at.x, pool.at.y, pool.at.z));
-        this.pools.thinInstanceSetMatrixAt(pool.i, m, true);
-    }
+    fill(at: BABYLON.Vector3, litres: number) { this.floor.add(at.x, at.z, litres * 1000); }
+
+    // --- every frame ----------------------------------------------------------------------
 
     update(dt: number) {
-        const { p, v, size } = this;
-        const g = 9.81 * dt, slow = Math.exp(-DRAG * dt);
-        const { x: W, z: D, height: H } = this.room;
-        const m = new M(), at = new V3(), vel = new V3();
+        this.clock += dt;
+        this._dry();
+        const people = this._people();
+        this._fly(dt, people);
+        this._streams(dt, people);
+        this._wallRuns(dt);
+        this.floor.update(dt);
+        if ((this.touched += dt) > 0.15) {
+            this._lying(people, this.touched);
+            this.touched = 0;
+        }
+        this._feet();
+        // The marks made this frame go to the card together.
+        for (const kind of this.markChanged) {
+            this.marks[kind].thinInstanceBufferUpdated('matrix');
+            this.marks[kind].thinInstanceBufferUpdated('color');
+        }
+        this.markChanged.clear();
+        this.beads.thinInstanceCount = this.beadCount;
+        this.beads.isVisible = this.beadCount > 0;
+        if (this.beadCount) this.beads.thinInstanceBufferUpdated('matrix');
+        this.beadCount = 0;
+    }
+
+    // Where each person is this frame: a box round them, so that only drops near somebody are tested against their body,
+    // and each of their segments as a capsule (its two ends and how thick it is).
+    _people() {
+        // Finding the place on a body a drop has reached is the dear part: at most so many a frame, the rest next frame.
+        this.looks = 60;
+        return (this.bodies?.() ?? []).map((npc) => {
+            const lo = new V3(Infinity, Infinity, Infinity), hi = new V3(-Infinity, -Infinity, -Infinity);
+            const parts = npc.ragdoll.segments.map((seg) => {
+                const a = seg.node.position, b = seg.end ? V3.TransformCoordinates(seg.end, seg.node.getWorldMatrix()) : a;
+                lo.minimizeInPlace(a); hi.maximizeInPlace(a);
+                return { seg, a, ab: b.subtract(a), r: seg.radius ?? 0.05 };
+            });
+            return { npc, parts, lo: lo.subtractFromFloats(0.3, 0.3, 0.3), hi: hi.addInPlaceFromFloats(0.3, 0.3, 0.3) };
+        });
+    }
+
+    _fly(dt: number, people) {
+        const { p, v, d, ml, age } = this;
+        const m = new M(), at = new V3(), vel = new V3(), q = new BABYLON.Quaternion(), size = new V3();
         let live = 0;
         for (let i = 0; i < this.n; i++) {
-            v[i * 3 + 1] -= g;
-            v[i * 3] *= slow; v[i * 3 + 1] *= slow; v[i * 3 + 2] *= slow;
+            const speed0 = Math.hypot(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
+            const slow = Math.exp(-drag(d[i], speed0) * dt);
+            v[i * 3] *= slow; v[i * 3 + 1] = v[i * 3 + 1] * slow - 9.81 * dt; v[i * 3 + 2] *= slow;
             const x = p[i * 3] + v[i * 3] * dt, y = p[i * 3 + 1] + v[i * 3 + 1] * dt, z = p[i * 3 + 2] + v[i * 3 + 2] * dt;
             at.set(x, y, z);
             vel.set(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
-            let normal = null;
-            if (y <= 0) { normal = V3.Up(); at.y = 0; }
-            else if (Math.abs(x) >= W) { normal = new V3(-Math.sign(x), 0, 0); at.x = Math.sign(x) * (W - 0.002); }
-            else if (Math.abs(z) >= D) { normal = new V3(0, 0, -Math.sign(z)); at.z = Math.sign(z) * (D - 0.002); }
-            else if (y >= H) { normal = V3.Down(); at.y = H - 0.002; }
-            if (normal) {
-                this._splash(at, vel, normal, size[i]);
-                continue;
-            }
+            age[i] += dt;
+            if (age[i] > FREE && people.length && this._onto(people, at, vel, d[i], ml[i])) continue;
+            if (this._lands(at, vel, d[i], ml[i])) continue;
             // Kept: moved down to the next free place.
             p[live * 3] = x; p[live * 3 + 1] = y; p[live * 3 + 2] = z;
-            v[live * 3] = v[i * 3]; v[live * 3 + 1] = v[i * 3 + 1]; v[live * 3 + 2] = v[i * 3 + 2];
-            size[live] = size[i];
+            v[live * 3] = vel.x; v[live * 3 + 1] = vel.y; v[live * 3 + 2] = vel.z;
+            d[live] = d[i]; ml[live] = ml[i]; age[live] = age[i];
+            // A drop drawn long along its way: as far as it moves in a sixtieth of a second, as the eye sees it.
             const speed = vel.length();
-            const stretch = 1 + Math.min(4, speed * 0.25);
-            // A bead drawn long along its way: a scale along +Y turned onto the velocity.
-            const q = BABYLON.Quaternion.FromUnitVectorsToRef(V3.UpReadOnly, speed > 1e-4 ? vel.scale(1 / speed) : V3.Up(), new BABYLON.Quaternion());
-            M.ComposeToRef(new V3(size[i], size[i] * stretch, size[i]), q, at, m);
+            const r = Math.max(d[i], 0.0006);
+            BABYLON.Quaternion.FromUnitVectorsToRef(V3.UpReadOnly, speed > 1e-4 ? vel.scaleToRef(1 / speed, size) : V3.UpReadOnly, q);
+            size.set(r, r + Math.min(0.08, speed / 60) * 0.5, r);
+            M.ComposeToRef(size, q, at, m);
             m.copyToArray(this.dropMatrices, live * 16);
             live++;
         }
@@ -175,41 +322,304 @@ export class Blood {
         if (live) this.drop.thinInstanceBufferUpdated('matrix');
     }
 
-    // The mark a drop leaves: round if it came straight down, long and tailed the more slantwise it came.
-    _splash(at: BABYLON.Vector3, vel: BABYLON.Vector3, normal: BABYLON.Vector3, size: number) {
-        const speed = vel.length();
-        const into = speed > 1e-4 ? -V3.Dot(vel, normal) / speed : 1;
-        const slant = into < 0.6;
-        const kind = slant ? 4 + Math.floor(Math.random() * 4) : Math.floor(Math.random() * 4);
-        const spread = size * (2.2 + Math.min(4, speed * 0.35)) * (0.8 + Math.random() * 0.5);
-        const along = vel.subtract(normal.scale(V3.Dot(vel, normal)));
-        const across = along.lengthSquared() > 1e-8 ? along.normalize() : V3.Cross(normal, Math.abs(normal.y) > 0.9 ? V3.Right() : V3.Up()).normalize();
-        const side = V3.Cross(normal, across).normalize();
-        // The quad's +X along the drop's way, +Y across, -Z (its face) away from the surface.
-        const long = slant ? 1 / Math.max(0.25, into) : 1;
+    // Whether a drop at `at` has met the floor, a wall or the ceiling; if it has, what it leaves there.
+    _lands(at: BABYLON.Vector3, vel: BABYLON.Vector3, d: number, ml: number) {
+        const { x: W, z: D, height: H } = this.room;
+        let normal = null;
+        if (at.y <= 0) { normal = V3.UpReadOnly; at.y = 0; }
+        else if (Math.abs(at.x) >= W) { normal = new V3(-Math.sign(at.x), 0, 0); at.x = Math.sign(at.x) * (W - 0.002); }
+        else if (Math.abs(at.z) >= D) { normal = new V3(0, 0, -Math.sign(at.z)); at.z = Math.sign(at.z) * (D - 0.002); }
+        else if (at.y >= H) { normal = V3.DownReadOnly; at.y = H - 0.002; }
+        if (!normal) return false;
+        this._splash(at, vel, normal, d, ml);
+        return true;
+    }
+
+    // The streams: each point flies as a drop does; consecutive points still joined are drawn as one rope between them.
+    _streams(dt: number, people) {
+        const m = new M(), q = new BABYLON.Quaternion(), size = new V3(), mid = new V3(), way = new V3();
+        let ropes = 0;
+        for (const [key, s] of this.streams) {
+            for (let i = 0; i < s.p.length; i++) {
+                const v = s.v[i];
+                const slow = Math.exp(-drag(s.d[i], v.length()) * dt * 0.3);
+                v.scaleInPlace(slow).addInPlaceFromFloats(0, -9.81 * dt, 0);
+                s.p[i].addInPlace(v.scale(dt));
+                s.age[i] += dt;
+            }
+            // Points that broke away, or met something, leave the stream.
+            const keep = (i) => {
+                const at = s.p[i];
+                if (s.age[i] > FREE && people.length && this._onto(people, at, s.v[i], s.d[i], s.ml[i])) return false;
+                if (this._lands(at, s.v[i], s.d[i], s.ml[i])) return false;
+                if (s.age[i] > s.life[i]) {
+                    // Broken: the rope pinches into drops a little wider than itself.
+                    this._add(at.x, at.y, at.z, s.v[i].x, s.v[i].y, s.v[i].z, Math.min(0.006, s.d[i] * 1.6), s.ml[i], s.age[i]);
+                    return false;
+                }
+                return true;
+            };
+            const kept = { p: [], v: [], ml: [], d: [], age: [], life: [] };
+            for (let i = 0; i < s.p.length; i++) {
+                if (!keep(i)) continue;
+                for (const k of ['p', 'v', 'ml', 'd', 'age', 'life']) kept[k].push(s[k][i]);
+            }
+            Object.assign(s, kept);
+            for (let i = 0; i + 1 < s.p.length && ropes < 600; i++) {
+                const a = s.p[i], b = s.p[i + 1];
+                b.subtractToRef(a, way);
+                const long = way.length();
+                if (long > 0.05 || long < 1e-5) continue;
+                way.scaleInPlace(1 / long);
+                BABYLON.Quaternion.FromUnitVectorsToRef(V3.UpReadOnly, way, q);
+                const r = (s.d[i] + s.d[i + 1]) * 0.5;
+                size.set(r, long + r * 0.5, r);
+                a.addToRef(b, mid).scaleInPlace(0.5);
+                M.ComposeToRef(size, q, mid, m);
+                m.copyToArray(this.ropeMatrices, ropes * 16);
+                ropes++;
+            }
+            if (!s.p.length && this.clock - s.fed > 1) this.streams.delete(key);
+        }
+        this.rope.thinInstanceCount = ropes;
+        this.rope.isVisible = ropes > 0;
+        if (ropes) this.rope.thinInstanceBufferUpdated('matrix');
+    }
+
+    // A bead of blood on skin this frame (runs.ts): at `at`, the skin facing `normal`, `r` across and `h` high,
+    // running along `along` (stretched that way a little), hanging (`hang`, a drop about to fall: drawn pulled down).
+    bead(at: BABYLON.Vector3, normal: BABYLON.Vector3, along: BABYLON.Vector3, r: number, h: number, hang = 0) {
+        if (this.beadCount >= 400) return;
+        const across = V3.Cross(normal, along).normalize();
+        const way = V3.Cross(across, normal).normalize();
+        const centre = at.add(normal.scale(h * 0.25));
+        if (hang) centre.addInPlaceFromFloats(0, -hang * 0.5, 0);
+        // The bead's own axes: across it, out of the skin, along its way (a sphere squashed onto the skin).
+        const out = hang ? normal.add(new V3(0, -hang / Math.max(h, 1e-4), 0)) : normal;
         const m = M.FromValues(
-            across.x * spread * long, across.y * spread * long, across.z * spread * long, 0,
-            side.x * spread, side.y * spread, side.z * spread, 0,
+            across.x * r, across.y * r, across.z * r, 0,
+            out.x * h, out.y * h, out.z * h, 0,
+            way.x * r * 1.3, way.y * r * 1.3, way.z * r * 1.3, 0,
+            centre.x, centre.y, centre.z, 1);
+        m.copyToArray(this.beadMatrices, this.beadCount * 16);
+        this.beadCount++;
+    }
+
+    // --- where it lands -------------------------------------------------------------------
+
+    // The mark a drop `d` across leaves on the room: round if it came straight down, long and tailed the more slantwise
+    // it came (width over length the sine of its angle), its rim broken into spines if it came hard enough.
+    _splash(at: BABYLON.Vector3, vel: BABYLON.Vector3, normal: BABYLON.Vector3, d: number, ml: number) {
+        const speed = vel.length();
+        this.onLand?.(at, speed);
+        const floor = normal.y > 0.9;
+        // Into blood already there: it joins it.
+        if (floor && this.floor.depth(at.x, at.z) > 0.0004) { this.floor.add(at.x, at.z, ml); return; }
+        const into = speed > 1e-4 ? Math.max(0.05, -V3.Dot(vel, normal) / speed) : 1;
+        const kind = into < 0.72 ? 8 + Math.floor(Math.random() * 4) : (splashes(d, speed) ? 4 : 0) + Math.floor(Math.random() * 4);
+        // The tiles' blots fill about 40% of the tile: the quad is as much bigger than the stain.
+        const wide = d * spreads(d, speed * Math.sqrt(into)) * (kind < 8 ? 2.6 : 2.2) * (0.85 + Math.random() * 0.3);
+        const long = kind >= 8 ? Math.min(5, 1 / into) : 1;
+        const along = vel.subtract(normal.scale(V3.Dot(vel, normal)));
+        const way = along.lengthSquared() > 1e-8 ? along.normalize() : V3.Cross(normal, Math.abs(normal.y) > 0.9 ? V3.Right() : V3.Up()).normalize();
+        const side = V3.Cross(normal, way).normalize();
+        this._mark(kind, way.scale(wide * long), side.scale(wide), normal, at);
+        // A drawn drop that stands for several real ones leaves their marks too, close about it.
+        const more = Math.min(3, Math.floor(ml / volume(d)) - 1);
+        for (let k = 0; k < more; k++) {
+            const off = way.scale((Math.random() - 0.3) * 0.08).addInPlace(side.scale((Math.random() - 0.5) * 0.05));
+            const w2 = wide * (0.5 + Math.random() * 0.6);
+            this._mark(kind, way.scale(w2 * long), side.scale(w2), normal, at.add(off));
+        }
+        if (floor) {
+            // Drops landing on the same place gather; enough of them is a pool.
+            const key = Math.floor(at.x / 0.03) * 7919 + Math.floor(at.z / 0.03);
+            const have = (this.gathering.get(key) ?? 0) + ml;
+            if (have > GATHERS) { this.floor.add(at.x, at.z, have); this.gathering.delete(key); } else this.gathering.set(key, have);
+        } else if (Math.abs(normal.y) < 0.3 && ml > 0.015) {
+            // On a wall a big enough drop runs down it, until what it leaves behind has used it up.
+            this._wallRun(at, normal, Math.max(0.002, d * 0.8), Math.min(0.6, ml / 0.003 / 100));
+        }
+    }
+
+    // One mark: tile `kind`, its X axis `x` and Y axis `y` (scaled), facing out of a surface with `normal`, at `at`.
+    _mark(kind: number, x: BABYLON.Vector3, y: BABYLON.Vector3, normal: BABYLON.Vector3, at: BABYLON.Vector3) {
+        const m = M.FromValues(
+            x.x, x.y, x.z, 0,
+            y.x, y.y, y.z, 0,
             -normal.x, -normal.y, -normal.z, 0,
             at.x + normal.x * 0.001, at.y + normal.y * 0.001, at.z + normal.z * 0.001, 1);
         const mesh = this.marks[kind], cap = SPLATS / this.marks.length;
         const slot = this.markNext[kind];
-        mesh.thinInstanceSetMatrixAt(slot, m, true);
+        m.copyToArray(this.markMatrices[kind], slot * 16);
+        this.markBorn[kind][slot] = this.clock;
+        this.markColours[kind].set([...WET, 1], slot * 4);
+        this.markChanged.add(kind);
         this.markNext[kind] = (slot + 1) % cap;
         this.markCount[kind] = Math.min(cap, this.markCount[kind] + 1);
         mesh.thinInstanceCount = this.markCount[kind];
         mesh.isVisible = true;
-        this.onLand?.(at, speed);
+        return slot;
+    }
+
+    _wallRun(at: BABYLON.Vector3, normal: BABYLON.Vector3, wide: number, reach: number) {
+        if (reach < 0.01 || this.wallRuns.length > 80) return;
+        const kind = 12 + Math.floor(Math.random() * 4);
+        const run = { kind, slot: 0, at: at.clone(), normal: normal.clone(), wide, length: 0.002, reach };
+        run.slot = this._place(run, -1);
+        this.wallRuns.push(run);
+    }
+
+    _place(run, slot: number) {
+        const across = V3.Cross(V3.UpReadOnly, run.normal).normalize();
+        const up = new V3(0, 1, 0);
+        // The streak's tile has its start at the top and its bead at the bottom: the quad is drawn from the drop down.
+        const centre = run.at.add(new V3(0, -run.length / 2 + run.wide, 0));
+        const x = across.scale(run.wide * 3), y = up.scale(run.length + run.wide * 2);
+        if (slot < 0) return this._mark(run.kind, x, y, run.normal, centre);
+        const m = M.FromValues(x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, -run.normal.x, -run.normal.y, -run.normal.z, 0,
+            centre.x + run.normal.x * 0.0012, centre.y, centre.z + run.normal.z * 0.0012, 1);
+        m.copyToArray(this.markMatrices[run.kind], slot * 16);
+        this.markChanged.add(run.kind);
+        return slot;
+    }
+
+    // Runs down walls lengthen at a couple of centimetres a second, slowing as they thin, until they stop.
+    _wallRuns(dt: number) {
+        if (!this.wallRuns.length) return;
+        this.wallRuns = this.wallRuns.filter((run) => {
+            const left = run.reach - run.length;
+            run.length += Math.min(left, dt * 0.04 * Math.min(1, left / 0.04 + 0.2));
+            this._place(run, run.slot);
+            return run.reach - run.length > 0.001;
+        });
+    }
+
+    // A drop at `at` that has reached one of `people`: taken by their skin or clothes, or not (false: it flies on).
+    _onto(people, at: BABYLON.Vector3, vel: BABYLON.Vector3, d: number, ml: number) {
+        for (const { npc, parts, lo, hi } of people) {
+            if (at.x < lo.x || at.y < lo.y || at.z < lo.z || at.x > hi.x || at.y > hi.y || at.z > hi.z) continue;
+            let seg = null, near = 0.015;
+            for (const p of parts) {
+                const t = Math.max(0, Math.min(1, ((at.x - p.a.x) * p.ab.x + (at.y - p.a.y) * p.ab.y + (at.z - p.a.z) * p.ab.z) / (p.ab.lengthSquared() || 1)));
+                const d = Math.hypot(at.x - p.a.x - p.ab.x * t, at.y - p.a.y - p.ab.y * t, at.z - p.a.z - p.ab.z * t) - p.r;
+                if (d < near) { near = d; seg = p.seg; }
+            }
+            if (!seg || --this.looks < 0) continue;
+            const hit = npc.runs.onto(at, npc.person.byName[seg.bone]);
+            if (!hit) continue;
+            if (hit.kind === 'cloth') npc.soak?.add(hit.rest, ml);
+            else {
+                // A spot as wide as it spread when it hit, as thick as what it holds over that.
+                const r = (d * spreads(d, vel.length())) / 2;
+                npc.film?.blot(hit, r, Math.min(0.5, (ml * 1000) / (Math.PI * (r * 1000) ** 2)));
+                if (ml > 0.008) npc.runs.start(hit, ml);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // People lying on the floor: where they lie in blood they take it up (their clothes drink it, their skin is smeared
+    // with it), and where they are dragged over the floor they smear it on, from a pool they are pulled through or from
+    // their own bloody clothes.
+    _lying(people, dt: number) {
+        const floor = this.floor, point = new V3();
+        for (const { npc } of people) {
+            // (Standing, only the soles touch the floor, and shoes are not sponges.)
+            if (!npc.down && !npc.ragdoll.limp) continue;
+            for (const seg of npc.ragdoll.segments) {
+                if (/foot/.test(seg.name)) continue;
+                const low = npc.ragdoll.lowest?.(seg) ?? seg.node.position.y - (seg.radius ?? 0.05);
+                if (low > 0.03) { this.contact.delete(seg); continue; }
+                const c = seg.node.position;
+                const last = this.contact.get(seg);
+                this.contact.set(seg, c.clone());
+                const deep = floor.depth(c.x, c.z);
+                const owner = npc.person.byName[seg.bone];
+                point.set(c.x, Math.max(0.005, low + 0.004), c.z);
+                const moved = last ? Math.hypot(c.x - last.x, c.z - last.z) : 0;
+                const hit = deep > 0.0002 || (moved > 0.01 && moved < 0.5) ? npc.runs.onto(point, owner) : null;
+                if (deep > 0.0002) {
+                    const took = floor.take(c.x, c.z, 0.05, 2.5 * dt / 0.15);
+                    if (hit?.kind === 'cloth') npc.soak?.add(hit.rest, took);
+                    else if (hit) npc.film?.blot(hit, 0.025, Math.min(0.3, took * 0.2));
+                }
+                if (!last || moved < 0.01 || moved > 0.5) continue;
+                // Dragged: what is under it is pushed along, and its own blood is wiped onto the floor.
+                const pushed = deep > 0.0003 ? floor.take(last.x, last.z, 0.04, moved * 30) : 0;
+                const own = hit?.kind === 'cloth' && npc.soak ? npc.soak.take(hit.rest, moved * 8) : 0;
+                if (pushed + own < 0.01) continue;
+                // A smear as wide as what was dragged, in streaks along the way it went (the weave, the folds, the skin's
+                // own lines drag the blood into lines), thinning off at its sides.
+                const steps = Math.ceil(moved / 0.0125), wide = Math.min(0.06, (seg.radius ?? 0.05) * 0.8);
+                const ax = (c.x - last.x) / moved, az = (c.z - last.z) / moved;
+                const lanes = [];
+                for (let u = -wide; u <= wide; u += 0.0125) lanes.push([u, (0.4 + 0.6 * Math.abs(Math.sin(u * 160 + seg.mass))) * (1 - (u / wide) ** 2 * 0.7)]);
+                const total = lanes.reduce((a, l) => a + l[1], 0) * steps;
+                for (let k = 1; k <= steps; k++) {
+                    const x = last.x + ax * moved * (k / steps), z = last.z + az * moved * (k / steps);
+                    for (const [u, w] of lanes) floor.add(x + az * u, z - ax * u, ((pushed + own) * w) / total);
+                }
+            }
+        }
+    }
+
+    // The player's feet: stepping in blood wets the soles, and the next steps print them, less each time.
+    _feet() {
+        const eye = this.scene.activeCamera?.globalPosition;
+        if (!eye) return;
+        const f = this.foot ?? (this.foot = { x: eye.x, z: eye.z, carried: 0, walked: 0, left: false });
+        const moved = Math.hypot(eye.x - f.x, eye.z - f.z);
+        const yaw = Math.atan2(eye.x - f.x, eye.z - f.z);
+        f.x = eye.x; f.z = eye.z;
+        if (this.floor.depth(eye.x, eye.z) > 0.0004) f.carried = Math.min(5, f.carried + this.floor.take(eye.x, eye.z, 0.12, 1.5));
+        if (moved > 0.5) return;
+        if (f.carried < 0.05) { f.walked = 0; return; }
+        f.walked += moved;
+        if (f.walked < 0.72) return;
+        f.walked = 0;
+        f.left = !f.left;
+        const side = f.left ? -0.09 : 0.09;
+        const print = f.carried * 0.28;
+        f.carried -= print;
+        // A print as full as the blood the sole still carries: the first ones whole, then only the tread's ridges, then
+        // a few flecks. A left foot is a right one mirrored.
+        const kind = 16 + (print > 0.6 ? 0 : print > 0.3 ? 1 : print > 0.12 ? 2 : 3);
+        const along = new V3(Math.sin(yaw), 0, Math.cos(yaw)), across = new V3(Math.cos(yaw), 0, -Math.sin(yaw));
+        this._mark(kind, across.scale(f.left ? -0.13 : 0.13), along.scale(0.33), V3.UpReadOnly,
+            new V3(eye.x + across.x * side, 0, eye.z + across.z * side));
+    }
+
+    // Blood on the floor drying: every couple of seconds each mark is coloured by how long it has lain there.
+    _dry() {
+        if (Math.floor(this.clock / 2) === Math.floor((this.clock - 1 / 60) / 2)) return;
+        this.marks.forEach((mesh, kind) => {
+            const colours = this.markColours[kind], born = this.markBorn[kind];
+            for (let i = 0; i < this.markCount[kind]; i++) {
+                const t = Math.min(1, (this.clock - born[i]) / DRIES);
+                for (let k = 0; k < 3; k++) colours[i * 4 + k] = WET[k] + (DRY[k] - WET[k]) * t;
+            }
+            if (this.markCount[kind]) mesh.thinInstanceBufferUpdated('color');
+        });
     }
 
     clear() {
         this.n = 0;
         this.drop.thinInstanceCount = 0;
+        this.drop.isVisible = false;
+        this.streams.clear();
+        this.wallRuns = [];
+        this.gathering.clear();
         this.marks.forEach((m, k) => { m.thinInstanceCount = 0; m.isVisible = false; this.markCount[k] = 0; this.markNext[k] = 0; });
-        this.poolList = [];
-        this.pools.thinInstanceCount = 0;
-        this.pools.isVisible = false;
+        this.floor.clear();
+        if (this.foot) this.foot.carried = 0;
     }
+}
+
+// A normally distributed number (Box-Muller).
+function gauss() {
+    return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(Math.PI * 2 * Math.random());
 }
 
 // The UVs of tile k of the splash sheet, as [u0, v0, u1, v1].
@@ -219,21 +629,30 @@ function tile(k) {
     return new BABYLON.Vector4(c / cols, 1 - (r + 1) / rows, (c + 1) / cols, 1 - r / rows);
 }
 
-// Eight splashes painted once: four round (a drop that fell straight) and four long with a tail and the spatter
-// thrown ahead of it (one that came in at a slant, travelling along +X of its tile).
+// Twenty stains painted once, each filling about 40% of its tile: four round and smooth (a drop that fell gently);
+// four round with their rims broken into spines and a scatter of droplets beyond (one that came hard); four long, with
+// a tail and droplets thrown on ahead (one that came slantwise, travelling along +X); four runs down a wall, a streak
+// from the top with the bead that is running at its foot; and four prints of a bloody shoe, fainter and fainter.
 function splashSheet(scene) {
     const S = 256, [cols, rows] = TILES;
     const texture = new BABYLON.DynamicTexture('splashes', { width: S * cols, height: S * rows }, scene, true);
     const g = texture.getContext() as CanvasRenderingContext2D;
     g.clearRect(0, 0, S * cols, S * rows);
-    const blob = (x, y, r, a = 1) => {
-        const grad = g.createRadialGradient(x, y, 0, x, y, r);
-        grad.addColorStop(0, `rgba(255,255,255,${a})`);
-        grad.addColorStop(0.75, `rgba(235,235,235,${a})`);
-        grad.addColorStop(1, 'rgba(200,200,200,0)');
-        g.fillStyle = grad;
+    const blob = (x, y, r) => {
         g.beginPath();
-        g.arc(x, y, r, 0, Math.PI * 2);
+        g.arc(x, y, Math.max(0.6, r), 0, Math.PI * 2);
+        g.fill();
+    };
+    // A closed outline about (x, y), `r` across on average, its edge wandering by `jag` at `lobes` places round it.
+    const outline = (x, y, r, lobes, jag, sx = 1, sy = 1) => {
+        const offsets = Array.from({ length: lobes }, () => (Math.random() - 0.5) * jag);
+        g.beginPath();
+        const steps = lobes * 6;
+        for (let a = 0; a <= steps; a++) {
+            const t = (a / steps) * Math.PI * 2, f = (a / steps) * lobes, i = Math.floor(f) % lobes, j = (i + 1) % lobes, u = f - Math.floor(f);
+            const rr = r * (1 + offsets[i] * (1 - u) + offsets[j] * u);
+            g.lineTo(x + Math.cos(t) * rr * sx, y + Math.sin(t) * rr * sy);
+        }
         g.fill();
     };
     for (let k = 0; k < cols * rows; k++) {
@@ -242,30 +661,80 @@ function splashSheet(scene) {
         g.beginPath();
         g.rect(ox, oy, S, S);
         g.clip();
-        if (k < 4) {
-            // A crown: the body of the drop with a ragged edge and the droplets it threw out round it.
-            const lobes = 14 + k * 3;
+        g.fillStyle = 'rgba(245,245,245,1)';
+        // The middle of a stain holds more blood than its rim: a little more opaque there.
+        const body = (x, y, r, sx = 1, sy = 1) => {
+            g.fillStyle = 'rgba(245,245,245,0.82)';
+            outline(x, y, r, 14, 0.12, sx, sy);
+            g.fillStyle = 'rgba(245,245,245,0.6)';
+            outline(x, y, r * 0.7, 9, 0.2, sx, sy);
             g.fillStyle = 'rgba(245,245,245,1)';
+        };
+        const kind = Math.floor(k / 4);
+        if (kind === 0) body(cx, cy, S * 0.19);
+        else if (kind === 1) {
+            body(cx, cy, S * 0.17);
+            // Spines: fingers of blood thrown out of the rim, some ending in a droplet.
+            const spines = 14 + Math.floor(Math.random() * 10);
+            for (let a = 0; a < spines; a++) {
+                const t = (a / spines) * Math.PI * 2 + Math.random() * 0.3, len = S * (0.03 + Math.random() * 0.07);
+                g.strokeStyle = 'rgba(245,245,245,0.9)';
+                g.lineWidth = S * (0.008 + Math.random() * 0.012);
+                g.lineCap = 'round';
+                g.beginPath();
+                g.moveTo(cx + Math.cos(t) * S * 0.15, cy + Math.sin(t) * S * 0.15);
+                g.lineTo(cx + Math.cos(t) * (S * 0.17 + len), cy + Math.sin(t) * (S * 0.17 + len));
+                g.stroke();
+                if (Math.random() < 0.5) blob(cx + Math.cos(t) * (S * 0.2 + len * 1.4), cy + Math.sin(t) * (S * 0.2 + len * 1.4), S * (0.006 + Math.random() * 0.01));
+            }
+            for (let a = 0; a < 10; a++) {
+                const t = Math.random() * Math.PI * 2, r = S * (0.28 + Math.random() * 0.18);
+                blob(cx + Math.cos(t) * r, cy + Math.sin(t) * r, S * (0.003 + Math.random() * 0.007));
+            }
+        } else if (kind === 2) {
+            // Long along +X: the stain itself an ellipse a little to the back, its leading edge drawn out into a tail
+            // and the droplets it threw going on ahead.
+            body(cx - S * 0.1, cy, S * 0.18, 1, 0.42);
             g.beginPath();
-            for (let a = 0; a <= lobes; a++) {
-                const t = (a / lobes) * Math.PI * 2, r = S * (0.2 + Math.random() * 0.06);
-                g.lineTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r);
-            }
+            g.moveTo(cx + S * 0.05, cy - S * 0.05);
+            g.quadraticCurveTo(cx + S * 0.2, cy - S * 0.01, cx + S * 0.27, cy);
+            g.quadraticCurveTo(cx + S * 0.2, cy + S * 0.01, cx + S * 0.05, cy + S * 0.05);
             g.fill();
-            for (let a = 0; a < 10 + k * 5; a++) {
-                const t = Math.random() * Math.PI * 2, r = S * (0.24 + Math.random() * 0.22);
-                blob(cx + Math.cos(t) * r, cy + Math.sin(t) * r, S * (0.01 + Math.random() * 0.03));
+            for (let a = 0; a < 9; a++) {
+                const t = (Math.random() - 0.5) * 0.35, r = S * (0.28 + Math.random() * 0.2);
+                blob(cx + Math.cos(t) * r, cy + Math.sin(t) * r * 0.5, S * (0.004 + Math.random() * 0.012));
             }
+        } else if (kind === 3) {
+            // A run down a wall: from the top of the tile, narrowing as it goes, the bead at its foot.
+            const w = S * 0.05, top = oy + S * 0.08, foot = oy + S * 0.86;
+            g.fillStyle = 'rgba(245,245,245,0.85)';
+            outline(cx, top + w, w * 1.6, 9, 0.25);
+            g.beginPath();
+            g.moveTo(cx - w, top + w);
+            let x = cx;
+            for (let y = top + w; y <= foot; y += S * 0.04) { x += (Math.random() - 0.5) * S * 0.008; g.lineTo(x - w * (0.55 + 0.45 * (1 - (y - top) / S)), y); }
+            for (let y = foot; y >= top + w; y -= S * 0.04) g.lineTo(x + w * (0.55 + 0.45 * (1 - (y - top) / S)), y);
+            g.fill();
+            g.fillStyle = 'rgba(245,245,245,1)';
+            outline(x, foot, w * 0.95, 7, 0.15, 1, 1.25);
         } else {
-            // Long along +X, the tail behind and the spatter ahead.
-            g.fillStyle = 'rgba(245,245,245,1)';
+            // A right shoe's print, toes up the tile: heel, the narrow waist, the ball and toes leaning out; what the tread's
+            // ridges carried, the fuller the print the more of them (k % 4 = 0 whole, 3 a few flecks).
+            const keeps = [1, 0.7, 0.42, 0.18][k % 4];
+            g.save();
             g.beginPath();
-            g.ellipse(cx - S * 0.08, cy, S * 0.22, S * 0.1, 0, 0, Math.PI * 2);
-            g.fill();
-            for (let a = 0; a < 18; a++) {
-                const t = (Math.random() - 0.5) * 0.7, r = S * (0.15 + Math.random() * 0.32);
-                blob(cx + Math.cos(t) * r, cy + Math.sin(t) * r * 0.6, S * (0.008 + Math.random() * 0.025));
+            g.ellipse(cx, oy + S * 0.78, S * 0.26, S * 0.13, 0, 0, Math.PI * 2);
+            g.ellipse(cx + S * 0.04, oy + S * 0.33, S * 0.36, S * 0.25, 0.12, 0, Math.PI * 2);
+            g.rect(cx - S * 0.2, oy + S * 0.45, S * 0.36, S * 0.3);
+            g.clip();
+            g.fillStyle = 'rgba(245,245,245,0.9)';
+            for (let y = oy + S * 0.05; y < oy + S * 0.95; y += S * 0.036) {
+                for (let x = ox; x < ox + S; x += S * 0.05) {
+                    if (Math.random() > keeps) continue;
+                    g.fillRect(x, y, S * (0.03 + Math.random() * 0.015), S * (0.016 + Math.random() * 0.008));
+                }
             }
+            g.restore();
         }
         g.restore();
     }
@@ -273,25 +742,3 @@ function splashSheet(scene) {
     texture.update();
     return texture;
 }
-
-// A pool's shape: a soft-edged, lobed blob, as blood spreads on a floor that is not quite flat.
-function poolSheet(scene) {
-    const S = 256;
-    const texture = new BABYLON.DynamicTexture('pool', { width: S, height: S }, scene, true);
-    const g = texture.getContext() as CanvasRenderingContext2D;
-    g.clearRect(0, 0, S, S);
-    g.filter = 'blur(3px)';
-    g.fillStyle = 'rgba(245,245,245,1)';
-    g.beginPath();
-    const lobes = 9;
-    for (let a = 0; a <= lobes * 4; a++) {
-        const t = (a / (lobes * 4)) * Math.PI * 2;
-        const r = S * (0.3 + 0.035 * Math.sin(t * lobes * 0.5 + 1.3) + 0.025 * Math.sin(t * 3.1));
-        g.lineTo(S / 2 + Math.cos(t) * r, S / 2 + Math.sin(t) * r);
-    }
-    g.fill();
-    texture.hasAlpha = true;
-    texture.update();
-    return texture;
-}
-

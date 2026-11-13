@@ -7,11 +7,12 @@
 // a great deal on bone, and stops where it has none left; what is left when it
 // comes out the far side carries on to whatever is behind. Each thing hurt
 // says what it does to the body (vitals.ts): a severed femoral artery bleeds a
-// litre and a half a minute, a holed lung slowly collapses, a broken femur
-// lets the thigh bend in the middle.
+// litre and a half a minute, a holed lung slowly collapses. What it does to a
+// bone, and the bone to the body, is bones.ts's; the pieces of a bone it
+// shatters fly on through the flesh like small bullets of their own (shards).
 //
-// A blow is an impulse into the segment it lands on and an energy that breaks
-// whatever bone there gives way under it.
+// A blow is an impulse into the segment it lands on and a force on the first
+// bone in its way (bones.ts's impact).
 
 import * as BABYLON from '@babylonjs/core';
 const V3 = BABYLON.Vector3;
@@ -33,11 +34,6 @@ const THROUGH = { heart: 0.1, lung: 0.16, liver: 0.15, spleen: 0.09, kidney: 0.0
 // Litres a second an organ bleeds when holed through, before the heart's push is taken into account.
 const ORGAN_BLEED = { heart: 0.07, liver: 0.012, spleen: 0.01, kidney: 0.007, lung: 0.004, brain: 0.002, pancreas: 0.003, stomach: 0.002, bowel: 0.0015,
     colon: 0.0015, gallbladder: 0.001, bladder: 0.0008, adrenal: 0.001, muscle: 0.001, airway: 0.001, oesophagus: 0.001, brainstem: 0.001 };
-// Joules a bone takes before it breaks, by the start of its name.
-const BREAKS: [RegExp, number][] = [[/skull/, 45], [/jaw/, 30], [/ribs|sternum|clavicle/, 25], [/humerus/, 70], [/radius|ulna/, 45], [/femur/, 220],
-    [/tibia/, 130], [/fibula/, 40], [/hip|sacrum/, 260], [/spine/, 120], [/hand|foot/, 25], [/kneecap|scapula/, 60]];
-// Which ragdoll segment's long bone it is, for a fracture to let go.
-const SEGMENT_OF_BONE: [RegExp, string][] = [[/femur/, 'thigh'], [/tibia/, 'shin'], [/humerus/, 'upperarm'], [/radius|ulna/, 'forearm']];
 
 const FAT = 0.012;          // metres of fat under the skin, about
 const SKIN = 0.002;
@@ -45,7 +41,6 @@ const SKIN = 0.002;
 // The rate a vessel of radius r (metres) bleeds, cut through, at normal pressure: a carotid about a litre a minute.
 const vesselRate = (r, arterial) => (arterial ? 1.2 : 0.55) * Math.pow(r * 1000, 2) * 0.001;
 
-const sideOf = (name) => (/^left/.test(name) ? 'L' : /^right/.test(name) ? 'R' : '');
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 
 // A line from `origin` along unit `dir` through person `npc`, carrying `m`. Returns where it stopped (or left them)
@@ -55,7 +50,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     const skins = surface.filter((h) => h.kind === 'skin');
     if (!skins.length) {
         // Only clothes in the way (a sleeve standing off an arm): a hole in them and nothing else.
-        for (const h of surface) npc.marks.hole(h, m.calibre, false);
+        for (const h of surface) npc.wound(h, 'in', m.calibre);
         return { stopped: false, at: null, energy: m.energy, hit: surface.length > 0 };
     }
     const { spans, vessels } = npc.insides.trace(origin, dir, far, m.channel);
@@ -64,8 +59,10 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     let energy = m.energy, stopAt = Infinity;
     const enter = skins[0];
     // Clothes before the skin are holed where it went in, and the blood from the wound soaks into them there.
-    for (const h of surface) if (h.kind === 'cloth' && h.t <= enter.t + 0.02) { npc.marks.hole(h, m.calibre, false); enter.cloth = h; }
-    if (!m.slash) npc.marks.hole(enter, m.calibre * (m.blade ? 1.2 : 1), false);
+    for (const h of surface) if (h.kind === 'cloth' && h.t <= enter.t + 0.02) { npc.wound(h, 'in', m.calibre); enter.cloth = h; }
+    // The way in, opened in the flesh; round a bullet's, the ring of skin it scraped and bruised going in.
+    if (!m.slash && !m.blade) npc.marks.hole(enter, m.calibre, false, ((m as any).speed ?? 0) < 600);
+    if (!m.slash) npc.wound(enter, m.blade ? 'stab' : 'in', m.blade ? m.calibre * 1.2 : m.calibre);
     // Where the path is inside the body: between each skin crossing and the next.
     const inside: [number, number][] = [];
     for (let k = 0; k < skins.length; k += 2) inside.push([skins[k].t, skins[k + 1]?.t ?? skins[k].t + 0.05]);
@@ -90,16 +87,22 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         const length = Math.min(s.leave, limit) - Math.max(s.enter, t);
         const kind = s.part.kind;
         if (kind === 'bone' || kind === 'skull') {
-            const at = energy;
-            // A blade is stopped by bone, and does not break it.
-            if (m.blade) { stopAt = Math.max(t, s.enter); energy = 0; break; }
-            if (!spend(Math.min(s.leave, limit), m.blade ? m.hard * 3 : m.hard)) {
-                fracture(npc, s.part, at, dir);
-                break;
+            const at = energy, point = origin.add(dir.scale(Math.max(t, s.enter)));
+            // A blade is stopped by bone, and does not break it: a heavy one bites into it.
+            if (m.blade) {
+                if (at > 60) v.injure(`${cap(s.part.name)} notched by the blade`, 3);
+                stopAt = Math.max(t, s.enter); energy = 0; break;
             }
-            fracture(npc, s.part, at, dir);
+            // (A bone is paid for by its thickness, not by how long the line runs inside it: the skull is several shells one
+            // inside another, and a line along a long bone is not through it.)
+            const thick = npc.bones.thickness(s.part.name);
+            const held = !spend(Math.min(s.leave, limit, Math.max(t, s.enter) + thick), m.hard);
+            const broke = npc.bones.shot(s.part, point, dir, at, m.calibre, s.leave - s.enter);
+            if (broke.pieces) shards(npc, origin.add(dir.scale(Math.min(s.leave, held ? stopAt : s.leave))), dir, broke.pieces, (at - energy) * 0.3);
+            if (held) break;
+            t = Math.max(t, Math.min(s.leave, limit));
             bones++;
-            fragments = Math.min(2, fragments + 0.4);
+            fragments = Math.min(2, fragments + (broke.pieces ? 0.25 * broke.pieces : 0.2));
             continue;
         }
         organ(npc, s.part, length, m, fragments);
@@ -128,12 +131,21 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     skins.forEach((h, k) => {
         if (k === 0 || h.t >= stopAt || m.slash) return;
         const out = k % 2 === 1;
-        npc.marks.hole(h, m.calibre * (out ? 1.6 + fragments : 1), out);
+        npc.wound(h, out ? 'out' : 'in', m.calibre * (out ? 1.6 + fragments : 1));
         if (out) { exitAt = h.point; exitHit = h; }
     });
     if (exited) for (const h of surface) if (h.kind === 'cloth' && h.t > skins[skins.length - 1].t) {
-        npc.marks.hole(h, m.calibre * 2, true);
+        npc.wound(h, 'out', m.calibre * 2);
         if (exitHit) exitHit.cloth = h;
+    }
+    // The scalp and face are full of small vessels and bleed far more than a wound anywhere else of the same size.
+    if (npc.ragdoll.nearest(enter.point).seg?.name === 'head') {
+        v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
+        if (exitHit) v.bleed({ name: 'scalp', rate: 0.002, clots: 0.003, source: { mark: exitHit } });
+    }
+    if (!m.slash) {
+        npc.welling(enter, m.blade ? 0.8 : 0.8 + m.energy / 1500);
+        npc.welling(exitHit, 2 + m.energy / 500);
     }
     // What bleeds comes out of the wound: the way out if there is one, it being the bigger.
     for (const b of v.bleeds.slice(first)) b.source = { ...b.source, mark: b.source?.mark ?? exitHit ?? enter };
@@ -214,21 +226,22 @@ function vessel(npc, hit, m) {
     v.injure(`${name} ${through === 1 ? 'severed' : 'nicked'}`, arterial ? 8 + r * 300 : 5);
 }
 
-function fracture(npc, part, energy, dir) {
-    const rule = BREAKS.find(([re]) => re.test(part.name));
-    if (!rule || energy < rule[1]) return false;
-    const v = npc.vitals, name = part.name, side = sideOf(name);
-    npc.insides.hurt(name);
-    v.pain = Math.min(1, v.pain + 0.4);
-    if (/skull/.test(name)) {
-        v.concussion = Math.min(1, v.concussion + 0.6);
-        v.injure('Skull fractured', 8);
-    } else v.injure(`${cap(name)} broken`, /femur|hip|sacrum|spine/.test(name) ? 6 : 4);
-    for (const [re, seg] of SEGMENT_OF_BONE) if (re.test(name) && npc.ragdoll.breakAt(seg + side)) npc.broke(seg + side);
-    if (/femur|tibia|hip|sacrum/.test(name)) npc.legGone = true;
-    if (/femur/.test(name)) v.bleed({ name: name + ' marrow', rate: 0.0015, internal: true, clots: 0.003 });
-    npc.crack(dir);
-    return true;
+// The pieces of a bone a bullet shattered, driven on from `at` in a cone round `dir` with `energy` J between them: each
+// a small missile of its own, tearing what lies within a few centimetres (Bartlett et al. 2000: bone fragments are the
+// secondary missiles of a high-velocity wound).
+function shards(npc, at: BABYLON.Vector3, dir: BABYLON.Vector3, count: number, energy: number) {
+    const piece: Missile = { energy: energy / count, mass: 0.002, calibre: 0.004, channel: 0.003, soft: 4, hard: 200 };
+    const side = V3.Cross(dir, Math.abs(dir.y) < 0.9 ? V3.Up() : V3.Right()).normalize(), up = V3.Cross(dir, side);
+    for (let k = 0; k < count; k++) {
+        const a = Math.random() * Math.PI * 2, spread = 0.15 + Math.random() * 0.45;
+        const d = dir.add(side.scale(Math.cos(a) * spread)).add(up.scale(Math.sin(a) * spread)).normalize();
+        const reach = Math.min(0.12, piece.energy / piece.soft / 100);
+        if (reach < 0.01) continue;
+        const { spans, vessels } = npc.insides.trace(at, d, reach, piece.channel);
+        for (const s of spans) if (s.part.kind !== 'bone' && s.part.kind !== 'skull') organ(npc, s.part, Math.min(s.leave, reach) - s.enter, piece, 1);
+        for (const hit of vessels) vessel(npc, hit, piece);
+    }
+    if (count > 2) npc.vitals.injure('Bone shattered into the flesh around it', 4);
 }
 
 // Which part of the body a point of skin is on, in words.
@@ -242,28 +255,25 @@ function regionOf(npc, hit) {
 }
 
 function woundText(m, region, deep, through) {
+    if (m.slash) return deep < 0.012 ? `Cut to the ${region}` : `Deep cut to the ${region}`;
     if (m.blade) return deep < 0.025 ? `Cut to the ${region}` : `Stab wound to the ${region}, ${Math.round(deep * 100)} cm deep`;
     return through ? `Gunshot through the ${region}` : `Gunshot to the ${region}, bullet lodged`;
 }
 
 // --- blows -------------------------------------------------------------------------
 
-// Something heavy swung into person `npc` at `point`, moving along `dir` at `speed` m/s with `mass` kg behind it.
-export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: number, speed: number) {
+// Something heavy swung into person `npc` at `point`, moving along `dir` at `speed` m/s with `mass` kg behind it;
+// `stiffness` (N/m) how hard it is, if softer than wood or steel (an empty cardboard box gives far more than the flesh).
+export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: number, speed: number, stiffness?: number) {
     const v = npc.vitals;
     const first = v.bleeds.length;
     const { seg } = npc.ragdoll.nearest(point);
     const name = seg?.name ?? 'chest';
     const skin = npc.surface(point.subtract(dir.scale(0.25)), dir, 0.5).find((h) => h.kind === 'skin') ?? null;
     const energy = 0.5 * mass * speed * speed;
-    const side = name.endsWith('L') ? 'L' : name.endsWith('R') ? 'R' : '';
     const base = name.replace(/2?[LR]$/, '');
-    // What breaks first under a blow to each segment, and what else it does.
-    const bones = { head: 'skull', chest: `${side === 'L' ? 'left' : 'right'} ribs`, belly: null, pelvis: 'right hip bone', upperarm: 'humerus', forearm: 'ulna',
-        hand: 'hand bones', thigh: 'femur', shin: 'tibia', foot: 'foot bones' };
-    const boneName = bones[base] && (base === 'head' || base === 'chest' || base === 'pelvis' ? bones[base] : `${side === 'L' ? 'left' : 'right'} ${bones[base]}`);
-    const part = boneName && npc.insides.parts.find((p) => p.name === boneName);
-    if (part) fracture(npc, part, energy * (base === 'head' ? 0.35 : 0.5), dir);
+    // The bone first in its way takes the force the flesh over it lets through (bones.ts); the soft parts take the energy.
+    if (seg) npc.bones.impact(seg, point, dir, mass, speed, stiffness);
     if (base === 'head') {
         v.concussion = Math.min(1, v.concussion + energy / 160);
         if (energy > 90) v.bleed({ name: 'scalp', rate: 0.0008, clots: 0.01 });

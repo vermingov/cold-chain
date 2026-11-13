@@ -9,6 +9,7 @@
 //
 // A long bone is in two halves, like the limb it is in (ragdoll.ts): the half
 // past the middle hangs from the mid bone, so a broken femur shows broken.
+// Where a bone breaks is drawn by bones.ts and shards.ts.
 
 import * as BABYLON from '@babylonjs/core';
 const V3 = BABYLON.Vector3;
@@ -55,6 +56,7 @@ export class Insides {
     declare data: any;
     declare mesh: BABYLON.Mesh;
     declare hurtMaterial: Record<string, number>;
+    declare drawn: Uint32Array;
 
     constructor(person, data) {
         this.person = person;
@@ -66,7 +68,11 @@ export class Insides {
             const mid = m && byName[`mid-${m[1]}.${m[2]}`];
             return mid ? { first: byName[boneName], mid, from: byName[boneName].head, to: mid.tail } : null;
         };
+        // The head and neck hang from the neck's first bone in the file, but a turn of the head is spread over the neck's
+        // bones down to the skull (ragdoll.ts): each piece goes with the neck bone at its height, the skull with the head's.
+        const neck = ['neck01', 'neck02', 'neck03', 'head'].map((n) => byName[n]);
         const ownerAt = (boneName, x, y, z) => {
+            if (boneName === 'neck01') return neck.findLast((b) => b.head.y <= y) ?? neck[0];
             const h = halves(boneName);
             if (!h) return byName[boneName];
             const d = h.to.subtract(h.from);
@@ -118,12 +124,14 @@ export class Insides {
     }
 
     // Everything the line from `origin` along unit `dir` passes through, nearer than `far`: [{ part, enter, leave }] in
-    // order, and the vessels it comes within `reach` of: [{ tube, at (index of the point), t, miss }].
-    trace(origin: BABYLON.Vector3, dir: BABYLON.Vector3, far: number, reach = 0) {
+    // order, and the vessels it comes within `reach` of: [{ tube, at (index of the point), t, miss }]. `only` the parts
+    // it says, if given.
+    trace(origin: BABYLON.Vector3, dir: BABYLON.Vector3, far: number, reach = 0, only: ((part) => boolean) | null = null) {
         const transform = this._restToWorld();
         const spans = [];
         const o = new V3(), d = new V3();
         for (const part of this.parts) {
+            if (only && !only(part)) continue;
             const { inv } = transform(part.owner);
             V3.TransformCoordinatesToRef(origin, inv, o);
             V3.TransformNormalToRef(dir, inv, d);
@@ -192,10 +200,14 @@ export class Insides {
         const vd = new BABYLON.VertexData();
         vd.positions = position;
         vd.normals = normal;
-        vd.indices = index;
+        // This person's own copy of the triangles (the file's is shared): round a break they are taken out and drawn
+        // again, broken (shards.ts).
+        this.drawn = index.slice();
+        vd.indices = this.drawn;
         vd.matricesIndices = bones;
         vd.matricesWeights = weights;
         vd.applyToMesh(mesh, false);
+        mesh.setIndices(this.drawn, null, true);
         mesh.parent = person.mesh.parent;
         mesh.position.copyFrom(person.mesh.position);
         mesh.skeleton = person.skeleton;
@@ -230,6 +242,18 @@ export class Insides {
     hurt(name) {
         const p = this.data.header.parts.find((x) => x.name === name);
         if (p?.sub && this.hurtMaterial) p.sub.materialIndex = this.hurtMaterial[p.kind];
+    }
+
+    // The x-ray's look for a kind of thing, whole or hurt.
+    material(kind: string, hurt = false) {
+        const kinds = Object.keys(LOOKS);
+        return (this.mesh.material as BABYLON.MultiMaterial).subMaterials[kinds.indexOf(kind) + (hurt ? kinds.length : 0)];
+    }
+
+    // Triangles (offsets into the index) no longer drawn in the x-ray: a broken bone drawn in pieces of its own instead.
+    hide(tris: number[]) {
+        for (const i of tris) this.drawn[i + 1] = this.drawn[i + 2] = this.drawn[i];
+        this.mesh.updateIndices(this.drawn, 0, true);
     }
 
     dispose() { this.mesh?.dispose(false, true); }

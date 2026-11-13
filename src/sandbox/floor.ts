@@ -1,0 +1,384 @@
+// Blood on the floor: how deep it stands at each place, how it spreads, and
+// how it dries.
+//
+// The floor is a grid of 12.5 mm squares, each holding a depth of blood.
+// Blood runs from deeper to shallower (and from higher to lower: no concrete
+// floor is flat, it rises and falls a millimetre or two over half a metre),
+// as readily as a film of its depth can flow (the cube of the depth, over
+// its viscosity: a thin smear hardly moves, a pool levels at once). It does
+// not wet dry floor until it stands deep enough to push its edge over it:
+// two to three millimetres on concrete, which is how deep a pool of blood
+// is, and that edge is caught on every grain and pore, so it is ragged. A
+// thin film stays behind wherever it has been. It thickens as it clots (a
+// few minutes), skins over and darkens as it dries (tens of minutes), and
+// goes brown-black.
+//
+// Drawn by one plane over the part of the floor with blood on it, its
+// shader (Puddle) reading the depths: dark red where it is deep, red-brown
+// where it is a smear, a surface as smooth as water while it is wet whose
+// edge rounds up and catches the lamps.
+
+import * as BABYLON from '@babylonjs/core';
+import { GLSL_BLOOD, MU, RHO, noise2, sendPart } from './fluid.ts';
+
+const CELL = 0.0125;            // metres
+const TILE = 32;                // cells a side of the tiles the floor is woken and put to sleep by
+const STEP = 1 / 30;            // seconds between moves
+const STANDS = 0.0025;          // metres: how deep blood must stand to push its edge on over dry floor, on average
+const STAYS = 0.00006;          // metres: the film left behind where it has been
+const MOST_MM = 4;              // the deepest the texture tells apart
+const CLOTS = 360;              // seconds for blood on a floor to thicken to a third of its first runniness
+const DRIES = 1400;             // seconds for a pool to lose two thirds of its wetness (a smear is quicker)
+const MOVES = (RHO * 9.81 * STEP) / (3 * MU * CELL * CELL);     // how much of a depth difference a film moves a step, per cubic metre of depth
+
+export class Floor {
+    declare scene: BABYLON.Scene;
+    declare n: number;
+    declare x0: number;
+    declare z0: number;
+    declare h: Float32Array;
+    declare change: Float32Array;
+    declare rise: Float32Array;
+    declare edge: Float32Array;
+    declare born: Float32Array;
+    declare tiles: number;
+    declare awake: Uint8Array;
+    declare made: Uint8Array;
+    declare quiet: Uint16Array;
+    declare wet: Set<number>;
+    declare data: Uint8Array;
+    declare texture: BABYLON.RawTexture;
+    declare mesh: BABYLON.Mesh;
+    declare material: BABYLON.PBRMaterial;
+    declare clock: number;
+    declare wait: number;
+    declare dirty: Set<number>;
+    declare shaded: number;
+    declare area: number[] | null;
+
+    // `half` the half-width of the square floor in metres; `reflect` what a wet surface shows.
+    constructor(scene: BABYLON.Scene, half: number, reflect: BABYLON.BaseTexture | null) {
+        this.scene = scene;
+        this.n = Math.ceil((half * 2) / CELL / TILE) * TILE;
+        this.x0 = this.z0 = -(this.n * CELL) / 2;
+        const cells = this.n * this.n;
+        this.h = new Float32Array(cells);
+        this.change = new Float32Array(cells);
+        this.rise = new Float32Array(cells);
+        this.edge = new Float32Array(cells);
+        this.born = new Float32Array(cells);
+        this.tiles = this.n / TILE;
+        this.awake = new Uint8Array(this.tiles * this.tiles);
+        this.made = new Uint8Array(this.tiles * this.tiles);
+        this.quiet = new Uint16Array(this.tiles * this.tiles);
+        this.wet = new Set();
+        this.data = new Uint8Array(cells * 2);
+        this.texture = new BABYLON.RawTexture(this.data, this.n, this.n, BABYLON.Constants.TEXTUREFORMAT_RG, scene, false, false,
+            BABYLON.Texture.BILINEAR_SAMPLINGMODE, BABYLON.Constants.TEXTURETYPE_UNSIGNED_BYTE);
+        this.texture.wrapU = this.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+        this.clock = 0;
+        this.wait = 0;
+        this.dirty = new Set();
+        this.shaded = 0;
+        this.area = null;
+
+        this.mesh = BABYLON.MeshBuilder.CreateGround('bloodFloor', { width: 1, height: 1 }, scene);
+        this.mesh.position.y = 0.0007;
+        this.mesh.isPickable = false;
+        this.mesh.receiveShadows = true;
+        this.mesh.alwaysSelectAsActiveMesh = true;
+        this.mesh.isVisible = false;
+        const m = new BABYLON.PBRMaterial('bloodFloor', scene);
+        m.albedoColor = new BABYLON.Color3(0.1, 0.004, 0.003);
+        m.metallic = 0;
+        m.roughness = 0.05;
+        m.reflectionTexture = reflect;
+        m.environmentIntensity = 0.9;
+        m.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+        // Where there is no blood there is nothing to catch the lamp.
+        m.useSpecularOverAlpha = false;
+        m.useRadianceOverAlpha = false;
+        m.zOffset = -1;
+        m.maxSimultaneousLights = 8;
+        new Puddle(m, this);
+        this.material = m;
+        this.mesh.material = m;
+    }
+
+    _cell(x: number, z: number) {
+        const i = Math.floor((x - this.x0) / CELL), j = Math.floor((z - this.z0) / CELL);
+        return i < 1 || j < 1 || i >= this.n - 1 || j >= this.n - 1 ? -1 : j * this.n + i;
+    }
+
+    // The floor's own lie, made the first time a tile is wet: how high each cell is (a couple of millimetres of
+    // unevenness over half a metre, less over a few centimetres) and how deep blood must stand to wet it.
+    _make(t: number) {
+        this.made[t] = 1;
+        const tx = t % this.tiles, tz = Math.floor(t / this.tiles);
+        for (let j = 0; j < TILE; j++) for (let i = 0; i < TILE; i++) {
+            const gx = tx * TILE + i, gz = tz * TILE + j, c = gz * this.n + gx;
+            const x = gx * CELL, z = gz * CELL;
+            this.rise[c] = 0.0016 * noise2(x / 0.45, z / 0.45) + 0.0006 * noise2(x / 0.11 + 7, z / 0.11) + 0.00015 * noise2(x / 0.03, z / 0.03 + 3);
+            this.edge[c] = STANDS * (0.6 + 0.55 * noise2(x / 0.05 + 11, z / 0.05) + 0.35 * noise2(x / 0.017, z / 0.017 + 5));
+        }
+    }
+
+    _wake(c: number) {
+        const t = Math.floor(Math.floor(c / this.n) / TILE) * this.tiles + Math.floor((c % this.n) / TILE);
+        if (!this.made[t]) this._make(t);
+        this.awake[t] = 1;
+        this.quiet[t] = 0;
+    }
+
+    _tile(c: number) { return Math.floor(Math.floor(c / this.n) / TILE) * this.tiles + Math.floor((c % this.n) / TILE); }
+
+    // Cell `c` as the card has it: the depth (as a square root, so a thin smear still has steps) and how wet it is (thin
+    // blood dries in minutes; a pool keeps wet under its skin far longer). Its tile is sent again only if that changed.
+    _encode(c: number) {
+        const hc = this.h[c];
+        const r = Math.round(Math.sqrt(Math.min(1, hc / (MOST_MM / 1000))) * 255);
+        const keeps = 200 + DRIES * Math.min(1, hc / STANDS);
+        const g = hc > 0 ? Math.round(255 * Math.exp(-(this.clock - this.born[c]) / keeps)) : 0;
+        if (this.data[c * 2] === r && this.data[c * 2 + 1] === g) return;
+        this.data[c * 2] = r;
+        this.data[c * 2 + 1] = g;
+        this.dirty.add(this._tile(c));
+    }
+
+    // `ml` of blood onto the floor at (x, z).
+    add(x: number, z: number, ml: number) {
+        const c = this._cell(x, z);
+        if (c < 0 || ml <= 0) return;
+        this._wake(c);
+        const add = (ml * 1e-6) / (CELL * CELL);
+        if (this.h[c] < add * 2) this.born[c] = this.clock;
+        this.h[c] += add;
+        this.wet.add(c);
+        this._encode(c);
+    }
+
+    // How deep blood stands at (x, z), metres.
+    depth(x: number, z: number) {
+        const c = this._cell(x, z);
+        return c < 0 ? 0 : this.h[c];
+    }
+
+    // Up to `ml` taken off the floor within `r` of (x, z) (something lying in it, a shoe), from the deepest first;
+    // what it got.
+    take(x: number, z: number, r: number, ml: number) {
+        const got = [];
+        const k = Math.ceil(r / CELL);
+        const ci = this._cell(x, z);
+        if (ci < 0) return 0;
+        for (let j = -k; j <= k; j++) for (let i = -k; i <= k; i++) {
+            if (i * i + j * j > k * k) continue;
+            const c = ci + j * this.n + i;
+            if (this.h[c] > STAYS) got.push(c);
+        }
+        let taken = 0;
+        const each = (ml * 1e-6) / (CELL * CELL) / Math.max(1, got.length);
+        for (const c of got) {
+            const t = Math.min(each, this.h[c] - STAYS * 0.5);
+            this.h[c] -= t;
+            taken += t * CELL * CELL * 1e6;
+            this._wake(c);
+            this._encode(c);
+        }
+        return taken;
+    }
+
+    update(dt: number) {
+        this.clock += dt;
+        this.wait += dt;
+        if (this.wait >= STEP) {
+            this.wait = 0;
+            this._flow();
+        }
+        this._send();
+    }
+
+    // One step of every awake tile: each wet cell gives to each lower neighbour as much as a film its depth would carry.
+    _flow() {
+        const { n, h, change, rise, edge, born } = this;
+        const steps = [1, -1, n, -n];
+        const touched = [];
+        for (let t = 0; t < this.awake.length; t++) {
+            if (!this.awake[t]) continue;
+            touched.push(t);
+            const tx = t % this.tiles, tz = Math.floor(t / this.tiles);
+            for (let j = 0; j < TILE; j++) {
+                let c = (tz * TILE + j) * n + tx * TILE;
+                for (let i = 0; i < TILE; i++, c++) {
+                    const hc = h[c];
+                    if (hc <= STAYS) continue;
+                    const top = hc + rise[c];
+                    // Runnier while fresh, thicker as it clots; and a film moves as the cube of its depth.
+                    const ease = Math.min(0.11, MOVES * hc * hc * hc * Math.exp(-(this.clock - born[c]) / CLOTS));
+                    const free = hc - STAYS;
+                    let given = 0;
+                    for (let k = 0; k < 4; k++) {
+                        const d = c + steps[k];
+                        if (!edge[d]) this._wake(d);
+                        const drop = top - h[d] - rise[d];
+                        if (drop <= 0) continue;
+                        // Dry floor is wetted only by blood standing deep enough to push its edge over it.
+                        if (h[d] < STAYS * 0.5 && hc < edge[d]) continue;
+                        const q = Math.min(ease * drop, free * 0.24);
+                        if (q <= 1e-9) continue;
+                        change[d] += q;
+                        given += q;
+                        if (h[d] < q * 2) born[d] = born[c];
+                    }
+                    change[c] -= given;
+                }
+            }
+        }
+        // Applied after, so the order the cells were gone through does not show; cells at a tile's edge give into the next.
+        for (const t of touched) {
+            const tx = t % this.tiles, tz = Math.floor(t / this.tiles);
+            let moved = 0;
+            for (let j = -1; j <= TILE; j++) {
+                const gz = tz * TILE + j;
+                if (gz < 0 || gz >= n) continue;
+                for (let i = -1; i <= TILE; i++) {
+                    const gx = tx * TILE + i;
+                    if (gx < 0 || gx >= n) continue;
+                    const c = gz * n + gx, d = change[c];
+                    if (!d) continue;
+                    change[c] = 0;
+                    h[c] = Math.max(0, h[c] + d);
+                    moved += Math.abs(d);
+                    this.wet.add(c);
+                    this._wake(c);
+                    this._encode(c);
+                }
+            }
+            // A tile where nothing has moved for a couple of seconds sleeps until something lands in it.
+            if (moved < 1e-7) { if (++this.quiet[t] > 60) this.awake[t] = 0; } else this.quiet[t] = 0;
+        }
+    }
+
+    // What changed goes up to the card, a tile at a time; and every few seconds all of it is coloured again, as it dries.
+    _send() {
+        if (this.clock - this.shaded > 3 && this.wet.size) {
+            this.shaded = this.clock;
+            for (const c of this.wet) this._encode(c);
+        }
+        if (!this.dirty.size) return;
+        let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+        for (const t of this.dirty) {
+            const tx = (t % this.tiles) * TILE, tz = Math.floor(t / this.tiles) * TILE;
+            sendPart(this.texture, this.data, [this.n, this.n], [tx, tz, 0, tx + TILE, tz + TILE, 1]);
+            x0 = Math.min(x0, tx); z0 = Math.min(z0, tz); x1 = Math.max(x1, tx + TILE); z1 = Math.max(z1, tz + TILE);
+        }
+        this.dirty.clear();
+        // The plane covers what has blood on it.
+        const a = this.area;
+        const nx0 = x0 * CELL + this.x0, nz0 = z0 * CELL + this.z0, nx1 = x1 * CELL + this.x0, nz1 = z1 * CELL + this.z0;
+        if (!a || nx0 < a[0] || nz0 < a[1] || nx1 > a[2] || nz1 > a[3]) {
+            this.area = a ? [Math.min(a[0], nx0), Math.min(a[1], nz0), Math.max(a[2], nx1), Math.max(a[3], nz1)] : [nx0, nz0, nx1, nz1];
+            const [ax0, az0, ax1, az1] = this.area;
+            this.mesh.position.x = (ax0 + ax1) / 2;
+            this.mesh.position.z = (az0 + az1) / 2;
+            this.mesh.scaling.set(ax1 - ax0, 1, az1 - az0);
+            this.mesh.isVisible = true;
+        }
+    }
+
+    clear() {
+        this.h.fill(0);
+        this.data.fill(0);
+        this.awake.fill(0);
+        this.wet.clear();
+        this.dirty.clear();
+        this.texture.update(this.data);
+        this.area = null;
+        this.mesh.isVisible = false;
+    }
+
+    dispose() {
+        this.texture.dispose();
+        this.mesh.dispose();
+    }
+}
+
+// The floor's blood drawn: depth into colour, gloss and the bend of its surface.
+class Puddle extends BABYLON.MaterialPluginBase {
+    declare floor: Floor;
+
+    constructor(material: BABYLON.Material, floor: Floor) {
+        super(material, 'Puddle', 200, { PUDDLE: false });
+        this.floor = floor;
+        this._enable(true);
+    }
+
+    getClassName() { return 'Puddle'; }
+
+    prepareDefines(defines) { defines.PUDDLE = true; }
+
+    getSamplers(samplers) { samplers.push('puddleMap'); }
+
+    getUniforms() { return { ubo: [{ name: 'puddleArea', size: 4, type: 'vec4' }] }; }
+
+    bindForSubMesh(ubo) {
+        const f = this.floor, size = f.n * CELL;
+        ubo.updateFloat4('puddleArea', f.x0, f.z0, 1 / size, f.n);
+        ubo.setTexture('puddleMap', f.texture);
+    }
+
+    getActiveTextures(textures) { textures.push(this.floor.texture); }
+
+    hasTexture(texture) { return texture === this.floor.texture; }
+
+    getCustomCode(shaderType) {
+        if (shaderType !== 'fragment') return null;
+        return {
+            CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef PUDDLE
+uniform sampler2D puddleMap;
+${GLSL_BLOOD}
+float puddleHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float puddleNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(puddleHash(i), puddleHash(i + vec2(1, 0)), f.x), mix(puddleHash(i + vec2(0, 1)), puddleHash(i + vec2(1, 1)), f.x), f.y); }
+float puddleMm(vec2 u) { float r = texture2D(puddleMap, u).r; return r * r * ${MOST_MM.toFixed(1)}; }
+#endif
+`,
+            CUSTOM_FRAGMENT_UPDATE_ALPHA: `
+#ifdef PUDDLE
+float puddleGloss = 0.0;
+{
+    // Read a little off where this point is, by a smooth noise (blood's edge wanders with the floor's grain), and from
+    // four places half a cell about it: the depth smoothed, so a pool's edge is a curve and not the grid's steps.
+    vec2 pw = vPositionW.xz + (vec2(puddleNoise(vPositionW.xz * 17.0), puddleNoise(vPositionW.xz * 17.0 + 9.0)) - 0.5) * 0.012;
+    vec2 pu = (pw - puddleArea.xy) * puddleArea.z;
+    float t = 0.5 / puddleArea.w;
+    float a = puddleMm(pu + vec2(t, t)), b = puddleMm(pu + vec2(-t, t)), c = puddleMm(pu + vec2(t, -t)), d = puddleMm(pu - vec2(t, t));
+    float mm = (a + b + c + d) * 0.25, peak = max(max(a, b), max(c, d));
+    // A pool's edge is where it stands about a third of its depth (its rounded rim); a smear's, wherever there is any.
+    float n1 = puddleNoise(vPositionW.xz * 190.0);
+    float edge = clamp(peak * 0.35, 0.025, 0.8);
+    float cover = smoothstep(edge * 0.8, edge * 1.25, mm + (n1 - 0.5) * edge * 0.3);
+    if (cover < 0.003) discard;
+    float wet = texture2D(puddleMap, pu).g;
+    // The surface of the blood: flat where it is deep, rising at its edge, as steep as the depth changes across it.
+    float slope = 1.0 / ${(CELL * 1000).toFixed(1)};
+    float gx = (a + c - b - d) * 0.5 * slope, gz = (a + b - c - d) * 0.5 * slope;
+    // Drying, it skins over and wrinkles.
+    float crinkle = (1.0 - wet) * (puddleNoise(vPositionW.xz * 700.0) - 0.5) * 0.25;
+    normalW = normalize(vec3(-gx * 1.6 + crinkle, 1.0, -gz * 1.6 - crinkle));
+    surfaceAlbedo = bloodOver(vec3(0.21, 0.2, 0.185), mm, wet);
+    alpha = cover * clamp(0.45 + mm * 2.5, 0.0, 1.0);
+    puddleGloss = cover * mix(0.55, 0.97, smoothstep(0.05, 0.6, wet)) * smoothstep(0.0, 0.08, mm);
+}
+#endif
+`,
+            '!(float diffuseRoughness=reflectivityOut\\.diffuseRoughness;)': `$1
+#ifdef PUDDLE
+microSurface = puddleGloss;
+roughness = 1.0 - microSurface;
+#endif
+`,
+        };
+    }
+}
+
+export { CELL };

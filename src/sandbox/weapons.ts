@@ -31,7 +31,7 @@ export const ARMS = [
         stab: { energy: 70, mass: 0.2, calibre: 0.02, channel: 0.006, soft: 1.4, hard: 40, reach: 0.17, blade: true } as Missile, cut: 0.022 },
     { key: 'sword', name: 'Sword', kind: 'blade', reach: 1.65, swing: 0.5,
         stab: { energy: 150, mass: 1.2, calibre: 0.03, channel: 0.01, soft: 1.2, hard: 40, reach: 0.75, blade: true } as Missile, cut: 0.055 },
-    { key: 'bat', name: 'Baseball bat', kind: 'blunt', reach: 1.25, swing: 0.55, mass: 0.6, speed: 27 },
+    { key: 'bat', name: 'Baseball bat', kind: 'blunt', reach: 1.25, swing: 0.55, mass: 0.79, speed: 15.5 },  // a man's full swing at head height: about 110 J (dev/research/blunt-trauma.md)
     { key: 'pistol', name: 'Pistol', kind: 'gun', gun: { energy: 480, mass: 0.008, speed: 360, calibre: 0.009, channel: 0.006, soft: 12, hard: 110, rounds: 15, every: 0.13,
         pellets: 1, spread: 0.004, kick: 0.035, sound: 'shot-pistol', reload: 1.6 } as Gun },
     { key: 'rifle', name: 'Rifle', kind: 'gun', gun: { energy: 2700, mass: 0.0097, speed: 820, calibre: 0.0078, channel: 0.012, soft: 28, hard: 160, rounds: 5, every: 1.1,
@@ -43,8 +43,9 @@ export const ARMS = [
 ];
 
 // Things to throw: the props from Poly Haven already in the game, and what each weighs.
-const THROWN: [string, number][] = [['metal_toolbox', 6], ['concrete_cat_statue', 4], ['dining_chair_02', 5], ['wooden_bucket_01', 2], ['cardboard_box_01', 0.6],
-    ['vintage_electric_kettle', 1.2], ['metal_trash_can', 7]];
+// And how stiff each is where it lands, N/m (none: hard as the bone it hits); a cardboard box crumples.
+const THROWN: [string, number, number?][] = [['metal_toolbox', 6], ['concrete_cat_statue', 4], ['dining_chair_02', 5], ['wooden_bucket_01', 2], ['cardboard_box_01', 0.6, 4000],
+    ['vintage_electric_kettle', 1.2, 30000], ['metal_trash_can', 7, 60000]];
 
 export class Weapons {
     declare world: any;
@@ -108,6 +109,8 @@ export class Weapons {
         hm.useAlphaFromAlbedoTexture = true;
         hm.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
         hm.metallic = 0; hm.roughness = 0.9; hm.zOffset = -2;
+        hm.useSpecularOverAlpha = false;
+        hm.useRadianceOverAlpha = false;
         this.holes.material = hm;
         this.holes.isPickable = false;
         this.holes.alwaysSelectAsActiveMesh = true;
@@ -195,6 +198,7 @@ export class Weapons {
         else if (arm.kind === 'blade') this._swing(button === 0 ? 'stab' : 'cut');
         else if (arm.kind === 'blunt' && button === 0) this._swing('blow');
         else if (arm.kind === 'grab' && button === 0) this._take();
+        else if (arm.kind === 'grab' && button === 2) this._punch();
         else if (arm.kind === 'throw') button === 0 ? this._throw() : (this.throwKind = (this.throwKind + 1) % THROWN.length);
     }
 
@@ -347,10 +351,9 @@ export class Weapons {
         const res = pierce(npc, eye, dir, { energy: arm.key === 'sword' ? 90 : 35, mass: 0.3, calibre: 0.004, channel: arm.cut * 0.5, soft: 0.8, hard: 60, reach: arm.cut,
             blade: true, slash: true }, arm.reach + arm.cut);
         if (!res.hit || !res.enter) return;
-        const last = a.hits.get(npc);
-        if (last) npc.marks.cut(last, res.enter, arm.cut);
-        else this.world.sound?.shot('skin', { at: res.enter.point.asArray(), gain: 0.9 });
-        a.hits.set(npc, res.enter);
+        // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).
+        if (!a.hits.has(npc)) { a.hits.set(npc, []); this.world.sound?.shot('skin', { at: res.enter.point.asArray(), gain: 0.9 }); }
+        a.hits.get(npc).push(res.enter);
         this.world.blood.spray(res.enter.point, res.enter.normal.add(dir.scale(-0.6)).normalize(), 1.5, arm.key === 'sword' ? 6 : 2, 0.4);
     }
 
@@ -379,6 +382,24 @@ export class Weapons {
         }
     }
 
+    // A punch: an untrained man's, 500 to 850 N, about 45 J behind a fist and forearm (dev/research/blunt-trauma.md).
+    _punch() {
+        this.busy = 0.45;
+        const { camera } = this.world;
+        const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
+        this.world.sound?.shot('swing', { gain: 0.35, rate: 1.4 });
+        const person = this._person(eye, ahead, 0.85);
+        if (!person) return;
+        const hit = person.npc.surface(eye, ahead, 0.85).find((h) => h.kind === 'skin' || h.kind === 'cloth');
+        if (!hit) return;
+        setTimeout(() => {
+            // A fist and the arm behind it give: about 9 kN/m, which is what makes 1.8 kg at 7 m/s land with the 500 to
+            // 850 N an untrained punch is measured at (dev/research/blunt-trauma.md), not with the force of a brick.
+            blow(person.npc, hit.point, ahead, 1.8, 7, 9000);
+            this.world.sound?.shot('blunt', { at: hit.point.asArray(), gain: 0.6 });
+        }, 110);
+    }
+
     _hold(dt) {
         const g = this.grab;
         if (!g) return;
@@ -403,7 +424,7 @@ export class Weapons {
 
     async _throw() {
         const { scene, camera, models, bodyOf } = this.world;
-        const [name, mass] = THROWN[this.throwKind];
+        const [name, mass, stiffness] = THROWN[this.throwKind];
         this.busy = 0.35;
         await models.prepare([name]);
         const source = models.sources.get(name);
@@ -425,7 +446,7 @@ export class Weapons {
             const now = performance.now();
             if (!who || speed < 3 || now - last < 250) return;
             last = now;
-            blow(who.npc, e.point ?? who.seg.node.position, agg.body.getLinearVelocity().normalize(), mass, speed);
+            blow(who.npc, e.point ?? who.seg.node.position, agg.body.getLinearVelocity().normalize(), mass, speed, stiffness);
             this.world.sound?.shot('blunt', { at: (e.point ?? mesh.position).asArray(), gain: Math.min(1, speed / 10) });
         });
         this.thrown.push({ mesh, agg });
@@ -442,7 +463,11 @@ export class Weapons {
         if (this.firing && this.arm.key === 'pistol' && this.busy <= 0) this.firing = false;
         if (this.action) {
             this._sweep(dt);
-            if (this.action.t >= this.action.length) this.action = null;
+            if (this.action.t >= this.action.length) {
+                const sweep = this.world.camera.getDirection(V3.Left());
+                for (const [npc, hits] of this.action.hits) npc.slash(hits, this.arm.cut ?? 0.02, sweep);
+                this.action = null;
+            }
         }
         this._hold(dt);
         // The flash goes as fast as it came.

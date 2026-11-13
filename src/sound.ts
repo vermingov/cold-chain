@@ -198,18 +198,22 @@ export class Sound {
     // same from sounding the same).
     // With `most` (seconds) it is one strike instead (`hits`), cut off at most that long after it: a footstep.
     // With `at` ([x, y, z]) it is heard from there.
-    shot(name, { gain = 1, rate = 1, most = 0, at = null } = {}) {
+    shot(name, { gain = 1, rate = 1, most = 0, at = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number } {
         const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)], into = at ? this.place(at) : this.out;
         if (most && take.hits.length) {
             const which = Math.floor(Math.random() * take.hits.length), from = Math.max(0, take.hits[which] - BURST.lead);
             const next = which + 1 < take.hits.length ? take.hits[which + 1] - BURST.lead : take.buffer.duration;
-            this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, rate * (0.96 + Math.random() * 0.08), into, !!at);
-            return;
+            const r = rate * (0.96 + Math.random() * 0.08);
+            this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, r, into, !!at);
+            return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: Math.min(most, next - from) };
         }
         const which = Math.floor(Math.random() * take.bursts.length), [from, to] = take.bursts[which];
         // It rings on after it has gone quiet, as far as the next one or the end.
         const until = Math.min(to + BURST.rings, which + 1 < take.bursts.length ? take.bursts[which + 1][0] : take.buffer.duration);
-        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, rate * (0.96 + Math.random() * 0.08), into, !!at);
+        const r = rate * (0.96 + Math.random() * 0.08);
+        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, !!at);
+        // What is playing, for whoever wants to follow it (a face mouthing its own voice).
+        return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from };
     }
 
     // A stream no longer wanted: it falls silent and is no longer kept going.

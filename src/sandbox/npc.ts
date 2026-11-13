@@ -10,13 +10,20 @@
 import * as BABYLON from '@babylonjs/core';
 import * as P from '../poses.ts';
 import { Ragdoll, withMidBones } from './ragdoll.ts';
+import { Behaviour } from './behaviour.ts';
 import { Insides, loadAnatomy, triangle } from './anatomy.ts';
 import { Vitals } from './vitals.ts';
-import { Marks } from './marks.ts';
+import { Bones } from './bones.ts';
+import { Marks, Gore } from './marks.ts';
+import { Hider } from './hider.ts';
+import { Runs } from './runs.ts';
+import { Face } from './face.ts';
+import { Film, FilmLayer } from './film.ts';
+import { Soak } from './soak.ts';
+import { RHO } from './fluid.ts';
 const V3 = BABYLON.Vector3;
+const BACK = 45;            // mmHg: what the tissue round an open artery holds back of the pressure behind it
 
-const TOPPLE = 16;          // N s: a push a standing person cannot take on their feet
-const RECOVER = 5;          // per second: how fast a flinch settles
 
 // Each person's body data with the middle bones in, made once per body.
 export function prepare(people, name) {
@@ -29,8 +36,10 @@ export class Npc {
     declare person: any;
     declare clothes: BABYLON.Mesh;
     declare ragdoll: Ragdoll;
+    declare behaviour: Behaviour;
     declare insides: Insides;
     declare vitals: Vitals;
+    declare bones: Bones;
     declare marks: Marks;
     declare world: any;
     declare name: string;
@@ -46,6 +55,19 @@ export class Npc {
     declare down: boolean;
     declare grabbed: boolean;
     declare label: string;
+    declare voice: string;
+    declare runs: Runs;
+    declare face: Face;
+    declare _crying: boolean;
+    declare film: Film;
+    declare soak: Soak;
+    declare _aims: WeakMap<object, BABYLON.Vector3>;
+    declare skinWhole: BABYLON.Material;
+    declare skinHider: Hider;
+    declare clothHiders: Hider[];
+    declare underHiders: Hider[];
+    declare skinMaterials: BABYLON.Material[];
+    declare _said: { until: number; pain: number; next: number; awake: boolean };
 
     // `world` is the sandbox: { scene, blood, sound, frame, camera, shadows }.
     static async make(world, people, body, { at, yaw = 0, bit = 4, mass = 75, name = body } = {} as any) {
@@ -57,6 +79,8 @@ export class Npc {
     constructor(world, people, key, anatomy, { at, yaw, bit, mass, name }) {
         this.world = world;
         this.name = name;
+        this.voice = key.split('+')[0];
+        this._said = { until: 0, pain: 0, next: 3 + Math.random() * 4, awake: true };
         const person = people.make(key, { name: name + bit });
         person.root.position.copyFrom(at);
         person.root.rotation.y = yaw;
@@ -68,7 +92,7 @@ export class Npc {
         this.clothes.subMeshes = [];
         person.mesh.subMeshes = [];
         person.header.parts.forEach((p, i) => {
-            if (p.under) return;
+            // (The skin under the clothes is drawn too, but only where a hole in them shows it: see _ownMaterials.)
             new BABYLON.SubMesh(i, p.vertexStart, p.vertexCount, p.indexStart, p.indexCount, p.worn ? this.clothes : person.mesh);
         });
         const { arrays } = people.bodies.get(key);
@@ -86,11 +110,22 @@ export class Npc {
         this._cough = 2;
         person.apply(P.stand(this.clock));
         this.ragdoll = new Ragdoll(person, { mass, bit });
+        this.behaviour = new Behaviour(this);
         this.insides = new Insides(person, anatomy);
         this.insides.build(world.scene);
         this.vitals = new Vitals(mass);
-        this.vitals.onBeat = () => this._beat();
+        this.bones = new Bones(this);
+        this._ownMaterials(name + bit);
         this.marks = new Marks(world.scene, this);
+        for (const m of this.skinMaterials) new Gore(m, this.marks.depth);
+        this.runs = new Runs(this);
+        this.face = new Face(this.person);
+        // Blood on the skin (film.ts) and in the clothes (soak.ts), drawn by the skin's and the clothes' own materials.
+        this.film = new Film(world.scene, person.mesh.name);
+        for (const m of this.skinMaterials) new FilmLayer(m, this.film);
+        this.soak = new Soak(world.scene, this);
+        for (const h of this.clothHiders) h.soaks(this.soak);
+        this._aims = new WeakMap();
         for (const m of [person.mesh, this.clothes]) world.shadows?.addShadowCaster(m);
     }
 
@@ -162,8 +197,35 @@ export class Npc {
         const area3 = V3.Cross(rb.subtract(ra), rc.subtract(ra)).length();
         const u = this._uv;
         const areaUv = Math.abs((u[b * 2] - u[a * 2]) * (u[c * 2 + 1] - u[a * 2 + 1]) - (u[c * 2] - u[a * 2]) * (u[b * 2 + 1] - u[a * 2 + 1]));
-        const restNormal = V3.Cross(rb.subtract(ra), rc.subtract(ra)).normalize();
-        return { t: h.t, kind: h.kind, point, normal, uv, rest, restNormal, owner: this._owner(a), scale: Math.sqrt(areaUv / Math.max(1e-10, area3)) };
+        // Which way the skin faces there at rest: the mesh's own normals, which point out (the triangle's winding
+        // need not).
+        const { arrays } = this.person.lib.bodies.get(this.person.bodyName), n = arrays.normal;
+        const restNormal = this._outward(at(n, a).scale(wa).add(at(n, b).scale(wb)).add(at(n, c).scale(wc)).normalize(), rest, this._owner(a));
+        return { t: h.t, kind: h.kind, point, normal, uv, rest, restNormal, owner: this._owner(a), scale: Math.sqrt(areaUv / Math.max(1e-10, area3)),
+            corners: [a, b, c], shares: [wa, wb, wc] };
+    }
+
+    // A normal at a place on the body turned, if it has to be, to point out of the body: away from the bone it hangs
+    // on. (The mesh's own normals are mostly right; the skin kept under the clothes has some that point in, and a
+    // wound dug along one grows out through the shirt.)
+    _outward(n: BABYLON.Vector3, rest: BABYLON.Vector3, owner) {
+        const a = owner.head, b = owner.tail, ab = b.subtract(a);
+        const t = Math.max(0, Math.min(1, V3.Dot(rest.subtract(a), ab) / Math.max(1e-9, ab.lengthSquared())));
+        return V3.Dot(n, rest.subtract(a.add(ab.scale(t)))) < 0 ? n.scale(-1) : n;
+    }
+
+    // The bones a place on the skin moves with and how much with each, as the skin itself is skinned: corners
+    // `corners` mixed by `shares`. [{ owner, w }].
+    weightsAt(corners: number[], shares: number[]) {
+        const { arrays } = this.person.lib.bodies.get(this.person.bodyName), total = new Map();
+        corners.forEach((v, k) => {
+            for (let j = 0; j < 4; j++) {
+                const w = arrays.weights[v * 4 + j] / 255 * shares[k];
+                if (w > 0) total.set(arrays.joints[v * 4 + j], (total.get(arrays.joints[v * 4 + j]) ?? 0) + w);
+            }
+        });
+        const sum = [...total.values()].reduce((a, b) => a + b, 0) || 1;
+        return [...total].map(([bone, w]) => ({ owner: this.person.byName[this.person.header.bones[bone].name], w: w / sum }));
     }
 
     // The bone that carries most of corner `v`.
@@ -176,55 +238,71 @@ export class Npc {
 
     // Where a point of the body at rest (on bone `owner`) is in the world now, and a direction there.
     worldOf(rest: BABYLON.Vector3, owner, normal: BABYLON.Vector3 | null = null) {
-        const m = BABYLON.Matrix.Translation(-owner.head.x, -owner.head.y, -owner.head.z).multiply(owner.bone.getAbsoluteMatrix()).multiply(this.person.mesh.getWorldMatrix());
+        const m = this.restToWorld(owner);
         return { at: V3.TransformCoordinates(rest, m), normal: normal ? V3.TransformNormal(normal, m).normalize() : null };
+    }
+
+    // The matrix from the body at rest to the world now, for what bone `owner` carries.
+    restToWorld(owner) {
+        return BABYLON.Matrix.Translation(-owner.head.x, -owner.head.y, -owner.head.z).multiply(owner.bone.getAbsoluteMatrix()).multiply(this.person.mesh.getWorldMatrix());
+    }
+
+    // A place on the body at rest as a crossing like surface()'s: triangle `t` (an offset into the index), `w` how
+    // much of each corner, `kind` 'skin' or 'cloth'.
+    crossing(t, w, kind) {
+        const { arrays } = this.person.lib.bodies.get(this.person.bodyName), index = arrays.index, pos = this._restPos, nor = arrays.normal, u = this._uv;
+        const corner = (arr, k) => new V3(arr[index[t + k] * 3], arr[index[t + k] * 3 + 1], arr[index[t + k] * 3 + 2]);
+        const [ra, rb, rc] = [0, 1, 2].map((k) => corner(pos, k));
+        const rest = ra.scale(w[0]).add(rb.scale(w[1])).add(rc.scale(w[2]));
+        const most = w[0] >= w[1] && w[0] >= w[2] ? index[t] : w[1] >= w[2] ? index[t + 1] : index[t + 2];
+        const restNormal = this._outward(corner(nor, 0).scale(w[0]).add(corner(nor, 1).scale(w[1])).add(corner(nor, 2).scale(w[2])).normalize(), rest, this._owner(most));
+        const [a, b, c] = [index[t], index[t + 1], index[t + 2]];
+        const uv = [u[a * 2] * w[0] + u[b * 2] * w[1] + u[c * 2] * w[2], u[a * 2 + 1] * w[0] + u[b * 2 + 1] * w[1] + u[c * 2 + 1] * w[2]];
+        const area3 = V3.Cross(rb.subtract(ra), rc.subtract(ra)).length();
+        const areaUv = Math.abs((u[b * 2] - u[a * 2]) * (u[c * 2 + 1] - u[a * 2 + 1]) - (u[c * 2] - u[a * 2]) * (u[b * 2 + 1] - u[a * 2 + 1]));
+        return { kind, rest, restNormal, uv, scale: Math.sqrt(areaUv / Math.max(1e-10, area3)), owner: this._owner(most), corners: [a, b, c], shares: w };
     }
 
     // --- being hurt -----------------------------------------------------------------------
 
     // A push of `impulse` (N s) at `point`; `jolt` how much a standing person flinches from it (0 to 1).
+    // The body takes the push where it landed; whether it stays on its feet is its balance's business (behaviour.ts).
     hit(point: BABYLON.Vector3, impulse: BABYLON.Vector3, jolt = 1) {
         const { seg } = this.ragdoll.nearest(point);
-        if (!this.ragdoll.limp && impulse.length() > TOPPLE) this.knockDown();
-        if (this.ragdoll.limp) { this.ragdoll.push(seg.name, impulse, point); return; }
-        // Standing: the body gives the way it was pushed, and comes back.
-        const local = V3.TransformNormal(impulse, this.person.root.getWorldMatrix().clone().invert());
-        const k = Math.min(1, impulse.length() / TOPPLE) * (0.4 + jolt);
-        this.flinch.spineFlex = (this.flinch.spineFlex ?? 0) + Math.sign(local.z || 1) * 22 * k;
-        this.flinch.spineSide = (this.flinch.spineSide ?? 0) + -Math.sign(local.x || 1) * 14 * k;
-        this.flinch.spineTwist = (this.flinch.spineTwist ?? 0) + (Math.random() - 0.5) * 20 * k;
-        if (seg?.name === 'head') this.flinch.headFlex = (this.flinch.headFlex ?? 0) - 25 * k;
-        this.world.sound?.shot('bullet-flesh', { at: point.asArray(), gain: 0.7 });
+        if (!this.ragdoll.limp) this.world.sound?.shot('bullet-flesh', { at: point.asArray(), gain: 0.7 });
+        this.behaviour.hit(seg, impulse, point, jolt);
     }
 
-    // Blood thrown out where a shot went in and, more of it, where it came out.
+    // Blood thrown out where a shot went in and, more of it, where it came out. Back out of the way in (back spatter):
+    // a fraction of a millilitre of mist, drops of a few tenths of a millimetre that the air stops within a metre. Out
+    // of the way out, forward: millilitres, mist and drops up to a couple of millimetres, a cone that marks the floor
+    // and walls metres behind. More of both the more energy the bullet left in the body.
     spatter(enter, dir, exitAt, m, exited) {
         const blood = this.world.blood;
         const power = Math.min(1, m.energy / 2000);
-        blood.spray(enter.point.add(enter.normal.scale(0.01)), enter.normal.add(dir.scale(-0.4)).normalize(), 1.5 + power * 3, 2 + power * 10, 0.35);
-        if (exited && exitAt) blood.spray(exitAt, dir, 3 + power * 9, 8 + power * 60, 0.3 + power * 0.2, 1 + power);
+        blood.spray(enter.point.add(enter.normal.scale(0.004)), enter.normal.add(dir.scale(-0.4)).normalize(), 5 + power * 6, 0.15 + power * 0.8, 0.6, 0.25);
+        if (exited && exitAt) {
+            blood.spray(exitAt, dir, 9 + power * 16, 0.8 + power * 5, 0.4, 0.4);
+            blood.spray(exitAt, dir, 4 + power * 7, 1 + power * 5, 0.3, 1.1);
+        }
+    }
+
+    // A fresh wound in bare skin wells up: a little blood in and round it at once, more as it bleeds (_bleed). (Under
+    // clothes nothing shows yet: the cloth takes up the blood as it comes.)
+    welling(hit, ml) {
+        if (!hit || hit.cloth) return;
+        this.film.blot(hit, 0.003 + Math.sqrt(ml) * 0.0015, 0.25);
+        this.runs.start(hit, ml * 0.3);
     }
 
     crack() { this.world.sound?.shot('crack', { at: this.ragdoll.centre.asArray() }); }
 
     broke(segment) { this.world.onBroke?.(this, segment); }
 
+    // Off their feet whatever their balance: grabbed and pulled, say. The landing is heard when it happens.
     knockDown() {
-        if (this.ragdoll.limp) return;
-        this.ragdoll.fall(this.world.dt || 1 / 60);
+        this.behaviour.knockDown();
         this.down = true;
-        setTimeout(() => this.world.sound?.shot('body-fall', { at: this.ragdoll.centre.asArray() }), 550);
-    }
-
-    // On every heartbeat: arteries open to the air spurt.
-    _beat() {
-        const v = this.vitals;
-        for (const b of v.bleeds) {
-            if (!b.spurts || b.internal || b.rate < 0.002 || !b.source?.mark) continue;
-            const { at, normal } = this.worldOf(b.source.mark.rest, b.source.mark.owner, b.source.mark.restNormal);
-            const perBeat = b.rate * (v.map / 93) * (60 / Math.max(30, v.hr)) * 1000;
-            this.world.blood.spray(at.add(normal.scale(0.004)), normal, 1 + 3.5 * Math.sqrt(Math.max(0, v.map) / 93), perBeat, 0.12, 1.3);
-        }
     }
 
     // --- every frame ----------------------------------------------------------------------
@@ -233,53 +311,185 @@ export class Npc {
         const v = this.vitals;
         v.update(dt);
         const conscious = v.conscious;
-        if (!this.ragdoll.limp && (conscious < 0.35 || v.dead || this.legGone || v.paralysed.legs || !v.beating || this.grabbed)) this.knockDown();
         const person = this.person;
-        if (this.ragdoll.limp) {
-            this.ragdoll.setTone(v.dead || !v.beating ? 'dead' : conscious < 0.35 ? 'out' : 'alive');
-            this.ragdoll.drive();
-        } else {
-            this.clock += dt;
-            for (const k of Object.keys(this.flinch)) this.flinch[k] *= Math.exp(-RECOVER * dt);
-            const pose = P.stand(this.clock, { breathe: 1 + v.lost * 3 });
-            for (const [k, a] of Object.entries(this.flinch)) pose[k] = (pose[k] || 0) + a;
-            // Somebody hurt holds themselves bent over it.
-            pose.spineFlex = (pose.spineFlex || 0) + v.pain * 14;
-            person.look = this.world.camera.position;
-            person.lookWeight = conscious * 0.8;
-            person.apply(pose);
-            this.ragdoll.pose();
-        }
+        // The muscles do what the body can (behaviour.ts), the physics moves it, and the skeleton follows the bodies.
+        this.behaviour.update(dt);
+        this.ragdoll.drive();
         // Eyes: open and blinking while awake, half shut out cold, still once dead.
         person.blinks = conscious > 0.35;
         if (!person.blinks) person.blink = v.dead ? 0.35 : 0.75;
         person.tick(dt);
-        if (!this.ragdoll.limp) person._face();
+        person._face();
+        this.face.update(dt, this.vitals, this._crying, (this as any).bones?.jawHangs ?? 0);
         this._bleed(dt);
+        this._speak(dt);
+        this.runs.update(dt);
     }
 
+    // Blood out of each wound, as much as is coming out of it this frame, to where it goes: an artery open to the air
+    // throws it as a stream; anything else comes out into the clothes over the wound, or onto the skin, and runs.
     _bleed(dt) {
         const v = this.vitals, blood = this.world.blood;
         for (const b of v.bleeds) {
-            if (!b.source?.mark) continue;
-            const flow = b.rate * Math.max(0, v.map / 93) * (b.internal ? 0.08 : b.spurts ? 0.25 : 1);
+            const mark = b.source?.mark;
+            if (!mark) continue;
+            const flow = (b.flow ?? 0) * (b.internal ? 0.08 : 1);
             if (flow < 1e-6) continue;
-            const { at, normal } = this.worldOf(b.source.mark.rest, b.source.mark.owner, b.source.mark.restNormal);
-            blood.run(at.add(normal.scale(0.003)), flow, dt, normal.add(new V3(0, -1, 0)).normalize());
-            this.marks.soak(b, flow * dt);
+            const ml = flow * dt * 1000;
+            if (b.spurts && !b.internal && v.beating) {
+                // The pressure in the artery now: up fast as the heart squeezes, falling away till the next beat. What
+                // gets past the tissue round the hole throws the blood out as fast as Bernoulli says, and it surges with it.
+                const sys = v.map * 1.32, dia = v.map * 0.84, ph = v.beat;
+                const p = dia + (sys - dia) * (ph < 0.1 ? ph / 0.1 : Math.exp(-(ph - 0.1) / 0.17));
+                const speed = 0.6 * Math.sqrt(Math.max(0, (2 * (p - BACK) * 133.3) / RHO));
+                if (speed > 0.4) {
+                    const { at, normal } = this.worldOf(mark.rest, mark.owner, mark.restNormal);
+                    let aim = this._aims.get(b);
+                    if (!aim) { aim = new V3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).scale(0.5); this._aims.set(b, aim); }
+                    const out = ml * (p / v.map);
+                    // Through clothes most of it soaks in, and the rest comes through the hole slower.
+                    const into = mark.cloth ? 0.6 : 0;
+                    if (into) this.soak.add(mark.cloth.rest, out * into);
+                    const fast = speed * (mark.cloth ? 0.6 : 1), q = (out * (1 - into) * 1e-6) / dt;
+                    const r = Math.min(0.004, Math.max(0.0006, Math.sqrt(q / (Math.PI * fast))));
+                    blood.stream(b, at.add(normal.scale(0.004)), normal.add(aim).normalize(), fast, out * (1 - into), r, dt);
+                    continue;
+                }
+            }
+            // Where it comes out decides where it goes: into the clothes over the wound (which drip once full), or onto
+            // the skin, where it runs (runs.ts).
+            if (mark.cloth) this.soak.add(mark.cloth.rest, ml);
+            else this.runs.start(mark, ml, b);
         }
         if (this.coughsBlood && v.breathing && v.beating && (this._cough -= dt) < 0) {
             this._cough = 2 + Math.random() * 4;
+            this.say('cough', 0.9, true);
             const head = this.person.joint('head', 'head');
             const fwd = this.ragdoll.byName.get('head').node.getDirection(new V3(0, 0, 1));
             blood.spray(head.add(fwd.scale(0.1)).add(new V3(0, 0.02, 0)), fwd.add(new V3(0, -0.2, 0)).normalize(), 1.6, 4, 0.3);
         }
+        this.film.update(dt);
+        this.soak.update(dt);
+    }
+
+    // --- wounds as flesh -------------------------------------------------------------------
+
+    // The skin and clothes in materials of this person's own, so that this person's wounds, holes and stains show on
+    // them and on nobody else.
+    _ownMaterials(tag) {
+        const { person } = this, parts = person.header.parts, shared = person.multi.subMaterials;
+        const own = (i, depth, list) => {
+            const m = shared[i].clone(`${shared[i].name}:${tag}`);
+            list.push(new Hider(m, depth));
+            return m;
+        };
+        this.skinWhole = shared[parts.findIndex((p) => p.kind === 'skin')];
+        const skins = [], cloths = [];
+        const mine = (name) => new BABYLON.MultiMaterial(name + tag, this.world.scene);
+        const skinMulti = mine('skin'), clothMulti = mine('cloth');
+        const skinOwn = new Map(), clothOwn = new Map();
+        // Skin under clothes has a material of its own that draws it only through holes in them.
+        const unders = [], underOwn = new Map();
+        skinMulti.subMaterials = shared.map((m, i) => (parts[i].kind !== 'skin' ? m : parts[i].under ? (underOwn.get(m) ?? underOwn.set(m, own(i, 0.03, unders)).get(m))
+            : (skinOwn.get(m) ?? skinOwn.set(m, own(i, 0.03, skins)).get(m))));
+        for (const h of unders) h.reveal = true;
+        this.underHiders = unders;
+        this.skinMaterials = [...skinOwn.values(), ...underOwn.values()];
+        clothMulti.subMaterials = shared.map((m, i) => (parts[i].kind === 'cloth' ? (clothOwn.get(m) ?? clothOwn.set(m, own(i, 0.05, cloths)).get(m)) : m));
+        person.mesh.material = skinMulti;
+        this.clothes.material = clothMulti;
+        this.skinHider = skins[0];
+        this.clothHiders = cloths;
+    }
+
+    // A wound made at `hit` (a crossing from surface()): 'in' (a bullet's way in), 'out' (its way out), 'stab'. `size`
+    // is the bullet or blade across, in metres. On skin it opens the flesh there (marks.ts, drawn by Gore); on clothes
+    // it is a hole in them. False if the clothes have as many holes as can be drawn.
+    wound(hit, kind: 'in' | 'out' | 'stab', size: number) {
+        if (hit.kind === 'cloth') {
+            const r = size * (kind === 'out' ? 0.9 : 0.55);
+            const hole = { at: hit.rest, ex: tangent(hit.restNormal), ey: hit.restNormal, half: [r, -1] };
+            for (const h of this.underHiders) h.window(hit.rest, hit.restNormal, r * 1.6);
+            return this.clothHiders.map((h) => h.add(hole)).every(Boolean);
+        }
+        if (kind === 'in') this.marks.entry(hit, size);
+        else if (kind === 'out') this.marks.exit(hit, size);
+        else this.marks.stab(hit, size);
+        return true;
+    }
+
+    // A blade drawn across the skin through `hits` (in order), `deep` metres into it. The cut follows the skin from one
+    // place it crossed to the next, through places laid back on the skin in between, so it runs round a face and does
+    // not cut across it.
+    slash(hits, deep: number, sweep: BABYLON.Vector3 | null = null) {
+        const skin = hits.filter((h) => h.kind === 'skin');
+        // A blade that crossed the skin only once still opened it for a few centimetres, along the way it was going.
+        if (skin.length === 1 && sweep) {
+            const along = V3.TransformNormal(sweep, this.restToWorld(skin[0].owner).clone().invert()).normalize();
+            const n = skin[0].restNormal, flat = along.subtract(n.scale(V3.Dot(along, n))).normalize();
+            const at = (k) => this.runs.nearest(skin[0].rest.add(flat.scale(k)), 0.03);
+            const ends = [at(-0.018), skin[0], at(0.018)].filter((h) => h?.kind === 'skin');
+            if (ends.length > 1) return this.slash(ends, deep);
+        }
+        // An incised wound is deepest where the blade went in and tails off to a scratch where it came out, and gapes
+        // into an ellipse, widest in its middle (dev/research/wounds.md).
+        const path = [skin[0]];
+        for (let k = 0; k + 1 < skin.length; k++) {
+            const a = skin[k], b = skin[k + 1], gap = V3.Distance(a.rest, b.rest);
+            if (gap > 0.15) { path.push(null, b); continue; }
+            const steps = Math.floor(gap / 0.012);
+            for (let j = 1; j <= steps; j++) {
+                const on = this.runs.nearest(V3.Lerp(a.rest, b.rest, j / (steps + 1)), 0.04);
+                if (on?.kind === 'skin') path.push(on);
+            }
+            path.push(b);
+        }
+        for (let k = 0; k + 1 < path.length; k++) {
+            if (!path[k] || !path[k + 1]) continue;
+            const t = (k + 0.5) / (path.length - 1);
+            this.marks.cut(path[k], path[k + 1], deep * (1 - 0.85 * t), 0.35 + 0.65 * Math.sin(Math.PI * Math.min(1, t * 1.15)));
+        }
+    }
+
+    // --- the voice ---------------------------------------------------------------------------
+
+    // One of this person's cries (tools/cries.py), from their mouth, unless they are already making one. `over`
+    // cuts in on whatever they were saying, as a new hurt does.
+    say(kind, gain = 1, over = false) {
+        const now = performance.now() / 1000;
+        if (!over && now < this._said.until) return;
+        this._said.until = now + (kind === 'yell' ? 0.8 : kind === 'scream' || kind === 'cry' ? 3 : 2.2);
+        const playing = this.world.sound?.shot(`${kind}-${this.voice}`, { at: this.ragdoll.byName.get('head').node.position.asArray(), gain });
+        if (playing) this.face.speak(playing, this.world.sound.now);
+        this._crying = kind === 'cry' || (this._crying && kind !== 'scream' && kind !== 'yell');
+    }
+
+    // What they say about what is happening to them: a cry the moment it hurts, as bad as it hurts; then groans, or
+    // weeping once a lot of blood has gone; gasping when they cannot get air; and a last breath.
+    _speak(dt) {
+        const v = this.vitals, said = this._said;
+        const awake = v.conscious > 0.35 && v.beating && !v.dead;
+        if (said.awake && !awake && (v.dead || !v.beating)) this.say('dying', 0.8, true);
+        said.awake = awake;
+        const hurt = v.pain - said.pain;
+        said.pain = v.pain;
+        if (!awake) return;
+        if (hurt > 0.12 && v.breathing) { this.say(hurt > 0.35 ? 'scream' : 'yell', Math.min(1, 0.6 + hurt), true); said.next = 2 + Math.random() * 3; return; }
+        if ((said.next -= dt) > 0) return;
+        said.next = 3.5 + Math.random() * 5;
+        const short = !v.breathing || v.spo2 < 88 || (v.lungs.L + v.lungs.R) / 2 < 0.6 || v.airway < 0.6;
+        if (short) this.say('gasp', 0.8);
+        else if (v.lost > 0.18 && Math.random() < 0.6) this.say('cry', 0.75);
+        else if (v.pain > 0.25) this.say('groan', 0.6 + v.pain * 0.3);
     }
 
     dispose() {
+        this.bones.dispose();
         this.ragdoll.dispose();
         this.insides.dispose();
         this.marks.dispose();
+        this.film.dispose();
+        this.soak.dispose();
         this.clothes.dispose();
         this.person.dispose();
     }
@@ -310,4 +520,10 @@ function barycentric(p, a, b, c) {
     const den = d00 * d11 - d01 * d01 || 1;
     const v = (d11 * d20 - d01 * d21) / den, w = (d00 * d21 - d01 * d20) / den;
     return [1 - v - w, v, w];
+}
+
+// Some direction along a surface whose normal is `n`.
+function tangent(n: BABYLON.Vector3) {
+    const hint = Math.abs(n.y) < 0.9 ? V3.Up() : V3.Forward();
+    return hint.subtract(n.scale(V3.Dot(hint, n))).normalize();
 }

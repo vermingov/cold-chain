@@ -29,7 +29,7 @@ export class Hud {
         this.ammo = add(layer, 'ammo');
         this.monitor = add(layer, 'monitor');
         this.help = add(layer, 'help', [
-            'Left click: fire, stab, swing, grab or throw. Right click: cut with a blade, or change what you throw.',
+            'Left click: fire, stab, swing, grab or throw. Right click: cut with a blade, punch with your hands, or change what you throw.',
             '1 to 8 or the mouse wheel: change what you hold. R: reload.',
             'N: another person where you are looking. X: see inside them. K: clear the room. H: hide this.',
         ].map((l) => `<p>${l}</p>`).join(''));

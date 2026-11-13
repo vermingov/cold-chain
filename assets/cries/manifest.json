@@ -1,0 +1,65 @@
+{
+ "scream-buyer": [
+  "scream-buyer.ogg"
+ ],
+ "yell-buyer": [
+  "yell-buyer.ogg"
+ ],
+ "groan-buyer": [
+  "groan-buyer.ogg"
+ ],
+ "cry-buyer": [
+  "cry-buyer.ogg"
+ ],
+ "gasp-buyer": [
+  "gasp-buyer.ogg"
+ ],
+ "cough-buyer": [
+  "cough-buyer.ogg"
+ ],
+ "dying-buyer": [
+  "dying-buyer.ogg"
+ ],
+ "scream-oldman": [
+  "scream-oldman.ogg"
+ ],
+ "yell-oldman": [
+  "yell-oldman.ogg"
+ ],
+ "groan-oldman": [
+  "groan-oldman.ogg"
+ ],
+ "cry-oldman": [
+  "cry-oldman.ogg"
+ ],
+ "gasp-oldman": [
+  "gasp-oldman.ogg"
+ ],
+ "cough-oldman": [
+  "cough-oldman.ogg"
+ ],
+ "dying-oldman": [
+  "dying-oldman.ogg"
+ ],
+ "scream-sexton": [
+  "scream-sexton.ogg"
+ ],
+ "yell-sexton": [
+  "yell-sexton.ogg"
+ ],
+ "groan-sexton": [
+  "groan-sexton.ogg"
+ ],
+ "cry-sexton": [
+  "cry-sexton.ogg"
+ ],
+ "gasp-sexton": [
+  "gasp-sexton.ogg"
+ ],
+ "cough-sexton": [
+  "cough-sexton.ogg"
+ ],
+ "dying-sexton": [
+  "dying-sexton.ogg"
+ ]
+}
