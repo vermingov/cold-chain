@@ -38,6 +38,8 @@ type Gun = Missile & { rounds: number; every: number; pellets: number; spread: n
 // (The grip of each model is weapons.json's; z runs along its bore or blade, y toward its top or back.)
 const AIMED = 15;
 // A long gun's firing hand: on a pistol grip raked back some 20 degrees, the index finger along to the trigger.
+// Its other hand reaches the forend because the body turns that shoulder forward and in, as a rifleman stands.
+const FORWARD = [-0.06, 0, 0.12];
 const PISTOL_GRIP: Grip = { hold: 'grip', at: [0, -0.005, -0.005], along: [0, -0.94, -0.34], back: [0, -0.34, 0.94] };
 export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip; left?: Grip; kick?: number[] }> = {
     knife: { at: [0.17, -0.17, 0.42], turn: [-0.75, -0.2, -0.1],
@@ -53,14 +55,14 @@ export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip;
         left: { hold: 'support', at: [-0.022, -0.02, 0.008], along: [0.1, -0.95, -0.3], back: [0.45, -0.25, 0.85] } },
     rifle: { at: [0.15, -0.165, 0.32], kick: [0.06, 0.12],
         right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
-        left: { hold: 'wrap', at: [0, 0.01, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+        left: { hold: 'wrap', at: [0, 0.01, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
     shotgun: { at: [0.15, -0.17, 0.34], kick: [0.06, 0.15],
         right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
-        left: { hold: 'wrap', at: [0, 0.04, 0.32], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+        left: { hold: 'wrap', at: [0, 0.04, 0.32], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
     ak: { at: [0.15, -0.175, 0.36], kick: [0.03, 0.06], right: PISTOL_GRIP,
-        left: { hold: 'wrap', at: [0, 0.065, 0.3], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+        left: { hold: 'wrap', at: [0, 0.075, 0.29], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
     m4: { at: [0.15, -0.165, 0.34], kick: [0.025, 0.05], right: PISTOL_GRIP,
-        left: { hold: 'wrap', at: [0, 0.06, 0.27], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+        left: { hold: 'wrap', at: [0, 0.07, 0.27], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
     grenade: { at: [0.17, -0.2, 0.4], turn: [-1.3, -0.2, 0],
         right: { hold: 'ball', at: [0, 0, -0.005], along: [0, 0, -1], back: [-1, 0, 0] } },
     bandage: { at: [0.13, -0.16, 0.38], turn: [0.3, 0.4, 0],
