@@ -81,7 +81,7 @@ function crawling(phase) {
         ankleL: -30, ankleR: -30 });
 }
 
-const _v = new V3(), _t = new V3(), _q = new Q(), _qa = new Q(), _qb = new Q();
+const _v = new V3(), _t = new V3(), _q = new Q(), _qa = new Q(), _qb = new Q(), _w = new V3(), _spin = new V3();
 // How an arm reaching for the body is drawn to hold itself, where more than one way reaches (_armTo): each control's
 // preferred value and how much it counts (metres of miss a degree away is worth). The elbow forward of the trunk, so the
 // forearm comes to the body from in front and not through its side; the upper arm as little twisted as will do.
@@ -169,6 +169,8 @@ export class Behaviour {
         this.strength = { trunk: 1, neck: 1, armL: 1, armR: 1, legL: 1, legR: 1 };
         this.pushes = [];
         this._guarded = new Set();
+        this._eased = {};
+        this._dt = 1 / 60;
         this._cradle = '';
         this._measure();
     }
@@ -269,6 +271,7 @@ export class Behaviour {
     update(dt: number) {
         const npc = this.npc, v = npc.vitals, rd = this.rd;
         this.pushes.length = 0;
+        this._dt = dt;
         this.clock += dt;
         this.t += dt;
         for (const k of Object.keys(this.flinch)) this.flinch[k] *= Math.exp(-5 * dt);
@@ -457,6 +460,7 @@ export class Behaviour {
         const facing = Q.RotationAxis(BABYLON.Axis.Y, this.heading);
         const bent = facing.multiply(Q.RotationAxis(BABYLON.Axis.X, (pose.spineFlex || 0) * RAD));
         const kp = 30 * (1 - 0.3 * daze), kd = 9 * (1 - 0.3 * daze) * (this.settle > 0 ? 2 : 1);
+        const trunk = ['pelvis', 'belly', 'chest'].map((n) => rd.byName.get(n));
         if (down.length) this.act((dt) => {
             rd.com(this.com);
             rd.comVelocity(this.vel);
@@ -473,17 +477,24 @@ export class Behaviour {
             const speed = Math.hypot(this.vel.x, this.vel.z);
             if (speed > 0.01 && speed < 1.4) sway.addInPlace(new V3(this.vel.x, 0, this.vel.z).scaleInPlace(-Math.min(2.6 * legs, 5 * speed) / speed));
             this.muscles.lean(sway, height, down, dt);
-            // And turned to face where they mean to, as hard as the soles' grip allows.
-            _t.set(0, clamp(this.muscles.toward(pelvis, facing, 40, 40, Infinity, _v).y, -40 * legs, 40 * legs), 0);
+            // The trunk's spin as a whole (pelvis, belly and chest by their weight), which the turns below are damped
+            // against (motor.ts `toward`).
+            _spin.setAll(0);
+            let mass = 0;
+            for (const seg of trunk) { seg.body.getAngularVelocityToRef(_w); _spin.addInPlace(_w.scaleInPlace(seg.mass)); mass += seg.mass; }
+            _spin.scaleInPlace(1 / mass);
+            // And turned to face where they mean to, as hard as the soles' grip allows. (For a standing body's 1.5 kg m2
+            // about its length: at 40 kg m2 its damping alone was more than a step can give and turned it back and forth.)
+            _t.set(0, clamp(this.muscles.toward(pelvis, facing, 40, 1.5, Infinity, _v, _spin).y, -40 * legs, 40 * legs), 0);
             pelvis.body.applyAngularImpulse(_t.scale(dt));
             // The trunk kept upright over the legs, the hip strategy, as far as the muscles round the hips (about 300 N m
             // both together) and the back hold it, pushing on the floor through the legs: without it a stride pitched the
             // pelvis forty degrees over the front leg and took the body down, and at a third of that a shove still tipped
             // the trunk back a little more with every step until it lay back at fifty degrees. The chest is held as far
             // over as the pose bends the back, so a body doubled over is not straightened.
-            this.muscles.toward(pelvis, facing, 25, 12, 300 * legs, _t);
+            this.muscles.toward(pelvis, facing, 25, 12, 300 * legs, _t, _spin);
             pelvis.body.applyAngularImpulse(_t.set(_t.x, 0, _t.z).scaleInPlace(dt));
-            this.muscles.toward(chest, bent, 25, 12, 150 * legs, _t);
+            this.muscles.toward(chest, bent, 25, 12, 150 * legs, _t, _spin);
             chest.body.applyAngularImpulse(_t.set(_t.x, 0, _t.z).scaleInPlace(dt));
         });
 
@@ -648,7 +659,7 @@ export class Behaviour {
                 // (Low on the belly and not far across: the other arm reaches over it to the wound.)
                 const cradle = this.rd.worldPoint(belly, new V3(g.c.x + (side === 'L' ? 0.04 : -0.04), g.c.y - g.h.y * 0.2, g.c.z + g.h.z + 0.05), new V3());
                 const reach = this._armTo(side, cradle), all = smooth(e * 2.5);
-                for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
+                this._reachPose(side, reach, all, pose);
                 pose['curl' + side] = 35;
                 this.strength['arm' + side] *= 1 - 0.5 * e;
                 this._cradle = side;
@@ -686,6 +697,21 @@ export class Behaviour {
             }
         }
     }
+
+    // An arm's reach (_armTo) laid over the pose by `all` (0 to 1), eased toward over a tenth of a second: the reach is
+    // solved again every frame from where the body has just moved to, and now and then from a new start (its seeds),
+    // and taken as it came the arm's aim jumped by degrees from one frame to the next and the arm shook after it.
+    _reachPose(side, reach, all, pose) {
+        const was = (this._eased[side] ??= {}), k = Math.min(1, this._dt / 0.1);
+        for (const c of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) {
+            const want = (pose[c + side] || 0) + (reach[c] - (pose[c + side] || 0)) * all;
+            was[c] = was[c] === undefined || this.clock - (was.t ?? -1) > 0.1 ? want : was[c] + (want - was[c]) * k;
+            pose[c + side] = was[c];
+        }
+        was.t = this.clock;
+    }
+    declare _eased: Record<string, any>;
+    declare _dt: number;
 
     // Which way is up the trunk.
     _up() { return new V3(0, 1, 0).applyRotationQuaternion(this.rd.byName.get('chest').node.rotationQuaternion); }
@@ -727,7 +753,7 @@ export class Behaviour {
         } else if (this.clock - g.t > 1.5 && V3.Distance(now, at) > 0.08) this._grips[side] = null;
         // A hand goes all the way or not at all: how much it hurts is in how hard it presses (and how bent over they are).
         const all = smooth(how * 2.5);
-        for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
+        this._reachPose(side, reach, all, pose);
         pose['curl' + side] = 25;
         // On it, or held up on the way, the arm lets the hand lie where it is, its muscles easing off rather than driving
         // it on into what stopped it.

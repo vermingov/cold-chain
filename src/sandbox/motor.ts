@@ -28,7 +28,6 @@ export type Strength = { trunk: number; neck: number; armL: number; armR: number
 const _q = new Q(), _q2 = new Q(), _local = new Q(), _v = new V3(), _w = new V3(), _a = new V3(), _now = [0, 0, 0];
 const NONE = new Set<string>();
 const _c = new V3();
-const STEP = 1 / 120;       // s: every physics step (sandbox.ts)
 const GUARD = 0.8;          // s: how slowly a guarded limb's aim follows where it lies
 
 export class Muscles {
@@ -146,20 +145,18 @@ export class Muscles {
 
     // The torque that turns `seg` toward the world turn `want` like a damped spring (`rate`, per second squared, for
     // a body of `inertia` kg m2), no more than `most` N m.
-    toward(seg, want: BABYLON.Quaternion, rate: number, inertia: number, most: number, out: BABYLON.Vector3) {
+    toward(seg, want: BABYLON.Quaternion, rate: number, inertia: number, most: number, out: BABYLON.Vector3, spin: BABYLON.Vector3 = null) {
         Q.InverseToRef(seg.node.rotationQuaternion, _q);
         want.multiplyToRef(_q, _q2);
         if (_q2.w < 0) _q2.scaleInPlace(-1);
         const s = Math.hypot(_q2.x, _q2.y, _q2.z), angle = 2 * Math.atan2(s, _q2.w);
         out.set(_q2.x, _q2.y, _q2.z).scaleInPlace(s > 1e-6 ? angle / s : 0);
-        seg.body.getAngularVelocityToRef(_a);
-        // The damping no more than one step can take out of this segment's own spin (half of it): a push worked out
-        // from where it is now and given for the whole of a step overshoots past that, and a pelvis turned toward
-        // its heading with the whole body's 40 kg m2 of damping, on 0.1 kg m2 of its own, was flung one way and the
-        // other every step (0.7 to 1 rad/s of buzz, standing still, carried down to the feet).
-        seg.spin ??= Math.min(...['x', 'y', 'z'].map((k) => seg.body.getMassProperties().inertia[k]));
-        const damp = Math.min(2 * Math.sqrt(rate) * inertia, 0.5 * seg.spin / STEP);
-        out.scaleInPlace(rate * inertia).subtractInPlace(_a.scaleInPlace(damp));
+        // (Damped against `spin` when given: the trunk's as a whole, not one segment's own. A segment's own spin carries
+        // the quick give between it and its neighbours, and a push worked out from that and given for a whole step
+        // overshoots: a pelvis damped by its own spin as if it were the whole body was flung one way and the other every
+        // step, 0.7 to 1 rad/s of buzz standing still, carried down to the feet.)
+        if (spin) _a.copyFrom(spin); else seg.body.getAngularVelocityToRef(_a);
+        out.scaleInPlace(rate).subtractInPlace(_a.scaleInPlace(2 * Math.sqrt(rate))).scaleInPlace(inertia);
         const n = out.length();
         if (n > most) out.scaleInPlace(most / n);
         return out;
