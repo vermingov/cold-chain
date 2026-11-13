@@ -106,6 +106,7 @@ export class Behaviour {
     declare flinch: Record<string, number>;
     declare wound: { seg: any; local: BABYLON.Vector3; out: BABYLON.Vector3; t: number; size: number; hands?: string[] } | null;
     declare hurt: Record<string, boolean>;
+    declare holding: Record<string, boolean>;       // the hands on a wound this frame (_hold)
     declare _grips: Record<string, { to: BABYLON.Vector3; best: number; since: number; hold: BABYLON.Vector3 | null; t: number }>;
     declare favour: { side: string; how: number } | null;
     declare hunch: number;
@@ -149,6 +150,7 @@ export class Behaviour {
         this.flinch = {};
         this.wound = null;
         this.hurt = { L: false, R: false };
+        this.holding = {};
         this._grips = {};
         this.favour = null;
         this.hunch = 0;
@@ -548,9 +550,11 @@ export class Behaviour {
             // (As far over as tending a wound there has not bent them already.)
             more({ spineFlex: Math.max(0, 34 - this.hunch), neckFlex: 12, kneeL: 12, kneeR: 12 });
         } else if (r.kind === 'guard') {
-            // Hands up in front of the face, closed, the thumbs in over the fingers, chin down.
-            more({ shoulderFlexL: 75, shoulderFlexR: 75, shoulderAbductL: 8, shoulderAbductR: 8, elbowL: 115, elbowR: 115, curlL: 56, curlR: 60,
-                thumbL: 24, thumbR: 25, thumbBaseL: 52, thumbBaseR: 52, thumbInL: -55, thumbInR: -55, neckFlex: 14, spineFlex: 8 });
+            // Hands up in front of the face, closed, the thumbs in over the fingers, chin down. (Not a hand already gone to the
+            // wound, _tend: laid over its reach, the guard drove it on into the face and it shook there.)
+            more({ neckFlex: 14, spineFlex: 8 });
+            for (const k of ['L', 'R']) if (!this.holding[k]) more({ ['shoulderFlex' + k]: 75, ['shoulderAbduct' + k]: 8, ['elbow' + k]: 115, ['curl' + k]: k === 'L' ? 56 : 60,
+                ['thumb' + k]: k === 'L' ? 24 : 25, ['thumbBase' + k]: 52, ['thumbIn' + k]: -55 });
         } else if (r.kind === 'leg') {
             // A dead leg: it gives at the knee for a moment, and the balance has to cope.
             this.strength['leg' + r.side] *= 1 - 0.7 * e;
@@ -568,6 +572,7 @@ export class Behaviour {
         const w = this.wound, v = this.npc.vitals;
         this.favour = null;
         this.hunch = 0;
+        this.holding = {};
         if (!w) return;
         // A wound on a piece since cut off is tended where the piece was cut from: the stump, held at its end (the hand
         // went after the arm lying on the floor).
@@ -659,6 +664,7 @@ export class Behaviour {
     _hold(side, at: BABYLON.Vector3, out: BABYLON.Vector3, how, pose) {
         const rd = this.rd, hand = rd.byName.get('hand' + side);
         if (!this._free(side) || how <= 0.05) return;
+        this.holding[side] = true;
         // A reach starts from the arm out in front, bent: from where it hangs, the nearest way to a place across the
         // body is through it.
         if (how < 0.06 && this._arms?.[side]) this._arms[side].x = [-40, 10, 0, 80];
@@ -672,18 +678,20 @@ export class Behaviour {
         if (!g || V3.Distance(g.to, at) > 0.05) g = this._grips[side] = { to: at.clone(), best: Infinity, since: this.clock, hold: null, t: this.clock };
         const reach = this._armTo(side, g.hold ?? at), to = g.hold ?? (reach.miss > 0.03 ? reach.hand : at);
         const d = V3.Distance(now, to);
-        const touching = d < 0.04;
+        // (On it: the hand's middle within its own half thickness and a little of where it is going, which lies just off
+        // the skin.)
+        const touching = d < 0.06;
         if (!g.hold) {
             if (d < g.best - 0.01) { g.best = d; g.since = this.clock; }
             if (!touching && this.clock - g.since > 0.3) { g.hold = now.clone(); g.t = this.clock; }
-        } else if (this.clock - g.t > 1.5) this._grips[side] = null;
+        } else if (this.clock - g.t > 1.5 && V3.Distance(now, at) > 0.08) this._grips[side] = null;
         // A hand goes all the way or not at all: how much it hurts is in how hard it presses (and how bent over they are).
         const all = smooth(how * 2.5);
         for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
         pose['curl' + side] = 25;
         // On it, or held up on the way, the arm lets the hand lie where it is, its muscles easing off rather than driving
         // it on into what stopped it.
-        if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.35 : 0.7;
+        if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.6 : 0.75;
         if (g.hold) return;
         const chest = rd.byName.get('chest');
         if (touching) {

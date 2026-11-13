@@ -65,12 +65,13 @@ From DiMaio (ch. 4, 7), read in full:
 | Incomplete | Bullet under intact skin; then one or two small slit tears over it; then a hole the bullet bounced back through. | S [DiMaio] |
 | Rifle (centrefire) trunk exits | Larger and more irregular than the entrances, the majority 25 mm or less; the largest DiMaio saw 75 x 40 mm. Full-metal-jacket rifle exits can be indistinguishable from handgun exits. | S [DiMaio] ch. 7 |
 | Edges | Everted (turned outward), with subcutaneous fat protruding. | S [Cleveland77], `wounds.md` 4.3 |
+| What the edge shows | The layers in proportion to their thickness there: about 2 mm of skin (Derraik 2014), then the fat (a few mm on a forearm, 14-18 mm on a man's belly: `tissue-mechanics.md` sec. 1), then torn dark-red muscle. Fat at a fresh cut is pale cream to light yellow, lobulated and glistening, and blood soon lies over everything, pooled in the crevices: the edge reads wet and red-brown with the fat as glimpses. | S [TM] sec. 1, `wounds.md` sec. 0; blood cover E |
 | Through clothing | Tissue fragments on the inside of the cloth around the hole; the cloth hole torn, not punched. | S [DiMaio] |
 
 ### What to build
 
 - [ ] A real opening through skin and clothes (not a picture on the skin): a slit, a star of 3-4 splits, or a crescent; handgun ~ the bullet's size to ~2x, small slits on lax skin; rifle mostly up to 25 mm; deforming or fragmenting bullets larger.
-- [ ] Everted lips with fat showing in them; no abrasion ring.
+- [ ] Everted lips, bloody: thin pale fat in glimpses, torn muscle and blood dominant; no abrasion ring.
 - [ ] The track seen going in, dark and bloody.
 - [ ] Forward spatter with tissue from it, once, at the hit.
 
