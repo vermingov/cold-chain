@@ -662,9 +662,11 @@ export class Behaviour {
         // A reach starts from the arm out in front, bent: from where it hangs, the nearest way to a place across the
         // body is through it.
         if (how < 0.06 && this._arms?.[side]) this._arms[side].x = [-40, 10, 0, 80];
-        // Not into anything else of the body (a wound on an arm held in against the side): out over it until clear.
-        const mine = (s) => /^(upperarm|forearm|hand)/.test(s.name) && s.name.endsWith(side);
-        for (let k = 0; k < 3 && rd.attached.some((s) => !mine(s) && s !== this.wound?.seg && rd.outside(s, at) < 0.01); k++) at = at.add(out.scale(0.02));
+        // Not inside anything else of the body (a wound on an arm held in against the side): out over it until clear. (Only
+        // what it is truly inside: the wound's own limb, and anything merely near, left the hand pushed out 6 to 8 cm.)
+        const wound = this.wound?.seg, limb = wound && /[LR]$/.test(wound.name) ? wound.name.replace(/^([a-z]+?)2?([LR])$/, '$1') : '';
+        const skip = (s) => s === wound || (/^(upperarm|forearm|hand)/.test(s.name) && s.name.endsWith(side)) || (limb && s.name.replace(/2?([LR])$/, '') === limb && s.name.endsWith(wound.name.slice(-1)));
+        for (let k = 0; k < 3 && rd.attached.some((s) => !skip(s) && rd.outside(s, at) < -0.005); k++) at = at.add(out.scale(0.02));
         const now = rd.worldPoint(hand, hand.centre, new V3());
         let g = this._grips[side];
         if (!g || V3.Distance(g.to, at) > 0.05) g = this._grips[side] = { to: at.clone(), best: Infinity, since: this.clock, hold: null, t: this.clock };
