@@ -176,7 +176,6 @@ export class Viscera {
     declare loops: Loop[];
     declare mesh: BABYLON.Mesh | null;
     declare tubes: Map<string, BABYLON.PBRMaterial>;
-    declare fan: BABYLON.PBRMaterial;
     declare spots: { at: BABYLON.Vector3; r: number }[];
     declare _stale: boolean;
     declare _drip: number;
@@ -404,15 +403,11 @@ export class Viscera {
     }
 
     // The bowel's outside, painted along its length: pink, glossy, the small vessels from its mesentery running round it
-    // every few millimetres, branching as they go and fading toward the far side.
-    // Returns the picture; the mesentery's look is this.fan. (Made once for everybody.)
+    // every few millimetres, branching as they go and fading toward the far side. (Made once for everybody.)
     _tubeLook() {
         const scene: BABYLON.Scene = this.npc.world.scene, W = 512, H = 256;
         const had = scene.getTextureByName('bowel_wall');
-        if (had) {
-            this.fan = scene.getMaterialByName('mesentery') as BABYLON.PBRMaterial;
-            return had;
-        }
+        if (had) return had;
         const t = new BABYLON.DynamicTexture('bowel_wall', { width: W, height: H }, scene, true);
         t.wrapU = t.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
         const g = t.getContext() as CanvasRenderingContext2D;
@@ -443,46 +438,6 @@ export class Viscera {
             vessel(x + Math.random() * 4, H, -1, H * (0.15 + Math.random() * 0.35), 1 + Math.random() * 1.2);
         }
         t.update(true);
-        // The mesentery: a thin, glistening sheet, see-through where it is only membrane, yellow where fat lies in it, and
-        // the vessels running through it to the bowel in arches (arcades), branching as they go. Across the picture (v) is
-        // from the bowel (0) toward the root.
-        const mt = new BABYLON.DynamicTexture('mesentery_look', { width: 256, height: 256 }, scene, true);
-        mt.hasAlpha = true;
-        const mg = mt.getContext() as CanvasRenderingContext2D;
-        mg.fillStyle = 'rgba(214,150,120,0.55)';
-        mg.fillRect(0, 0, 256, 256);
-        for (let k = 0; k < 160; k++) {
-            const y = 40 + Math.random() * 216;
-            mg.fillStyle = `rgba(${226 + Math.random() * 20},${178 + Math.random() * 30},${90 + Math.random() * 30},${0.35 + Math.random() * 0.4})`;
-            mg.beginPath(); mg.ellipse(Math.random() * 256, y, 6 + Math.random() * 18, 4 + Math.random() * 10, Math.random() * 3, 0, Math.PI * 2); mg.fill();
-        }
-        mg.lineCap = 'round';
-        for (let x = 0; x < 256; x += 22 + Math.random() * 20) {
-            // From the root a vessel runs toward the bowel and forks into arches that join their neighbours.
-            let px = x, py = 256;
-            mg.strokeStyle = 'rgba(120,16,22,0.85)';
-            for (let y = 256; y > 30; y -= 8) {
-                const nx = px + (Math.random() - 0.5) * 5;
-                mg.lineWidth = 1 + (y / 256) * 2.2;
-                mg.beginPath(); mg.moveTo(px, py); mg.lineTo(nx, y - 8); mg.stroke();
-                px = nx; py = y - 8;
-            }
-            mg.lineWidth = 1.2;
-            mg.beginPath(); mg.moveTo(px, py); mg.quadraticCurveTo(px + 15, py - 30, px + 30, py); mg.moveTo(px, py); mg.quadraticCurveTo(px - 15, py - 30, px - 30, py); mg.stroke();
-            mg.lineWidth = 0.7;
-            for (let s = -30; s <= 30; s += 6) { mg.beginPath(); mg.moveTo(px + s, py - 12); mg.lineTo(px + s + (Math.random() - 0.5) * 3, 0); mg.stroke(); }
-        }
-        mt.update(true);
-        const f = new BABYLON.PBRMaterial('mesentery', scene);
-        f.albedoTexture = mt;
-        f.useAlphaFromAlbedoTexture = true;
-        f.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
-        f.metallic = 0;
-        f.roughness = 0.2;
-        f.backFaceCulling = false;
-        f.twoSidedLighting = true;
-        f.maxSimultaneousLights = 8;
-        this.fan = f;
         return t;
     }
 
@@ -567,10 +522,8 @@ class Loop {
     declare hold: { index: number; to: BABYLON.Vector3 } | null;
     declare reach: Float32Array;
     declare mesh: BABYLON.Mesh;
-    declare sheet: BABYLON.Mesh | null;
     declare _pos: Float32Array;
     declare _nor: Float32Array;
-    declare _fan: Float32Array;
     declare _blood: Float32Array;
     declare _bloody: boolean;
 
@@ -664,6 +617,17 @@ class Loop {
                 const now = p[k + j], vel = (now - q[k + j]) * keep;
                 q[k + j] = now;
                 p[k + j] = now + vel + (this.out[i] && j === 1 ? g : 0) + along * (j === 0 ? N.x : j === 1 ? N.y : N.z);
+            }
+        }
+        // A hand pulling on it draws more after it, out of the belly: what holds it gives, as far as there is more of it
+        // behind (the small bowel is metres long; its mesentery folds out as it is pulled).
+        if (this.hold) {
+            const k = this.hold.index * 3, to = this.hold.to;
+            if (Math.hypot(p[k] - to.x, p[k + 1] - to.y, p[k + 2] - to.z) > 0.03) {
+                const spec = ROPES[this.kind], base = Math.max(0.015, spec.r);
+                this.tether = Math.min(spec.tether * 3, this.tether + h * 0.3);
+                // (The rope stands for the part free behind the opening: more of it, its points further apart.)
+                this.rest = Math.min(base * 2.5, this.rest + h * base * 0.8);
             }
         }
         const [a, b] = this._ends();
@@ -789,27 +753,8 @@ class Loop {
         this._pos = pos;
         this._nor = new Float32Array(pos.length);
         this._line = new Float32Array(rings * 3);
-        // The mesentery of the bowel and the colon: from each point of it part of the way back toward where it goes in.
-        // (The stomach's attachments are the omenta, broad and out of sight at its sides: none drawn.)
-        this.sheet = null;
-        if (this.kind === 'stomach') return;
-        const fan = new Float32Array(rings * 2 * 3), fi: number[] = [];
-        for (let i = 0; i + 1 < rings; i++) { const a = i * 2, b = a + 1, c = a + 2, d = a + 3; fi.push(a, c, b, b, c, d); }
-        const sheet = new BABYLON.Mesh('mesentery', scene);
-        const fd = new BABYLON.VertexData();
-        const fu = new Float32Array(rings * 4);
-        for (let i = 0; i < rings; i++) fu.set([(i / SPLIT) * 0.15, 0, (i / SPLIT) * 0.15, 1], i * 4);
-        Object.assign(fd, { positions: fan, indices: fi, normals: new Float32Array(fan.length), uvs: fu });
-        fd.applyToMesh(sheet, true);
-        sheet.material = this.v.fan;
-        sheet.isPickable = false;
-        sheet.alwaysSelectAsActiveMesh = true;
-        this.sheet = sheet;
-        this._fan = fan;
-        this._fanNormals = new Float32Array(fan.length);
     }
     declare _line: Float32Array;
-    declare _fanNormals: Float32Array;
 
     draw() {
         const n = this.count, p = this.p, pos = this._pos, nor = this._nor, line = this._line, rings = (n - 1) * SPLIT + 1, R = this.r;
@@ -827,8 +772,6 @@ class Loop {
         line.set(p.subarray((n - 1) * 3, n * 3), (rings - 1) * 3);
         // A frame carried along it (parallel transport), so the tube does not twist.
         let ux = 0, uy = 1, uz = 0;
-        const rx = (p[0] + p[(n - 1) * 3]) / 2, ry = (p[1] + p[(n - 1) * 3 + 1]) / 2, rz = (p[2] + p[(n - 1) * 3 + 2]) / 2;
-        const fan = this._fan, fn = this._fanNormals;
         for (let i = 0; i < rings; i++) {
             const a = Math.max(0, i - 1) * 3, b = Math.min(rings - 1, i + 1) * 3;
             let tx = line[b] - line[a], ty = line[b + 1] - line[a + 1], tz = line[b + 2] - line[a + 2];
@@ -849,17 +792,6 @@ class Loop {
                 pos[o] = x + nx * r; pos[o + 1] = y + ny * r; pos[o + 2] = z + nz * r;
                 nor[o] = nx; nor[o + 1] = ny; nor[o + 2] = nz;
             }
-            if (!fan) continue;
-            // The mesentery, from it part of the way back to its root, deepest at its middle; facing square to it and to
-            // the way back.
-            const fo = i * 6, toward = 0.45 * Math.sin((i / (rings - 1)) * Math.PI);
-            const bx = rx - x, by = ry - y, bz = rz - z;
-            let mx = ty * bz - tz * by, my = tz * bx - tx * bz, mz = tx * by - ty * bx;
-            const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
-            mx /= ml; my /= ml; mz /= ml;
-            fan[fo] = x; fan[fo + 1] = y; fan[fo + 2] = z;
-            fan[fo + 3] = x + bx * toward; fan[fo + 4] = y + by * toward; fan[fo + 5] = z + bz * toward;
-            fn[fo] = fn[fo + 3] = mx; fn[fo + 1] = fn[fo + 4] = my; fn[fo + 2] = fn[fo + 5] = mz;
         }
         this.mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, pos);
         this.mesh.updateVerticesData(BABYLON.VertexBuffer.NormalKind, nor);
@@ -873,14 +805,10 @@ class Loop {
             }
             this.mesh.updateVerticesData(BLOOD, b);
         }
-        if (!this.sheet) return;
-        this.sheet.updateVerticesData(BABYLON.VertexBuffer.PositionKind, fan);
-        this.sheet.updateVerticesData(BABYLON.VertexBuffer.NormalKind, fn);
     }
 
     dispose() {
         this.mesh.dispose();
-        this.sheet?.dispose();
     }
 }
 

@@ -81,7 +81,7 @@ function fingerPose(hold, side) {
 // The part of a person's skin whose triangles `keep` keeps, as a mesh of
 // its own on the person's bones, every corner pushed `off` metres out from
 // the skin. `keep` is given a triangle's three corners.
-function worn(person, name, keep, off, material) {
+export function worn(person, name, keep, off, material) {
     const { arrays } = person.lib.bodies.get(person.bodyName);
     const index = arrays.index, corner = new Map(), data = new BABYLON.VertexData();
     const positions = [], normals = [], joints = [], weights = [], indices = [];
@@ -119,7 +119,7 @@ function worn(person, name, keep, off, material) {
     return mesh;
 }
 
-function plain(scene, name, { colour, rough }) {
+export function plain(scene, name, { colour, rough }) {
     const material = new BABYLON.PBRMaterial(name, scene);
     material.albedoColor = BABYLON.Color3.FromArray(colour);
     material.metallic = 0;
@@ -215,7 +215,11 @@ export class Arm {
     // Put the hand on a grip: { at, along, back } in the world, `along` the
     // way the handle runs from the grip toward the heel of the hand and
     // `back` the way the back of the tool faces. With null, take the arm away.
-    reach(grip) {
+    // Given `elbow` (a point of the world), the elbow goes round to that side
+    // of the line from shoulder to wrist at once, rather than easing round to
+    // where it leaves the wrist straightest (a fist that has worked out its
+    // own arm: fist.ts).
+    reach(grip: { at: BABYLON.Vector3; along: BABYLON.Vector3; back: BABYLON.Vector3; elbow?: BABYLON.Vector3 } | null) {
         for (const mesh of this.meshes) mesh.setEnabled(!!grip);
         if (!grip) return;
         const person = this.person, { upper, fore, twist, wrist } = this.bones, [a, b] = this.lengths;
@@ -246,7 +250,12 @@ export class Arm {
         const near = (a * a + reach * reach - b * b) / (2 * reach), round = Math.sqrt(Math.max(0, a * a - near * near));
         const elbowAt = (turn) => upper.head.add(toward.scale(near)).add(aside.scale(Math.cos(turn) * round)).add(V3.Cross(toward, aside).scale(Math.sin(turn) * round));
         // (Where the forearm would run if the wrist were straight: the way the hand is turned, carried on up the arm.)
-        const elbow = elbowAt(this._swing(elbowAt, at, wrist.head.subtract(fore.head).normalize().applyRotationQuaternion(hand)));
+        let turn: number;
+        if (grip.elbow) {
+            const e = this._in(grip.elbow, V3.Right(), V3.Up()).at.subtract(upper.head.add(toward.scale(near)));
+            turn = this.bent = Math.atan2(V3.Dot(e, V3.Cross(toward, aside)), V3.Dot(e, aside));
+        } else turn = this._swing(elbowAt, at, wrist.head.subtract(fore.head).normalize().applyRotationQuaternion(hand));
+        const elbow = elbowAt(turn);
 
         // The upper arm swings to point at it, the forearm bends on from there to the wrist.
         const swing = Q.Identity(), bend = Q.Identity();
@@ -256,13 +265,17 @@ export class Arm {
         const forearm = bend.multiply(swing);
         // What is left over is the wrist's, except the part that is a turn
         // about the forearm itself: that is the two bones of the forearm
-        // rolling over each other, half way up it.
+        // rolling over each other, from nothing at the elbow to all of it at
+        // the wrist. Half is put on each of the forearm's two bones (all of it
+        // on the second wrung the skin between them thin, like a sweet's
+        // wrapper).
         const left = Q.Inverse(forearm).multiply(hand);
         const about = V3.Dot(new V3(left.x, left.y, left.z), lies);
         const roll = Math.hypot(about, left.w) < 1e-4 ? Q.Identity() : new Q(lies.x * about, lies.y * about, lies.z * about, left.w).normalize();
+        const half = Q.Slerp(Q.Identity(), roll, 0.5);
         upper.bone.setRotationQuaternion(swing, BABYLON.Space.LOCAL);
-        fore.bone.setRotationQuaternion(Q.Inverse(swing).multiply(forearm), BABYLON.Space.LOCAL);
-        twist.bone.setRotationQuaternion(roll, BABYLON.Space.LOCAL);
+        fore.bone.setRotationQuaternion(Q.Inverse(swing).multiply(forearm).multiply(half), BABYLON.Space.LOCAL);
+        twist.bone.setRotationQuaternion(half, BABYLON.Space.LOCAL);
         wrist.bone.setRotationQuaternion(Q.Inverse(roll).multiply(left), BABYLON.Space.LOCAL);
     }
 

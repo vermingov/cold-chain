@@ -40,11 +40,12 @@ export class Muscles {
         const turns = new Map<string, any[]>();
         for (const [control, h] of Object.entries(person.hinges) as [string, any][]) {
             const share = h.bones.length > 1 && !h.fingers ? 1 / h.bones.length : 1;
-            for (const b of h.bones) {
+            h.bones.forEach((b, k) => {
                 const name = b.bone.name;
                 if (!turns.has(name)) turns.set(name, []);
-                turns.get(name).push({ control, axis: h.axis, share, order: h.order ?? 1, fingers: !!h.fingers });
-            }
+                // (a finger bone bends about its own line across it: person.ts's `axes`)
+                turns.get(name).push({ control, axis: h.axes?.[k] ?? h.axis, share, order: h.order ?? 1, fingers: !!h.fingers });
+            });
         }
         for (const list of turns.values()) list.sort((a, b) => a.order - b.order);
         this.joints = ragdoll.segments.filter((s) => s.parent && !s.locked)
@@ -85,7 +86,9 @@ export class Muscles {
         if (curl !== this._curl) {
             this._curl = curl;
             // (A hand cut off keeps the fingers as they were: nothing curls them any more.)
-            for (const f of this.fingers) if (!rd.cutOff(f.hand)) f.bone.setRotationQuaternion(this._turn([f.turns], pose, _q2).clone(), BABYLON.Space.LOCAL);
+            // (Into a quaternion of its own: `_turn` works in _q2, and given it to fill as well it squared each finger's
+            // turn, so a guard's half-closed hands bent every finger joint twice over, out flat and splayed.)
+            for (const f of this.fingers) if (!rd.cutOff(f.hand)) f.bone.setRotationQuaternion(this._turn([f.turns], pose, new Q()), BABYLON.Space.LOCAL);
         }
     }
 

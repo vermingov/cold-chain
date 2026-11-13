@@ -389,15 +389,30 @@ export class Person {
                 const moved = d1.applyRotationQuaternion(Q.RotationAxis(axis, 0.3)).subtract(d1);
                 return V3.Dot(moved, towards) >= 0 ? axis : axis.scale(-1);
             };
-            const segs = [];
-            for (const f of [2, 3, 4, 5]) for (const k of [1, 2, 3]) segs.push(this.byName[`finger${f}-${k}.${side}`]);
-            this.hinges['curl' + side] = { bones: segs, axis: signed(across, 3), fingers: true };
+            // But each bone of each finger bends about its own line: across
+            // that bone, in the palm's plane (the wrist and the first and last
+            // knuckles), toward the palm. One line across the knuckles for the
+            // whole hand is 20 degrees off square to the index and the little
+            // finger, which fan out from the middle, and turned them sideways
+            // as they closed: a fist came out a splayed claw.
+            const wrist = this.byName[`wrist.${side}`].head;
+            let palm = V3.Cross(this.byName[`finger2-1.${side}`].head.subtract(wrist), this.byName[`finger5-1.${side}`].head.subtract(wrist)).normalize();
+            if (V3.Dot(palm, bend(3).towards) < 0) palm = palm.scale(-1);
+            const flexes = (f, k) => {
+                const bone = this.byName[`finger${f}-${k}.${side}`], next = this.byName[`finger${f}-${k + 1}.${side}`];
+                const d = (next ? next.head : bone.tail).subtract(bone.head).normalize(), axis = V3.Cross(d, palm).normalize();
+                const moved = d.applyRotationQuaternion(Q.RotationAxis(axis, 0.3)).subtract(d);
+                return V3.Dot(moved, palm) >= 0 ? axis : axis.scale(-1);
+            };
+            const segs = [], axes = [];
+            for (const f of [2, 3, 4, 5]) for (const k of [1, 2, 3]) { segs.push(this.byName[`finger${f}-${k}.${side}`]); axes.push(flexes(f, k)); }
+            this.hinges['curl' + side] = { bones: segs, axis: signed(across, 3), axes, fingers: true };
 
             // And one finger at a time, joint by joint, for a hand that is
             // holding something: index1R is the knuckle of the right index.
             FINGERS.forEach((finger, i) => {
                 for (const k of [1, 2, 3]) {
-                    this.hinges[`${finger}${k}${side}`] = { bones: [this.byName[`finger${i + 2}-${k}.${side}`]], axis: signed(across, i + 2), fingers: true };
+                    this.hinges[`${finger}${k}${side}`] = { bones: [this.byName[`finger${i + 2}-${k}.${side}`]], axis: flexes(i + 2, k), fingers: true };
                 }
             });
 
@@ -447,7 +462,7 @@ export class Person {
             if (!h || !deg) continue;
             const share = h.bones.length > 1 && !h.fingers ? 1 / h.bones.length : 1;
             const q = Q.RotationAxis(h.axis, deg * RAD * share);
-            for (const b of h.bones) add(b, q, h.order);
+            h.bones.forEach((b, k) => add(b, h.axes ? Q.RotationAxis(h.axes[k], deg * RAD * share) : q, h.order));
         }
         this._lookAt(add);
         for (const b of Object.values(this.byName)) {

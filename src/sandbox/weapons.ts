@@ -498,16 +498,17 @@ export class Weapons {
             const at = look();
             return at && at.far <= reach ? at.far : null;
         };
-        // Whatever is in front of the eye where the knuckles are when they get there (a little short: the knuckles went into it).
+        // Whatever is in front of the eye where the knuckles are when they get there, or a little short of it (they came
+        // on into the fist): how far ahead its skin is, where the fist stops.
         const land = (speed: number, ahead: number) => {
             const at = look();
-            if (!at || at.far > ahead + 0.03 || at.far < ahead - 0.08) return false;
+            if (!at || at.far > ahead + 0.03 || at.far < ahead - 0.08) return null;
             // A fist and the arm behind it give: about 9 kN/m, which is what makes 1.8 kg at the 5 m/s it lands at
             // (fist.ts) land with the 500 to 850 N an untrained punch is measured at (dev/research/blunt-trauma.md), not
             // with the force of a brick.
             blow(at.npc, at.hit.point, at.ahead, 1.8, speed, 9000);
             this.world.sound?.shot('blunt', { at: at.hit.point.asArray(), gain: 0.6 });
-            return true;
+            return at.far;
         };
         if (this.fist) { this.fist.punch({ aim, land }); return; }
         const ahead = aim();
