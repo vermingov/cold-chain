@@ -58,10 +58,11 @@ export async function buildArsenal(world, weapons) {
             p.node.position.set(WALL.x + 0.03 - p.min.x, row.y - (p.min.y + p.max.y) / 2, z - p.min.z);
             z += p.max.z - p.min.z + GAP;
             const meshes = p.node instanceof BABYLON.AbstractMesh ? [p.node, ...p.node.getChildMeshes()] : p.node.getChildMeshes();
+            // No shadow casters: the board is outside the cones of the lamps that cast shadows, and a shadow map draws
+            // every caster on its list each frame, seen or not (35 meshes three times over).
             for (const mesh of meshes) {
                 mesh.isPickable = true;
                 mesh.metadata = { ...(mesh.metadata ?? {}), arsenal: p.key };
-                world.shadows?.addShadowCaster(mesh);
             }
             hung.push(p.key);
         }

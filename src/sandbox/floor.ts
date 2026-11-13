@@ -56,6 +56,7 @@ export class Floor {
     declare shaded: number;
     declare sent: number;
     declare area: number[] | null;
+    declare pending: number[] | null;
 
     // `half` the half-width of the square floor in metres; `reflect` what a wet surface shows.
     constructor(scene: BABYLON.Scene, half: number, reflect: BABYLON.BaseTexture | null) {
@@ -83,6 +84,7 @@ export class Floor {
         this.shaded = 0;
         this.sent = 0;
         this.area = null;
+        this.pending = null;
 
         this.mesh = BABYLON.MeshBuilder.CreateGround('bloodFloor', { width: 1, height: 1 }, scene);
         this.mesh.position.y = 0.0007;
@@ -189,9 +191,12 @@ export class Floor {
         return taken;
     }
 
+    // A step's flows are worked out in one frame and applied in the next, each about half of what it costs (both in the
+    // same frame when frames come slower than steps).
     update(dt: number) {
         this.clock += dt;
         this.wait += dt;
+        if (this.pending) this._settle(this.pending);
         if (this.wait >= STEP) {
             this.wait = 0;
             this._flow();
@@ -201,7 +206,7 @@ export class Floor {
 
     // One step of every awake tile: each wet cell gives to each lower neighbour as much as a film its depth would carry.
     _flow() {
-        const { n, h, change, rise, edge, born } = this;
+        const { n, h, change, rise, edge, born, clock } = this;
         const steps = [1, -1, n, -n];
         const touched = [];
         for (let t = 0; t < this.awake.length; t++) {
@@ -214,10 +219,8 @@ export class Floor {
                     const hc = h[c];
                     if (hc <= STAYS) continue;
                     const top = hc + rise[c];
-                    // Runnier while fresh, thicker as it clots; and a film moves as the cube of its depth.
-                    const ease = Math.min(0.11, MOVES * hc * hc * hc * Math.exp(-(this.clock - born[c]) / CLOTS));
                     const free = hc - STAYS;
-                    let given = 0;
+                    let given = 0, ease = -1;
                     for (let k = 0; k < 4; k++) {
                         const d = c + steps[k];
                         if (!edge[d]) this._wake(d);
@@ -225,6 +228,8 @@ export class Floor {
                         if (drop <= 0) continue;
                         // Dry floor is wetted only by blood standing deep enough to push its edge over it.
                         if (h[d] < STAYS * 0.5 && hc < edge[d]) continue;
+                        // Runnier while fresh, thicker as it clots; and a film moves as the cube of its depth.
+                        if (ease < 0) ease = Math.min(0.11, MOVES * hc * hc * hc * Math.exp(-(clock - born[c]) / CLOTS));
                         const q = Math.min(ease * drop, free * 0.24);
                         if (q <= 1e-9) continue;
                         change[d] += q;
@@ -235,23 +240,32 @@ export class Floor {
                 }
             }
         }
-        // Applied after, so the order the cells were gone through does not show; cells at a tile's edge give into the next.
+        this.pending = touched;
+    }
+
+    // What the step gives, applied after, so the order the cells were gone through does not show; cells at a tile's edge
+    // give into the next.
+    _settle(touched: number[]) {
+        const { n, h, change } = this;
+        this.pending = null;
         for (const t of touched) {
             const tx = t % this.tiles, tz = Math.floor(t / this.tiles);
             let moved = 0;
             for (let j = -1; j <= TILE; j++) {
                 const gz = tz * TILE + j;
                 if (gz < 0 || gz >= n) continue;
+                const rim = j < 0 || j === TILE;
                 for (let i = -1; i <= TILE; i++) {
                     const gx = tx * TILE + i;
                     if (gx < 0 || gx >= n) continue;
                     const c = gz * n + gx, d = change[c];
                     if (!d) continue;
                     change[c] = 0;
+                    // (Every cell with blood in it is in `wet` already.)
+                    if (!h[c]) this.wet.add(c);
                     h[c] = Math.max(0, h[c] + d);
                     moved += Math.abs(d);
-                    this.wet.add(c);
-                    this._wake(c);
+                    if (rim || i < 0 || i === TILE) this._wake(c); else this.quiet[t] = 0;
                     this._encode(c);
                 }
             }
@@ -290,6 +304,8 @@ export class Floor {
 
     clear() {
         this.h.fill(0);
+        this.change.fill(0);
+        this.pending = null;
         this.data.fill(0);
         this.awake.fill(0);
         this.wet.clear();

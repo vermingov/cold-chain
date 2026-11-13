@@ -751,6 +751,18 @@ Rebuilt as physics (numbers in `src/sandbox/fluid.ts`: 1060 kg/m3, 3.5 mPa s,
   anatomy.py now fits the skull to skin only (a hat set it before); the other three keep their old anatomy files.
 - Player: mouse look on pointermove (the view froze while a button was held).
 
-Left: after heavy carnage the frame is 34-63 ms on a loaded machine (physics substeps spiral, soak ~5 ms, runs ~3,
-blood ~9, render ~16); a severed head that lands gets skull-fracture entries (bones.ts); severed pieces still count in
-balance; splits look like incisions; the other hand often can't reach a wounded arm.
+- Severed pieces no longer count in a person's balance (was listed as left; already in 0.8.17).
+
+## 0.8.18
+- Physics steps through at most 1/30 s a frame (4 x 1/120): the old 0.1 s cap spiralled to 9 steps a frame after a
+  grenade. Frames slower than 33 ms now run the bodies in slow motion (sandbox.ts, the one `1 / 30`).
+- Floor blood: flow step cheaper (same result, checked on a dumped 11k-cell pool) and split over two frames, worked out
+  in one and applied in the next (floor.ts `_flow` / `_settle`); pools land a frame later.
+- Arsenal weapons cast no shadows (outside every shadow lamp's cone): 100 to 53 casters a shadow map, draw calls
+  312 to 202 after carnage. The ammo text is written only when it changes (it forced a layout every frame).
+- Measured on a loaded machine (another game and a headless browser sharing it): carnage frames 18.8-19.5 ms at best,
+  physics 13.5-21.6 to 3.1-7.4 ms. Render 8-10 ms is mostly per-draw material and light binding (8 lights) and three
+  shadow passes on the main thread. 16.7 ms not shown on a quiet machine.
+
+Left: a severed head that lands gets skull-fracture entries (bones.ts); splits look like incisions; the other hand
+stops 30-40 cm short of a wounded arm (meets the belly or runs out of shoulder reach).

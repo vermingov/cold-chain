@@ -85,8 +85,10 @@ export class Hud {
         const prompt = on ? `<b>E</b> ${weapons.slots.includes(on) ? 'Hold' : weapons.slots.includes(null) ? 'Take' : 'Swap for'} the ${name(on)}` : '';
         if (this.prompt.innerHTML !== prompt) this.prompt.innerHTML = prompt;
         const arm = weapons.arm;
-        this.ammo.textContent = arm.gun ? (weapons.reloading > 0 ? 'Reloading' : `${weapons.ammo.get(arm.key)} / ${arm.gun.rounds}`)
+        const ammo = arm.gun ? (weapons.reloading > 0 ? 'Reloading' : `${weapons.ammo.get(arm.key)} / ${arm.gun.rounds}`)
             : arm.kind === 'throw' ? `Throwing a ${weapons.throwing}` : '';
+        // (Written only when it changes: written every frame, the page was laid out again every frame.)
+        if (this.ammo.textContent !== ammo) this.ammo.textContent = ammo;
         const html = npc ? this._monitor(npc, label) : '';
         if (html !== this._last) { this.monitor.innerHTML = html; this._last = html; }
     }

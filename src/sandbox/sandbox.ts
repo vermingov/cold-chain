@@ -31,10 +31,12 @@ export async function openSandbox(engine, canvas, hud) {
     // step (up to a tenth of a second, on a hitch) tore the people's joints apart and sank them into the floor, and at
     // a sixtieth a standing body still sagged and sprang on its legs by four centimetres.
     // Before each, the people push on what they push on (behaviour.ts).
+    // A frame longer than a thirtieth runs the bodies slower than the clock: each step costs a millisecond or two, and
+    // stepping through all of a slow frame made the next one slower still (9 steps a frame after a grenade).
     const physics = scene.getPhysicsEngine() as BABYLON.PhysicsEngine;
     const step = physics._step.bind(physics);
     physics._step = (delta) => {
-        const pieces = Math.ceil(Math.min(delta, 0.1) * 120 - 1e-6), piece = Math.min(delta, 0.1) / pieces;
+        const pieces = Math.ceil(Math.min(delta, 1 / 30) * 120 - 1e-6), piece = Math.min(delta, 1 / 30) / pieces;
         for (let i = 0; i < pieces; i++) {
             for (const npc of world.npcs) npc.behaviour.beforeStep(piece);
             step(piece);
