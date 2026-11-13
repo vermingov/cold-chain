@@ -239,11 +239,14 @@ export class Viscera {
     // The lips of the opening: the layers of the wall it went through, all round its edge (the lens hider.ts leaves), in
     // a band wider the wider it gapes: the skin draws back further than the fat under it.
     _lips(o: Opening) {
+        // (Each point of the edge found on the skin by a line in from outside along the skin's facing: the edge laid
+        // flat across a curved belly stands off it, nearer the clothes than the skin, and nearest() then finds cloth.)
         const npc = this.npc, ey = V3.Cross(o.normal, o.ex), edge = [];
         for (let k = 0; k < 40; k++) {
             const a = (k / 40) * Math.PI * 2, x = Math.cos(a) * o.half[0];
-            const on = npc.runs.nearest(o.at.add(o.ex.scale(x)).add(ey.scale(Math.sign(Math.sin(a)) * gape(o.half, x))), 0.03);
-            if (on?.kind === 'skin') edge.push(on);
+            const w = npc.worldOf(o.at.add(o.ex.scale(x)).add(ey.scale(Math.sign(Math.sin(a)) * gape(o.half, x))), o.owner, o.normal);
+            const on = npc.surface(w.at.add(w.normal.scale(0.1)), w.normal.scale(-1), 0.2).find((h) => h.kind === 'skin');
+            if (on) edge.push(on);
         }
         if (edge.length > 2) npc.marks.lip(edge, Math.min(0.015, 0.006 + o.half[1] * 0.25));
     }
@@ -473,7 +476,7 @@ export class Viscera {
                 if (rnd() < 0.05 && width > 0.9) vessel(px, py, dir, (len - s) * 0.5, width * 0.6, colour, lift, across);
             }
         };
-        const red = () => `rgba(${105 + rnd() * 35},${22 + rnd() * 14},${34 + rnd() * 16},${0.3 + rnd() * 0.25})`;
+        const red = () => `rgba(${105 + rnd() * 35},${22 + rnd() * 14},${34 + rnd() * 16},${0.2 + rnd() * 0.2})`;
         const vein = () => `rgba(${84 + rnd() * 20},${46 + rnd() * 12},${70 + rnd() * 16},${0.22 + rnd() * 0.2})`;
         // Where the mesentery (the omentum, the mesocolon) holds it: yellow lobulated fat, the arcade running along it.
         const held = (fat: number, lobules: number) => {
@@ -759,7 +762,7 @@ class Loop {
                 const held = this.hold?.index === i;
                 this.passing[i] = through && hn > -(WALL + R * 3) && hn < R * 2 ? 1 : 0;
                 if (!this.out[i]) {
-                    if (through && hn > R * 0.5) { this.out[i] = 1; this.gore[i] = Math.max(this.gore[i], 0.01 + Math.random() * 0.05); this._bloody = true; continue; }
+                    if (through && hn > R * 0.5) { this.out[i] = 1; this.gore[i] = Math.max(this.gore[i], 0.004 + Math.random() * 0.025); this._bloody = true; continue; }
                     // Behind the wall where it is whole (the plane of the skin there, far enough round the opening).
                     if (!through && !held && hn > -(WALL + R) && Math.abs(x) < o.half[0] + 0.15 && Math.abs(y) < o.half[0] + 0.15) {
                         const s = hn + WALL + R; p[k] -= N.x * s; p[k + 1] -= N.y * s; p[k + 2] -= N.z * s;
