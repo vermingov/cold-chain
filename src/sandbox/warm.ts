@@ -20,7 +20,9 @@ type Hooks = { scene: BABYLON.Scene; world: any; weapons: any; player: any; step
 
 export async function warm({ scene, world, weapons, player, step, reset, xray, say }: Hooks) {
     const ready = async (frames = 2) => {
-        for (let i = 0; i < frames; i++) { step(1 / 60); scene.render(); }
+        // (Drawn once: the frames between only need to happen, and drawing them is most of a frame's cost.)
+        for (let i = 0; i < frames; i++) step(1 / 60);
+        scene.render();
         await scene.whenReadyAsync();
         // (Particle systems are not in the scene's check.)
         for (const ps of scene.particleSystems) while (!ps.isReady()) await new Promise((r) => setTimeout(r, 16));
@@ -35,18 +37,28 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
     const carried = { slots: weapons.slots.slice(), bag: weapons.bag.slice(), slot: weapons.slot, ammo: new Map(weapons.ammo) };
     say('Preparing shaders: the hall.');
     await ready();
-    const [a, b, c, d] = world.npcs;
-    // Each gun at someone (entry, exit, lips, the hider's windows, blood on skin and clothes, soak), the shotgun from close
-    // into a belly (the opened belly and its organs) and from range.
-    const shots: [string, any, string, number?][] = [['pistol', a, 'chest'], ['m4', a, 'thighL'], ['ak', b, 'belly'], ['rifle', b, 'head'],
-        ['shotgun', c, 'belly', 0.9], ['shotgun', d, 'chest', 5], ['pistol', c, 'upperarmR'], ['rifle', d, 'thighR']];
-    for (const [key, npc, part, from] of shots) {
-        say(`Preparing shaders: ${ARMS.find((x) => x.key === key)?.name ?? key}.`);
-        weapons.take(key);
-        await ready(1);
-        aim(npc, part, from);
-        press();
-        await ready(4);
+    // (A rehearsal that fails costs only the shaders it did not reach: the game still starts.)
+    try { await rehearse(); } catch (e) { console.error('shader warm-up stopped:', e); } finally {
+        // Whatever happened in the rehearsal, the room is put back as it was.
+        say('Preparing shaders: the people.');
+        await reset();
+        Object.assign(weapons, { slots: carried.slots, bag: carried.bag, ammo: carried.ammo });
+        weapons.select(carried.slot);
+        await ready();
+    }
+    async function rehearse() {
+        const [a, b, c, d] = world.npcs;
+        // Each gun at someone (entry, exit, lips, the hider's windows, blood on skin and clothes, soak), the shotgun from close
+        // into a belly (the opened belly and its organs) and from range.
+        const shots: [string, any, string, number?][] = [['pistol', a, 'chest'], ['m4', a, 'thighL'], ['ak', b, 'belly'], ['rifle', b, 'head'],
+            ['shotgun', c, 'belly', 0.9], ['shotgun', d, 'chest', 5], ['pistol', c, 'upperarmR'], ['rifle', d, 'thighR']];
+        for (const [key, npc, part, from] of shots) {
+            say(`Preparing shaders: ${ARMS.find((x) => x.key === key)?.name ?? key}.`);
+            weapons.take(key);
+            await ready(1);
+            aim(npc, part, from);
+            press();
+            await ready(4);
     }
     // A stab and a cut, a blow with the bat, a punch.
     say('Preparing shaders: blades and blows.');
@@ -56,7 +68,7 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
         aim(d, part, 0.7);
         press(button);
         await new Promise((r) => setTimeout(r, 120));      // a stab lands after 90 ms
-        await ready(40);
+        await ready(24);      // a swing is over in half a second
     }
     // Limbs off: a cut and a shot, an arm and a leg.
     say('Preparing shaders: wounds.');
@@ -69,9 +81,5 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
     if (w) { dress(w); await ready(3); }
     // X-ray on and off.
     xray(); await ready(); xray(); await ready();
-    say('Preparing shaders: the people.');
-    await reset();
-    Object.assign(weapons, { slots: carried.slots, bag: carried.bag, ammo: carried.ammo });
-    weapons.select(carried.slot);
-    await ready();
+    }
 }
