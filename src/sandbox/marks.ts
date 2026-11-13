@@ -121,18 +121,29 @@ export class Marks {
     }
 
     // A bullet's way out: torn, not punched, ragged and wider, with splits running out of it.
+    // Torn rather than punched: a slit, a star of three or four splits, or a crescent, the splits tapering to
+    // nothing at their ends (dev/research/wounds.md), with a ragged opening where they meet.
     exit(hit, size) {
         this._open(hit, (g, x, y, px) => {
-            const r = px(size * 0.6), n = 13;
-            g.filter = `blur(${Math.max(1, r * 0.12)}px)`;
-            g.fillStyle = 'rgb(170,150,0)';
-            g.beginPath();
-            for (let k = 0; k <= n; k++) {
-                const a = (k / n) * Math.PI * 2, rr = r * (k % 2 ? 0.55 + Math.random() * 0.3 : 1 + Math.random() * 0.7);
-                g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+            const r = px(size * 0.5), arms = 2 + Math.floor(Math.random() * 3), turn = Math.random() * Math.PI;
+            g.filter = 'blur(1px)';
+            g.lineCap = 'round';
+            for (let k = 0; k < arms; k++) {
+                const a = turn + (k / arms) * Math.PI * 2 + (Math.random() - 0.5) * 0.7, reach = r * (0.8 + Math.random() * 0.7);
+                const bend = (Math.random() - 0.5) * 0.6;
+                // Each split drawn as strokes narrowing from the middle out, deepest along its line.
+                for (let s = 0; s < 6; s++) {
+                    const t0 = s / 6, t1 = (s + 1) / 6, w = r * 0.32 * (1 - t0);
+                    const p = (t) => [x + Math.cos(a + bend * t) * reach * t, y + Math.sin(a + bend * t) * reach * t];
+                    g.lineWidth = Math.max(1, w);
+                    g.strokeStyle = `rgb(${Math.round(200 * (1 - t0 * 0.6))},230,0)`;
+                    g.beginPath(); g.moveTo(...p(t0)); g.lineTo(...p(t1)); g.stroke();
+                }
             }
-            g.fill();
-            g.fillStyle = 'rgb(230,210,0)';
+            const grad = g.createRadialGradient(x, y, 0, x, y, r * 0.45);
+            grad.addColorStop(0, 'rgb(230,240,0)');
+            grad.addColorStop(1, 'rgb(0,0,0)');
+            g.fillStyle = grad;
             g.beginPath(); g.arc(x, y, r * 0.45, 0, Math.PI * 2); g.fill();
         });
     }

@@ -116,6 +116,8 @@ export class Npc {
         this.vitals = new Vitals(mass);
         this.bones = new Bones(this);
         this._ownMaterials(name + bit);
+        // Teeth as they are in a lit room, ivory: the game's own tint was for a mouth seen in a dark cold room.
+        person.header.parts.forEach((p, i) => { if (p.kind === 'teeth') person.multi.subMaterials[i].albedoColor = new BABYLON.Color3(0.93, 0.9, 0.82); });
         this.marks = new Marks(world.scene, this);
         for (const m of this.skinMaterials) new Gore(m, this.marks.depth);
         this.runs = new Runs(this);
@@ -392,7 +394,8 @@ export class Npc {
         const unders = [], underOwn = new Map();
         skinMulti.subMaterials = shared.map((m, i) => (parts[i].kind !== 'skin' ? m : parts[i].under ? (underOwn.get(m) ?? underOwn.set(m, own(i, 0.03, unders)).get(m))
             : (skinOwn.get(m) ?? skinOwn.set(m, own(i, 0.03, skins)).get(m))));
-        for (const h of unders) h.reveal = true;
+        // (The switch is read when the shader is made: say it changed, or the skin under the clothes is drawn whole.)
+        for (const h of unders) { h.reveal = true; h.markAllDefinesAsDirty(); }
         this.underHiders = unders;
         this.skinMaterials = [...skinOwn.values(), ...underOwn.values()];
         clothMulti.subMaterials = shared.map((m, i) => (parts[i].kind === 'cloth' ? (clothOwn.get(m) ?? clothOwn.set(m, own(i, 0.05, cloths)).get(m)) : m));

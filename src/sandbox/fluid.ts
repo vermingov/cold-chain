@@ -77,6 +77,22 @@ export function sendPart(texture: BABYLON.BaseTexture, data: Uint8Array, size: n
     engine._bindTextureDirectly(target, null);
 }
 
+// A part of a canvas sent to the texture it backs, `box` [x0, y0, x1, y1] in pixels, not turned upside down (WebGL 2;
+// elsewhere the whole canvas, also the right way up).
+export function sendCanvasPart(texture: BABYLON.DynamicTexture, canvas: HTMLCanvasElement, box: number[]) {
+    const engine = texture.getScene().getEngine() as any, gl = engine._gl as WebGL2RenderingContext | undefined;
+    const internal = texture.getInternalTexture();
+    if (!gl || !internal || engine.webGLVersion < 2) { texture.update(false); return; }
+    engine._bindTextureDirectly(gl.TEXTURE_2D, internal, true);
+    engine._unpackFlipY(false);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, box[0]);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, box[1]);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], box[1], box[2] - box[0], box[3] - box[1], gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    engine._bindTextureDirectly(gl.TEXTURE_2D, null);
+}
+
 // Smooth noise in a plane, 0 to 1, for floors that are not quite flat.
 export function noise2(x: number, y: number) {
     const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;

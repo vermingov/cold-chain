@@ -726,3 +726,20 @@ Rebuilt as physics (numbers in `src/sandbox/fluid.ts`: 1060 kg/m3, 3.5 mPa s,
   is one run fed from its bleed; hangs and drips only at low points.
 - Measured (RIG_GPU, RIG_UNCAP, three people bleeding): blood + bleeding +
   runs about 1.5 ms of a 12 ms frame. Scripts in ~/.cache/cold-chain/blood/.
+
+## Paused, 2026-11-13 (0.8.15 + uncommitted work, checkpoint commit below)
+
+The user paused every agent to reopen the session. Where each stood, to restart them:
+- Active ragdoll (behaviour.ts, motor.ts, ragdoll.ts): working; remaining: stepping (people fall again a few s
+  after getting up; 40 N s front/back shoves fall), limb-limb and person-person collisions and clothes sinking into
+  limbs, injury-specific reactions (shot in the right arm: the left hand grabs it; limp on a leg wound; hands to a
+  hurt belly or face).
+- Blood (blood.ts, floor.ts, film.ts, soak.ts, fluid.ts, runs.ts): physics done; was mid-way through performance
+  (about 6 ms a frame idle in Blood.update, target 1.5 ms with three bleeding) and these visual bugs: black dashes
+  and dots round floor splashes, drips and footprints; blocky pool and shirt-stain edges; drips from empty air.
+- Dismemberment (new src/sandbox/dismember.ts, may not exist yet) and exposed organs / evisceration (new
+  src/sandbox/viscera.ts): just started; briefs are in the session transcript; both extend hider.ts.
+- Arsenal assets: AK-47, M4A1, M67 grenade models (CC0/CC-BY online, no Blender) and real recordings for them:
+  just started. Not started at all: the inventory system, hotbar, arsenal wall, and the AK/M4/grenade weapon code.
+- Done this round: bone system (every bone, faces, teeth, realistic blunt and fall thresholds), wounds in the skin's
+  shader (marks.ts Gore), voices and faces, close-range shotgun as one charge, punch at 9 kN/m.

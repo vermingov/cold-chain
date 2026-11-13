@@ -48,7 +48,7 @@ function fileOf(npc) {
     const { header, arrays } = npc.person.lib.bodies.get(key);
     const pos = arrays.position, index = arrays.index;
     const grids = { skin: new Map(), cloth: new Map(), around: new Map<number, number[]>(), ball: new Float32Array(index.length / 3 * 4),
-        under: new Uint8Array(index.length / 3) };
+        under: new Uint8Array(index.length / 3), widest: 0 };
     for (const part of header.parts) {
         const grid = part.kind === 'skin' ? grids.skin : part.kind === 'cloth' ? grids.cloth : null;
         if (!grid) continue;
@@ -63,6 +63,7 @@ function fileOf(npc) {
             let r = 0;
             for (let k = 0; k < 3; k++) { const v = index[t + k]; r = Math.max(r, Math.hypot(pos[v * 3] - x, pos[v * 3 + 1] - y, pos[v * 3 + 2] - z)); }
             grids.ball.set([x, y, z, r], (t / 3) * 4);
+            grids.widest = Math.max(grids.widest, r);
             if (part.under) grids.under[t / 3] = 1;
             const cell = cellKey(Math.floor(x / CELL), Math.floor(y / CELL), Math.floor(z / CELL));
             if (!grid.has(cell)) grid.set(cell, []);
@@ -133,8 +134,8 @@ export class Runs {
     }
 
     _closest(grid, p: BABYLON.Vector3, far) {
-        // Triangles are filed by their middles, which lie within a couple of centimetres of their corners.
-        const reach = far + 0.02;
+        // Triangles are filed by their middles, which lie no further from their corners than the widest one is.
+        const reach = far + fileOf(this.npc).widest;
         const list = [];
         for (let i = Math.floor((p.x - reach) / CELL); i <= Math.floor((p.x + reach) / CELL); i++)
             for (let j = Math.floor((p.y - reach) / CELL); j <= Math.floor((p.y + reach) / CELL); j++)

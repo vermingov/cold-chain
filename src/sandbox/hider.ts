@@ -192,7 +192,8 @@ for (int i = 0; i < ${MOST}; i++) {
     vec2 onPlane = vec2(dot(d, hiderB[i].xyz), dot(d, across));
     // A wound: a slot A.w long either way and B.w wide, round at its ends (a round hole when the two are equal).
     // A hole in clothes (a width below nothing): round, with a frayed edge.
-    if (hiderB[i].w < 0.0) { float a = atan(onPlane.y, onPlane.x); if (length(onPlane) < hiderA[i].w * (0.8 + 0.25 * sin(a * 7.0 + hiderA[i].x * 900.0) * sin(a * 3.0))) discard; }
+    // (frayed: the edge of a hole in cloth wanders with the weave, not in a pattern)
+    if (hiderB[i].w < 0.0) { if (length(onPlane) < hiderA[i].w * (0.7 + 0.45 * hiderNoise(vHiderRest * 900.0) + 0.15 * hiderNoise(vHiderRest * 3000.0))) discard; }
     else if (length(vec2(max(abs(onPlane.x) - (hiderA[i].w - hiderB[i].w), 0.0), onPlane.y)) < hiderB[i].w) discard;
 }
 #endif

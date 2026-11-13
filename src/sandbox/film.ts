@@ -10,20 +10,24 @@
 // film of blood on skin dries in five to ten minutes.
 
 import * as BABYLON from '@babylonjs/core';
-import { GLSL_BLOOD } from './fluid.ts';
+import { GLSL_BLOOD, sendCanvasPart } from './fluid.ts';
 
 const SIZE = 2048;
 const MOST_MM = 0.6;            // the thickest film the sheet holds
 const DRIES = 420;              // seconds for a film's wetness to fall to a third
 const SENDS = 0.12;             // seconds at least between sending the sheet to the card
 
+// The sheet is painted the way up the card reads it (row 0 is v = 0), so that a part of it can be sent as it is.
 export class Film {
     declare texture: BABYLON.DynamicTexture;
     declare g: CanvasRenderingContext2D;
-    declare dirty: boolean;
     declare sent: number;
     declare clock: number;
     declare dried: number;
+    declare painted: number;
+    declare lines: Map<string, number[]>;
+    declare dirty: number[] | null;
+    declare used: number[] | null;
 
     constructor(scene: BABYLON.Scene, name: string) {
         this.texture = new BABYLON.DynamicTexture(name + '_film', { width: SIZE, height: SIZE }, scene, false, BABYLON.Texture.BILINEAR_SAMPLINGMODE);
@@ -32,35 +36,49 @@ export class Film {
         this.g = this.texture.getContext() as CanvasRenderingContext2D;
         this.g.fillStyle = '#000';
         this.g.fillRect(0, 0, SIZE, SIZE);
-        this.texture.update();
-        this.dirty = false;
+        this.texture.update(false);
         this.sent = 0;
         this.clock = 0;
         this.dried = 0;
+        this.painted = -Infinity;
+        this.lines = new Map();
+        this.dirty = null;
+        this.used = null;
+    }
+
+    // The part of the sheet painted since it was last sent, and all of it ever painted (which is what dries).
+    _touch(x0: number, y0: number, x1: number, y1: number) {
+        x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0)); x1 = Math.min(SIZE, Math.ceil(x1)); y1 = Math.min(SIZE, Math.ceil(y1));
+        if (x1 <= x0 || y1 <= y0) return;
+        for (const k of ['dirty', 'used']) {
+            const r = this[k];
+            this[k] = r ? [Math.min(r[0], x0), Math.min(r[1], y0), Math.max(r[2], x1), Math.max(r[3], y1)] : [x0, y0, x1, y1];
+        }
+        this.painted = this.clock;
     }
 
     // Blood laid along the skin from crossing `a` to crossing `b`: a streak `wide` metres across, `mm` thick down its
     // middle and thinner to its edges, as a stream's cross-section is rounded. Where blood already lies it is as thick
-    // as the thicker of the two (a stream running again down its own track does not pile up), and wet again.
+    // as the thicker of the two (a stream running again down its own track does not pile up), and wet again. Kept until
+    // the frame's end and drawn with every other streak of the same width and thickness at once: taking the thicker is
+    // the same in any order.
     stroke(a, b, wide: number, mm: number) {
         if (Math.hypot(a.uv[0] - b.uv[0], a.uv[1] - b.uv[1]) > 0.03) return;
-        const g = this.g, w = Math.min(40, Math.max(1, wide * Math.min(3, a.scale) * SIZE));
-        const x0 = a.uv[0] * SIZE, y0 = (1 - a.uv[1]) * SIZE, x1 = b.uv[0] * SIZE, y1 = (1 - b.uv[1]) * SIZE;
-        g.lineCap = 'round';
-        g.globalCompositeOperation = 'lighten';
+        const w = Math.min(40, Math.max(1, wide * Math.min(3, a.scale) * SIZE));
+        const x0 = a.uv[0] * SIZE, y0 = a.uv[1] * SIZE, x1 = b.uv[0] * SIZE, y1 = b.uv[1] * SIZE;
         for (const [k, share] of [[1, 0.4], [0.66, 0.72], [0.33, 1]]) {
-            g.lineWidth = w * k;
-            g.strokeStyle = level(mm * share);
-            g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+            const key = Math.max(1, Math.round(w * k * 2) / 2) + '|' + Math.max(1, Math.min(255, Math.round((mm * share / MOST_MM) * 64) * 4));
+            let list = this.lines.get(key);
+            if (!list) this.lines.set(key, list = []);
+            list.push(x0, y0, x1, y1);
         }
-        g.globalCompositeOperation = 'source-over';
-        this.dirty = true;
+        this._touch(Math.min(x0, x1) - w, Math.min(y0, y1) - w, Math.max(x0, x1) + w, Math.max(y0, y1) + w);
     }
 
     // A patch of blood at `hit` about `r` metres across and `mm` thick: a drop's mark, or what a wound wells up. Its
     // edge is uneven, as blood stops where the skin's grain and hairs stop it.
     blot(hit, r: number, mm: number) {
-        const g = this.g, x = hit.uv[0] * SIZE, y = (1 - hit.uv[1]) * SIZE, R = Math.min(160, Math.max(0.8, r * Math.min(3, hit.scale) * SIZE));
+        const g = this.g, x = hit.uv[0] * SIZE, y = hit.uv[1] * SIZE, R = Math.min(160, Math.max(0.8, r * Math.min(3, hit.scale) * SIZE));
         const lobes = 7 + Math.floor(Math.random() * 5), turn = Math.random() * 6.28;
         const offsets = Array.from({ length: lobes * 2 }, () => 0.78 + 0.32 * Math.random());
         const shape = (k) => {
@@ -77,25 +95,42 @@ export class Film {
             shape(k);
         }
         g.globalCompositeOperation = 'source-over';
-        this.dirty = true;
+        this._touch(x - R * 1.2, y - R * 1.2, x + R * 1.2, y + R * 1.2);
     }
 
-    // Each frame: the film dries a little (every few seconds, all of it at once) and goes up to the card if it changed,
-    // not oftener than SENDS.
+    // Each frame: the streaks laid this frame are drawn; the film dries a little (every few seconds, all of it at once,
+    // for twenty minutes after the last blood came, after which it is dry); and what changed goes up to the card, not
+    // oftener than SENDS, only the part of the sheet that changed.
     update(dt: number) {
         this.clock += dt;
-        if (this.clock - this.dried > 8) {
+        if (this.lines.size) {
+            const g = this.g;
+            g.lineCap = 'round';
+            g.globalCompositeOperation = 'lighten';
+            for (const [key, list] of this.lines) {
+                const [w, r] = key.split('|');
+                g.lineWidth = +w;
+                g.strokeStyle = `rgb(${r},255,0)`;
+                g.beginPath();
+                for (let i = 0; i < list.length; i += 4) { g.moveTo(list[i], list[i + 1]); g.lineTo(list[i + 2], list[i + 3]); }
+                g.stroke();
+            }
+            g.globalCompositeOperation = 'source-over';
+            this.lines.clear();
+        }
+        if (this.used && this.clock - this.dried > 8 && this.clock - this.painted < DRIES * 3) {
             const k = Math.round(255 * Math.exp(-(this.clock - this.dried) / DRIES));
             this.dried = this.clock;
+            const [x0, y0, x1, y1] = this.used;
             this.g.globalCompositeOperation = 'multiply';
             this.g.fillStyle = `rgb(255,${k},255)`;
-            this.g.fillRect(0, 0, SIZE, SIZE);
+            this.g.fillRect(x0, y0, x1 - x0, y1 - y0);
             this.g.globalCompositeOperation = 'source-over';
-            this.dirty = true;
+            this.dirty = this.dirty ? [Math.min(this.dirty[0], x0), Math.min(this.dirty[1], y0), Math.max(this.dirty[2], x1), Math.max(this.dirty[3], y1)] : [...this.used];
         }
         if (this.dirty && this.clock - this.sent > SENDS) {
-            this.texture.update();
-            this.dirty = false;
+            sendCanvasPart(this.texture, this.g.canvas as HTMLCanvasElement, this.dirty);
+            this.dirty = null;
             this.sent = this.clock;
         }
     }

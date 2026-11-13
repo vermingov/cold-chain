@@ -62,6 +62,8 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     for (const h of surface) if (h.kind === 'cloth' && h.t <= enter.t + 0.02) { npc.wound(h, 'in', m.calibre); enter.cloth = h; }
     // The way in, opened in the flesh; round a bullet's, the ring of skin it scraped and bruised going in.
     if (!m.slash && !m.blade) npc.marks.hole(enter, m.calibre, false, ((m as any).speed ?? 0) < 600);
+    // Blood on the skin round the way in, which is what a hole in a shirt over it shows.
+    if (!m.slash) npc.marks.smear(enter, 0.008 + m.calibre * 0.6, 0.55);
     if (!m.slash) npc.wound(enter, m.blade ? 'stab' : 'in', m.blade ? m.calibre * 1.2 : m.calibre);
     // Where the path is inside the body: between each skin crossing and the next.
     const inside: [number, number][] = [];

@@ -212,7 +212,15 @@ export class Weapons {
         this.recoil = 1;
         const { camera, sound } = this.world;
         const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
-        for (let p = 0; p < gun.pellets; p++) this._shot(eye, jitter(ahead, gun.spread), { ...gun });
+        // A shotgun's charge flies as one mass for the first metre or so before the pellets part: up to about 1.2 m it
+        // makes one round hole 2 to 2.5 cm across and goes in as a single heavy missile, wrecking everything along a
+        // wide track (dev/research/wounds.md). Further off, the pellets go their own ways.
+        const near = gun.pellets > 1 ? this._person(eye, ahead, 1.4) : null;
+        if (near && near.t + 0.5 < 1.3) {
+            const off = near.t + 0.5;
+            this._shot(eye, jitter(ahead, gun.spread * 0.05), { ...gun, energy: gun.energy * gun.pellets * (1 - off * 0.1), mass: gun.mass * gun.pellets,
+                calibre: off < 0.6 ? 0.022 : 0.026, channel: 0.024, soft: 42, hard: 120, pellets: 1 });
+        } else for (let p = 0; p < gun.pellets; p++) this._shot(eye, jitter(ahead, gun.spread), { ...gun });
         sound?.shot(gun.sound, { gain: 1 });
         // The flash at the muzzle, for a frame or two.
         const anchors = this._anchors.get(key);

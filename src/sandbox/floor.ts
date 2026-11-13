@@ -54,6 +54,7 @@ export class Floor {
     declare wait: number;
     declare dirty: Set<number>;
     declare shaded: number;
+    declare sent: number;
     declare area: number[] | null;
 
     // `half` the half-width of the square floor in metres; `reflect` what a wet surface shows.
@@ -80,6 +81,7 @@ export class Floor {
         this.wait = 0;
         this.dirty = new Set();
         this.shaded = 0;
+        this.sent = 0;
         this.area = null;
 
         this.mesh = BABYLON.MeshBuilder.CreateGround('bloodFloor', { width: 1, height: 1 }, scene);
@@ -253,18 +255,19 @@ export class Floor {
                     this._encode(c);
                 }
             }
-            // A tile where nothing has moved for a couple of seconds sleeps until something lands in it.
-            if (moved < 1e-7) { if (++this.quiet[t] > 60) this.awake[t] = 0; } else this.quiet[t] = 0;
+            // A tile where next to nothing has moved for two thirds of a second sleeps until something lands in it.
+            if (moved < 2e-6) { if (++this.quiet[t] > 20) this.awake[t] = 0; } else this.quiet[t] = 0;
         }
     }
 
     // What changed goes up to the card, a tile at a time; and every few seconds all of it is coloured again, as it dries.
     _send() {
-        if (this.clock - this.shaded > 3 && this.wet.size) {
+        if (this.clock - this.shaded > 10 && this.wet.size) {
             this.shaded = this.clock;
             for (const c of this.wet) this._encode(c);
         }
-        if (!this.dirty.size) return;
+        if (!this.dirty.size || this.clock - this.sent < 0.1) return;
+        this.sent = this.clock;
         let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
         for (const t of this.dirty) {
             const tx = (t % this.tiles) * TILE, tz = Math.floor(t / this.tiles) * TILE;

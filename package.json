@@ -1,6 +1,6 @@
 {
   "name": "cold-chain",
-  "version": "0.8.14",
+  "version": "0.8.16",
   "private": true,
   "type": "module",
   "scripts": {

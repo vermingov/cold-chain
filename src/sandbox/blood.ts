@@ -33,6 +33,8 @@ const FREE = 0.12;          // seconds a drop flies before it can land back on a
 const BREAKS = 0.25;        // seconds a stream holds together before it breaks into drops
 const GATHERS = 0.12;       // ml of drops landing in one place before they count as a pool there
 
+const TMP = [new V3()];
+
 type Stream = { p: BABYLON.Vector3[]; v: BABYLON.Vector3[]; ml: number[]; d: number[]; age: number[]; life: number[]; fed: number };
 
 export class Blood {
@@ -58,7 +60,9 @@ export class Blood {
     declare markNext: number[];
     declare markColours: Float32Array[];
     declare markMatrices: Float32Array[];
-    declare markChanged: Set<number>;
+    declare markChanged: Map<number, number[]>;
+    declare dried: number;
+    declare crowd: Map<any, any>;
     declare markBorn: Float32Array[];
     declare wallRuns: { kind: number; slot: number; at: BABYLON.Vector3; normal: BABYLON.Vector3; wide: number; length: number; reach: number }[];
     declare gathering: Map<number, number>;
@@ -69,6 +73,7 @@ export class Blood {
     declare foot: { x: number; z: number; carried: number; walked: number; left: boolean } | null;
     declare contact: WeakMap<any, BABYLON.Vector3>;
     declare looks: number;
+    declare lain: WeakMap<any, { hit: any; at: BABYLON.Vector3 }>;
 
     // `room` is the half-width and half-depth of the floor and the height of its walls; `reflect` what wet blood shows.
     constructor(scene, room, reflect = null) {
@@ -140,7 +145,10 @@ export class Blood {
         this.markNext = [];
         this.markColours = [];
         this.markMatrices = [];
-        this.markChanged = new Set();
+        this.markChanged = new Map();
+        this.dried = 0;
+        this.crowd = new Map();
+        this.lain = new WeakMap();
         this.markBorn = [];
         const [cols, rows] = TILES;
         for (let k = 0; k < cols * rows; k++) {
@@ -175,7 +183,7 @@ export class Blood {
     // too many to draw.
     spray(at: BABYLON.Vector3, dir: BABYLON.Vector3, speed: number, ml: number, cone = 0.25, big = 1) {
         const median = 0.0016 * big;
-        const count = Math.max(1, Math.min(400, Math.round(ml / volume(median * 1.4))));
+        const count = Math.max(1, Math.min(150, Math.round(ml / volume(median * 1.4))));
         const each = ml / count;
         const side = Math.abs(dir.y) < 0.9 ? V3.Cross(dir, V3.Up()).normalize() : V3.Cross(dir, V3.Right()).normalize();
         const up = V3.Cross(side, dir);
@@ -251,20 +259,22 @@ export class Blood {
     update(dt: number) {
         this.clock += dt;
         this._dry();
-        const people = this._people();
-        this._fly(dt, people);
-        this._streams(dt, people);
+        const lying = (this.touched += dt) > 0.15;
+        // (Nothing in the air and nobody to check for lying in blood: nobody's whereabouts are needed.)
+        const people = this.n || this.streams.size || lying ? this._people() : [];
+        if (this.n) this._fly(dt, people);
+        if (this.streams.size) this._streams(dt, people);
         this._wallRuns(dt);
         this.floor.update(dt);
-        if ((this.touched += dt) > 0.15) {
+        if (lying) {
             this._lying(people, this.touched);
             this.touched = 0;
         }
         this._feet();
-        // The marks made this frame go to the card together.
-        for (const kind of this.markChanged) {
-            this.marks[kind].thinInstanceBufferUpdated('matrix');
-            this.marks[kind].thinInstanceBufferUpdated('color');
+        // The marks made or changed this frame go to the card together, only the stretch of each buffer that changed.
+        for (const [kind, [lo, hi]] of this.markChanged) {
+            this.marks[kind].thinInstancePartialBufferUpdate('matrix', hi - lo + 1, lo);
+            this.marks[kind].thinInstancePartialBufferUpdate('color', hi - lo + 1, lo);
         }
         this.markChanged.clear();
         this.beads.thinInstanceCount = this.beadCount;
@@ -274,19 +284,32 @@ export class Blood {
     }
 
     // Where each person is this frame: a box round them, so that only drops near somebody are tested against their body,
-    // and each of their segments as a capsule (its two ends and how thick it is).
+    // and each of their segments as a capsule: its start, its length along, how thick (eight numbers each, kept from frame
+    // to frame).
     _people() {
         // Finding the place on a body a drop has reached is the dear part: at most so many a frame, the rest next frame.
-        this.looks = 60;
-        return (this.bodies?.() ?? []).map((npc) => {
-            const lo = new V3(Infinity, Infinity, Infinity), hi = new V3(-Infinity, -Infinity, -Infinity);
-            const parts = npc.ragdoll.segments.map((seg) => {
-                const a = seg.node.position, b = seg.end ? V3.TransformCoordinates(seg.end, seg.node.getWorldMatrix()) : a;
-                lo.minimizeInPlace(a); hi.maximizeInPlace(a);
-                return { seg, a, ab: b.subtract(a), r: seg.radius ?? 0.05 };
+        this.looks = 16;
+        const out = [];
+        for (const npc of this.bodies?.() ?? []) {
+            const segs = npc.ragdoll.segments;
+            let c = this.crowd.get(npc);
+            if (!c || c.segs !== segs) { c = { npc, segs, caps: new Float32Array(segs.length * 8), lo: new V3(), hi: new V3() }; this.crowd.set(npc, c); }
+            c.lo.setAll(Infinity); c.hi.setAll(-Infinity);
+            const end = TMP[0];
+            segs.forEach((seg, i) => {
+                const a = seg.node.position;
+                if (seg.end) V3.TransformCoordinatesToRef(seg.end, seg.node.getWorldMatrix(), end); else end.copyFrom(a);
+                const k = i * 8, abx = end.x - a.x, aby = end.y - a.y, abz = end.z - a.z;
+                c.caps[k] = a.x; c.caps[k + 1] = a.y; c.caps[k + 2] = a.z;
+                c.caps[k + 3] = abx; c.caps[k + 4] = aby; c.caps[k + 5] = abz;
+                c.caps[k + 6] = seg.radius ?? 0.05; c.caps[k + 7] = abx * abx + aby * aby + abz * abz || 1;
+                c.lo.minimizeInPlace(a); c.hi.maximizeInPlace(a);
             });
-            return { npc, parts, lo: lo.subtractFromFloats(0.3, 0.3, 0.3), hi: hi.addInPlaceFromFloats(0.3, 0.3, 0.3) };
-        });
+            c.lo.subtractFromFloatsToRef(0.3, 0.3, 0.3, c.lo); c.hi.addInPlaceFromFloats(0.3, 0.3, 0.3);
+            out.push(c);
+        }
+        for (const npc of this.crowd.keys()) if (!out.some((c) => c.npc === npc)) this.crowd.delete(npc);
+        return out;
     }
 
     _fly(dt: number, people) {
@@ -453,8 +476,9 @@ export class Blood {
         const slot = this.markNext[kind];
         m.copyToArray(this.markMatrices[kind], slot * 16);
         this.markBorn[kind][slot] = this.clock;
-        this.markColours[kind].set([...WET, 1], slot * 4);
-        this.markChanged.add(kind);
+        const colours = this.markColours[kind];
+        colours[slot * 4] = WET[0]; colours[slot * 4 + 1] = WET[1]; colours[slot * 4 + 2] = WET[2]; colours[slot * 4 + 3] = 1;
+        this._changed(kind, slot);
         this.markNext[kind] = (slot + 1) % cap;
         this.markCount[kind] = Math.min(cap, this.markCount[kind] + 1);
         mesh.thinInstanceCount = this.markCount[kind];
@@ -480,8 +504,15 @@ export class Blood {
         const m = M.FromValues(x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, -run.normal.x, -run.normal.y, -run.normal.z, 0,
             centre.x + run.normal.x * 0.0012, centre.y, centre.z + run.normal.z * 0.0012, 1);
         m.copyToArray(this.markMatrices[run.kind], slot * 16);
-        this.markChanged.add(run.kind);
+        this._changed(run.kind, slot);
         return slot;
+    }
+
+    // Slot `slot` of the marks of `kind` is to go to the card this frame.
+    _changed(kind: number, slot: number) {
+        const r = this.markChanged.get(kind);
+        if (!r) this.markChanged.set(kind, [slot, slot]);
+        else { if (slot < r[0]) r[0] = slot; if (slot > r[1]) r[1] = slot; }
     }
 
     // Runs down walls lengthen at a couple of centimetres a second, slowing as they thin, until they stop.
@@ -497,13 +528,14 @@ export class Blood {
 
     // A drop at `at` that has reached one of `people`: taken by their skin or clothes, or not (false: it flies on).
     _onto(people, at: BABYLON.Vector3, vel: BABYLON.Vector3, d: number, ml: number) {
-        for (const { npc, parts, lo, hi } of people) {
+        for (const { npc, segs, caps, lo, hi } of people) {
             if (at.x < lo.x || at.y < lo.y || at.z < lo.z || at.x > hi.x || at.y > hi.y || at.z > hi.z) continue;
             let seg = null, near = 0.015;
-            for (const p of parts) {
-                const t = Math.max(0, Math.min(1, ((at.x - p.a.x) * p.ab.x + (at.y - p.a.y) * p.ab.y + (at.z - p.a.z) * p.ab.z) / (p.ab.lengthSquared() || 1)));
-                const d = Math.hypot(at.x - p.a.x - p.ab.x * t, at.y - p.a.y - p.ab.y * t, at.z - p.a.z - p.ab.z * t) - p.r;
-                if (d < near) { near = d; seg = p.seg; }
+            for (let k = 0; k < caps.length; k += 8) {
+                const px = at.x - caps[k], py = at.y - caps[k + 1], pz = at.z - caps[k + 2];
+                const t = Math.max(0, Math.min(1, (px * caps[k + 3] + py * caps[k + 4] + pz * caps[k + 5]) / caps[k + 7]));
+                const d = Math.hypot(px - caps[k + 3] * t, py - caps[k + 4] * t, pz - caps[k + 5] * t) - caps[k + 6];
+                if (d < near) { near = d; seg = segs[k / 8]; }
             }
             if (!seg || --this.looks < 0) continue;
             const hit = npc.runs.onto(at, npc.person.byName[seg.bone]);
@@ -539,7 +571,13 @@ export class Blood {
                 const owner = npc.person.byName[seg.bone];
                 point.set(c.x, Math.max(0.005, low + 0.004), c.z);
                 const moved = last ? Math.hypot(c.x - last.x, c.z - last.z) : 0;
-                const hit = deep > 0.0002 || (moved > 0.01 && moved < 0.5) ? npc.runs.onto(point, owner) : null;
+                // Where on the body it touches the floor: looked for again only once it has moved a few centimetres.
+                let hit = null;
+                if (deep > 0.0002 || (moved > 0.01 && moved < 0.5)) {
+                    const was = this.lain.get(seg);
+                    if (was && V3.DistanceSquared(was.at, c) < 0.03 * 0.03) hit = was.hit;
+                    else { hit = npc.runs.onto(point, owner); this.lain.set(seg, { hit, at: c.clone() }); }
+                }
                 if (deep > 0.0002) {
                     const took = floor.take(c.x, c.z, 0.05, 2.5 * dt / 0.15);
                     if (hit?.kind === 'cloth') npc.soak?.add(hit.rest, took);
@@ -591,16 +629,18 @@ export class Blood {
             new V3(eye.x + across.x * side, 0, eye.z + across.z * side));
     }
 
-    // Blood on the floor drying: every couple of seconds each mark is coloured by how long it has lain there.
+    // Blood on the room drying: every ten seconds each mark still drying is coloured by how long it has lain there.
     _dry() {
-        if (Math.floor(this.clock / 2) === Math.floor((this.clock - 1 / 60) / 2)) return;
+        if (this.clock - this.dried < 10) return;
+        this.dried = this.clock;
         this.marks.forEach((mesh, kind) => {
             const colours = this.markColours[kind], born = this.markBorn[kind];
             for (let i = 0; i < this.markCount[kind]; i++) {
+                if (this.clock - born[i] > DRIES + 10) continue;
                 const t = Math.min(1, (this.clock - born[i]) / DRIES);
                 for (let k = 0; k < 3; k++) colours[i * 4 + k] = WET[k] + (DRY[k] - WET[k]) * t;
+                this._changed(kind, i);
             }
-            if (this.markCount[kind]) mesh.thinInstanceBufferUpdated('color');
         });
     }
 
@@ -612,6 +652,7 @@ export class Blood {
         this.wallRuns = [];
         this.gathering.clear();
         this.marks.forEach((m, k) => { m.thinInstanceCount = 0; m.isVisible = false; this.markCount[k] = 0; this.markNext[k] = 0; });
+        this.markChanged.clear();
         this.floor.clear();
         if (this.foot) this.foot.carried = 0;
     }

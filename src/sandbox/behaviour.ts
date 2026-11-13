@@ -307,9 +307,8 @@ export class Behaviour {
         // wherever they are: a step lands one at a time; a hard blow swings the pelvis or the chest further than this on
         // its own, and they come back), sunk, or off the floor.
         const lean = Math.atan2(Math.max(0, outside(footprint(rd, feet).hull, this.com.x, this.com.z)), this.com.y - FLOOR);
-        (this as any)._why = 'lean=' + lean.toFixed(2) + ' comY=' + this.com.y.toFixed(2) + '/' + (this.heights.stand.pelvis * 0.72).toFixed(2) + ' air=' + this.air.toFixed(2) + ' will=' + this.will.toFixed(2) + ' can=' + this._canStand();
         if (npc.grabbed || !this._canStand() || this.will < 0.3 || lean > TILT
-            || this.com.y < this.heights.stand.pelvis * 0.72 || (this.air = feet.some((f) => rd.lowest(f) < FLOOR + TOUCH) ? 0 : this.air + dt) > 0.25) {
+            || this.com.y < this.heights.stand.pelvis * 0.6 || (this.air = feet.some((f) => rd.lowest(f) < FLOOR + TOUCH) ? 0 : this.air + dt) > 0.25) {
             this._go('fall');
             return this._fall(dt);
         }
@@ -379,7 +378,6 @@ export class Behaviour {
             sway.y = 0;
             const lever = sway.length() > 1e-6 ? inside(ground.hull, this.com.x, this.com.z, -sway.x, -sway.z) : 0;
             const most = G * lever * legs / height;
-            (this as any)._dbg = { want: sway.length(), most, lever, v: Math.hypot(this.vel.x, this.vel.z), down: down.length, aimDist: Math.hypot(aim.x - this.com.x, aim.z - this.com.z) };
             if (sway.length() > most) sway.scaleInPlace(most / sway.length());
             // And the catch a stumble makes: steps never land exactly where they should, and a body that has to step
             // again for every one that fell short never stops. Whatever foot is down slows the body's going, up to a
@@ -393,7 +391,7 @@ export class Behaviour {
             pelvis.body.applyAngularImpulse(_t.scale(dt));
             // The trunk kept upright over the legs, the hip strategy, as far as the muscles round the hips and back
             // hold it: without it a stride pitched the pelvis forty degrees over the front leg and took the body down.
-            if (!(globalThis as any).__noUp) for (const [seg, most] of [[pelvis, 90], [chest, 50]] as [any, number][]) {
+            for (const [seg, most] of [[pelvis, 90], [chest, 50]] as [any, number][]) {
                 this.muscles.toward(seg, facing, 25, 12, most * legs, _t);
                 _t.y = 0;
                 seg.body.applyAngularImpulse(_t.scaleInPlace(dt));
@@ -488,11 +486,16 @@ export class Behaviour {
         r.t += dt;
         if (r.t > r.length) { this.react = null; return; }
         // Keeping their feet comes first: mid-step the body does not double over or let a leg go.
-        const e = Math.min(1, r.t / 0.15) * (1 - smooth((r.t - r.length * 0.4) / (r.length * 0.6))) * (0.5 + 0.5 * r.hard) * (this.step ? 0.2 : 1);
+        // Guarding is quick; doubling over takes a moment (snapped over at once, the trunk threw the weight out past the
+        // toes and the person stepped after it again and again).
+        const onset = r.kind === 'winded' ? 0.4 : 0.15;
+        const e = smooth(r.t / onset) * (1 - smooth((r.t - r.length * 0.4) / (r.length * 0.6))) * (0.5 + 0.5 * r.hard) * (this.step ? 0.2 : 1);
         const more = (changes) => { for (const [k, a] of Object.entries(changes)) pose[k] = (pose[k] || 0) + (a as number) * e; };
         if (r.kind === 'winded') {
             // Winded: folded over the blow, knees giving a little, both arms in over it.
-            more({ spineFlex: 38, neckFlex: 12, hipFlexL: 16, hipFlexR: 16, kneeL: 18, kneeR: 18, ankleL: 8, ankleR: 8,
+            // (The fold is the back's: bent at the hips as well, over legs holding the weight over the feet, the whole
+            // body tipped forward.)
+            more({ spineFlex: 34, neckFlex: 12, kneeL: 12, kneeR: 12,
                 shoulderFlexL: 40, shoulderFlexR: 40, shoulderAbductL: -14, shoulderAbductR: -14, elbowL: 80, elbowR: 80, curlL: 40, curlR: 40 });
             this._clutch(0.6 * e);
         } else if (r.kind === 'guard') {
@@ -831,10 +834,9 @@ export class Behaviour {
 
 // --- geometry ---------------------------------------------------------------------------
 
-// The ground the feet cover: the corners of each foot's sole (and any `more` corners), their hull on the floor, and its
-// middle.
-function footprint(rd, feet, more: number[][] = []) {
-    const points = [...more];
+// The ground the feet cover: the corners of each foot's sole, their hull on the floor, and its middle.
+function footprint(rd, feet) {
+    const points = [];
     const corner = new V3();
     for (const foot of feet) {
         const { c, h } = foot.geo;
@@ -847,12 +849,6 @@ function footprint(rd, feet, more: number[][] = []) {
     const centre = new V3(0, 0, 0);
     for (const [x, z] of hull) { centre.x += x / hull.length; centre.z += z / hull.length; }
     return { hull, centre };
-}
-
-// The corners of a sole put down at `at` facing along `f`.
-function sole(at: BABYLON.Vector3, f: BABYLON.Vector3) {
-    const r = new V3(f.z, 0, -f.x);
-    return [[0.15, 0.05], [0.15, -0.05], [-0.08, 0.05], [-0.08, -0.05]].map(([a, b]) => [at.x + f.x * a + r.x * b, at.z + f.z * a + r.z * b]);
 }
 
 // Andrew's monotone chain: the hull of 2D points, counter-clockwise.
