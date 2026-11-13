@@ -200,7 +200,7 @@ export class Ragdoll {
             const limb = !TRUNK_NAMES.has(name) && !ROOT.test(name);
             const seg = { name, bone, node, head, joint, limb, shape: null, body: null, constraint: null, parent: null, broken: false, locked: false, mass: mass * share,
                 points: flesh.get(name) || [], clothes: clothes.get(name) || [], abs: new Q(), chain: [], spread: [], frame: null, unneutral: Q.Identity(), lo: [0, 0, 0], hi: [0, 0, 0], muscle: joint?.muscle ?? 0,
-                motor: { on: false, f: -1, t: [NaN, NaN, NaN] } };
+                motor: { on: false, made: false, f: -1, t: [NaN, NaN, NaN] } };
             seg.shape = this._shape(seg, shape, byName);
             const kind = TRUNK_NAMES.has(name) ? TRUNK : limb ? LIMBS : ROOTS;
             seg.shape.filterMembershipMask = kind | own;
@@ -425,19 +425,24 @@ export class Ragdoll {
         const c = seg.constraint, m = seg.motor;
         const on = strength > 0.004 && !seg.locked;
         if (on !== m.on) {
-            for (const axis of ANGULAR) c.setAxisMotorType(axis, on ? BABYLON.PhysicsConstraintMotorType.POSITION : BABYLON.PhysicsConstraintMotorType.NONE);
+            // A muscle lets go by its motors losing their force, not the motors: Havok (1.3.10 to 1.3.14) frees memory
+            // it still uses when a position motor is set back to NONE, and a later motor call traps (memory access out of
+            // bounds, every frame after it failing). A motor of no force swings a joint as none does (to 1e-7 m).
+            if (on && !m.made) for (const axis of ANGULAR) c.setAxisMotorType(axis, BABYLON.PhysicsConstraintMotorType.POSITION);
+            m.made ||= on;
             m.on = on;
             m.f = -1;
             m.t.fill(NaN);
         }
-        if (!on) return;
-        const f = strength * seg.muscle;
+        if (!m.made) return;
+        const f = on ? strength * seg.muscle : 0;
         if (Math.abs(f - m.f) > 0.03 * m.f + 0.2) {
             c.setAxisMotorMaxForce(AXIS.ANGULAR_X, f);
             c.setAxisMotorMaxForce(AXIS.ANGULAR_Y, f * 0.6);
             c.setAxisMotorMaxForce(AXIS.ANGULAR_Z, f * 0.8);
             m.f = f;
         }
+        if (!on) return;
         for (let i = 0; i < 3; i++) {
             const t = Math.max(seg.lo[i] + 0.02, Math.min(seg.hi[i] - 0.02, target[i]));
             if (!(Math.abs(t - m.t[i]) < 0.002)) { c.setAxisMotorTarget(ANGULAR[i], t); m.t[i] = t; }
