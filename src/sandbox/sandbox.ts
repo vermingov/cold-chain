@@ -1,11 +1,10 @@
-// The sandbox: a bare concrete hall, a few people standing in it, and
+// The sandbox: a hall laid out as a test map (map.ts), a few people standing in it, and
 // whatever the player picks up to use on them.
 
 import * as BABYLON from '@babylonjs/core';
 import HavokPhysics from '@babylonjs/havok';
 import { People } from '../person.ts';
 import { Player } from '../player.ts';
-import { Solids } from '../solids.ts';
 import { Surfaces } from '../surfaces.ts';
 import { Models } from '../models.ts';
 import { Sound } from '../sound.ts';
@@ -14,10 +13,9 @@ import { Npc } from './npc.ts';
 import { Blood } from './blood.ts';
 import { Weapons } from './weapons.ts';
 import { buildArsenal } from './arsenal.ts';
-import { WORLD } from './ragdoll.ts';
+import { HALL, buildMap, ground, solids, land, covered } from './map.ts';
 const V3 = BABYLON.Vector3;
 
-const HALL = { x: 9, z: 9, height: 5.5 };
 const BODIES = ['oldman', 'sexton', 'buyer', 'hood'];
 const CALLED = { oldman: 'Old man', sexton: 'Groundskeeper', buyer: 'Young man', hood: 'Man in a hood' };
 const MASS = { oldman: 72, sexton: 80, buyer: 86, hood: 82 };
@@ -50,14 +48,13 @@ export async function openSandbox(engine, canvas, hud) {
         }
     };
 
-    const lights = light(scene);
     const surfaces = new Surfaces(scene);
     await surfaces.load(['ceiling', 'pavement']);
-    const room = hall(scene, surfaces, lights);
+    const room = buildMap(scene, surfaces);
+    const lights = room.lights;
 
-    const solids = new Solids();
     const player = new Player(scene, canvas, {
-        ground: () => 0, solids, limits: { x0: -HALL.x + 0.4, z0: -HALL.z + 0.4, x1: HALL.x - 0.4, z1: HALL.z - 0.4 }, underfoot: () => 'tarmac',
+        ground, solids, limits: { x0: -HALL.x + 0.4, z0: -HALL.z + 0.4, x1: HALL.x - 0.4, z1: HALL.z - 0.4 }, underfoot: () => 'tarmac',
     });
     player.spawn(0, -4, { toward: [0, 1.4, 2] });
     const camera = player.camera;
@@ -65,11 +62,14 @@ export async function openSandbox(engine, canvas, hud) {
     gradePicture(scene, camera, { exposure: 1.6 });
 
     const blood = new Blood(scene, { x: HALL.x, z: HALL.z, height: HALL.height }, room.reflections.cubeTexture);
+    blood.map = { ground, land };
+    blood.floor.covered = covered;
     const people = await new People(scene).load(BODIES);
     const models = new Models(scene, { cast: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) });
 
     const world: any = {
         scene, camera, canvas, player, blood, models, people, npcs: [] as Npc[], frame: 0, dt: 1 / 60, bodyOf: new WeakMap(),
+        ground,     // the height of what is under (x, z), no higher than `below` (map.ts)
         shadows: { addShadowCaster: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) },
         sound: null,
     };
@@ -96,12 +96,14 @@ export async function openSandbox(engine, canvas, hud) {
     let seeing = false;
     await lineUp();
 
-    // N: another person on the floor where the eye is looking. X: their insides shown through them. K: the room cleared.
+    // N: another person standing where the eye is looking (on the floor, a ledge, the ramp). X: their insides shown
+    // through them. K: the room cleared.
     window.addEventListener('keydown', async (e) => {
         if (e.code === 'KeyN') {
-            const pick = scene.pickWithRay(new BABYLON.Ray(camera.globalPosition, camera.getDirection(V3.Forward()), 30), (m) => m.name === 'floor');
-            const at = pick?.hit ? pick.pickedPoint : camera.globalPosition.add(camera.getDirection(V3.Forward()).scale(2));
-            at.y = 0;
+            const pick = scene.pickWithRay(new BABYLON.Ray(camera.globalPosition, camera.getDirection(V3.Forward()), 30), (m) => m.metadata?.solid);
+            const up = pick?.hit && pick.getNormal(true).y > 0.7;
+            const at = up ? pick.pickedPoint : camera.globalPosition.add(camera.getDirection(V3.Forward()).scale(2));
+            if (!up) at.y = ground(at.x, at.z, camera.globalPosition.y);
             const yaw = Math.atan2(camera.globalPosition.x - at.x, camera.globalPosition.z - at.z);
             await spawn(BODIES[made % BODIES.length], at, yaw);
         }
@@ -168,103 +170,4 @@ function see(npc, on) {
     // Hair is cut out rather than blended, which ignores the mesh's visibility and hid a broken skull: blended while seen through.
     const hair = (npc.person.mesh.material as BABYLON.MultiMaterial).subMaterials.filter((m, i) => npc.person.header.parts[i].kind === 'hair');
     for (const m of hair) m.transparencyMode = on ? BABYLON.Material.MATERIAL_ALPHATESTANDBLEND : BABYLON.Material.MATERIAL_ALPHATEST;
-}
-
-// The hall's lights: two big lamps hung over the middle, each casting shadows, and a little from everywhere.
-function light(scene) {
-    const fill = new BABYLON.HemisphericLight('fill', new V3(0, 1, 0), scene);
-    fill.intensity = 0.45;
-    fill.diffuse = new BABYLON.Color3(0.85, 0.88, 0.95);
-    fill.groundColor = new BABYLON.Color3(0.25, 0.24, 0.23);
-    const shadows = [];
-    const lamps = [];
-    for (const [x, z] of [[-2.5, 1], [2.5, 1], [0, -5], [-6, -2], [6, -2], [0, 6.5]]) {
-        const lamp = new BABYLON.SpotLight('lamp', new V3(x, HALL.height - 0.3, z), new V3(0, -1, 0), 1.75, 1.5, scene);
-        lamp.falloffType = BABYLON.Light.FALLOFF_GLTF;
-        const lit = Math.abs(x) < 3 && z > 0;
-        lamp.intensity = lit ? 70 : 30;
-        lamp.diffuse = new BABYLON.Color3(1, 0.96, 0.9);
-        lamp.shadowMinZ = 0.3;
-        lamp.shadowMaxZ = 12;
-        lamps.push(lamp);
-        if (!lit) continue;
-        const s = new BABYLON.ShadowGenerator(2048, lamp);
-        s.usePercentageCloserFiltering = true;
-        s.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
-        s.bias = 0.0006;
-        s.normalBias = 0.012;
-        shadows.push(s);
-    }
-    return { fill, lamps, shadows };
-}
-
-// A concrete hall: floor, four walls, a ceiling with the lamps' housings in it. Solid to the physics and to bullets.
-function hall(scene, surfaces, { shadows, lamps }) {
-    const floorMat = surfaces.material('ceiling', { own: 'floor', rough: 0.9, tint: [0.78, 0.76, 0.73] });
-    const wallMat = surfaces.material('ceiling', { own: 'wall', rough: 1, tint: [0.85, 0.84, 0.8] });
-    const tiled = (mesh, u, v) => {
-        const uvs = mesh.getVerticesData(BABYLON.VertexBuffer.UVKind);
-        for (let i = 0; i < uvs.length; i += 2) { uvs[i] *= u; uvs[i + 1] *= v; }
-        mesh.setVerticesData(BABYLON.VertexBuffer.UVKind, uvs);
-    };
-    const meshes = [];
-    const floor = BABYLON.MeshBuilder.CreateGround('floor', { width: HALL.x * 2, height: HALL.z * 2 }, scene);
-    tiled(floor, HALL.x / 1.5, HALL.z / 1.5);
-    floor.material = floorMat;
-    meshes.push(floor);
-    const wall = (name, w, at: BABYLON.Vector3, yaw) => {
-        const m = BABYLON.MeshBuilder.CreatePlane(name, { width: w, height: HALL.height }, scene);
-        tiled(m, w / 2.5, HALL.height / 2.5);
-        m.position = at;
-        m.rotation.y = yaw;
-        m.material = wallMat;
-        meshes.push(m);
-        return m;
-    };
-    wall('wallN', HALL.x * 2, new V3(0, HALL.height / 2, HALL.z), 0);
-    wall('wallS', HALL.x * 2, new V3(0, HALL.height / 2, -HALL.z), Math.PI);
-    wall('wallE', HALL.z * 2, new V3(HALL.x, HALL.height / 2, 0), Math.PI / 2);
-    wall('wallW', HALL.z * 2, new V3(-HALL.x, HALL.height / 2, 0), -Math.PI / 2);
-    const roof = BABYLON.MeshBuilder.CreatePlane('roof', { width: HALL.x * 2, height: HALL.z * 2 }, scene);
-    roof.rotation.x = -Math.PI / 2;
-    roof.position.y = HALL.height;
-    roof.material = wallMat;
-    meshes.push(roof);
-    for (const m of meshes) {
-        m.receiveShadows = true;
-        m.metadata = { solid: true };
-        m.freezeWorldMatrix();
-    }
-    // The physics: a slab under the floor and a slab behind each wall.
-    const slab = (w, h, d, at) => {
-        const box = BABYLON.MeshBuilder.CreateBox('slab', { width: w, height: h, depth: d }, scene);
-        box.position = at;
-        box.isVisible = false;
-        box.isPickable = false;
-        const agg = new BABYLON.PhysicsAggregate(box, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.8, restitution: 0.05 }, scene);
-        agg.shape.filterMembershipMask = WORLD;
-    };
-    slab(HALL.x * 2, 1, HALL.z * 2, new V3(0, -0.5, 0));
-    slab(HALL.x * 2, HALL.height, 1, new V3(0, HALL.height / 2, HALL.z + 0.5));
-    slab(HALL.x * 2, HALL.height, 1, new V3(0, HALL.height / 2, -HALL.z - 0.5));
-    slab(1, HALL.height, HALL.z * 2, new V3(HALL.x + 0.5, HALL.height / 2, 0));
-    slab(1, HALL.height, HALL.z * 2, new V3(-HALL.x - 0.5, HALL.height / 2, 0));
-    // The lamps' housings: lit panels, which is what anything wet or polished shows most of.
-    const glow = new BABYLON.PBRMaterial('lampGlass', scene);
-    glow.emissiveColor = new BABYLON.Color3(1, 0.96, 0.9);
-    glow.emissiveIntensity = 6;
-    for (const lamp of lamps) {
-        const panel = BABYLON.MeshBuilder.CreateDisc('lampGlass', { radius: 0.35, tessellation: 32 }, scene);
-        panel.rotation.x = Math.PI / 2;
-        panel.position.copyFrom(lamp.position.add(new V3(0, 0.02, 0)));
-        panel.material = glow;
-        panel.isPickable = false;
-        meshes.push(panel);
-    }
-    const reflections = new BABYLON.ReflectionProbe('hall', 256, scene);
-    reflections.position.set(0, 1.4, 0);
-    reflections.renderList.push(...meshes);
-    reflections.refreshRate = BABYLON.RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
-    void shadows;
-    return { meshes, reflections };
 }

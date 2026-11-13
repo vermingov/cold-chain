@@ -2,6 +2,7 @@
 // Look at a thing on it and press E to take it (weapons.take).
 
 import * as BABYLON from '@babylonjs/core';
+import { HALL } from './map.ts';
 const V3 = BABYLON.Vector3;
 
 // What hangs where: two rows, long guns over the rest, laid out along the wall from the south end.
@@ -9,7 +10,7 @@ const ROWS = [
     { y: 1.78, keys: ['rifle', 'shotgun', 'ak', 'm4'] },
     { y: 1.12, keys: ['pistol', 'knife', 'sword', 'bat', 'grenade', 'throw', 'bandage', 'medkit'] },
 ];
-const WALL = { x: -9, z: -1.2, width: 7.2, height: 1.7, y: 1.45 };
+const WALL = { x: -HALL.x, z: -1.2, width: 7.2, height: 1.7, y: 1.45 };
 const GAP = 0.28;
 const BOX = 'cardboard_box_01';     // "Throw things" is shown by one of the things thrown
 // Turned on the wall from how they are held: the medkit's cross and the bandage roll's side to the room.

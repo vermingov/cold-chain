@@ -57,6 +57,7 @@ export class Floor {
     declare sent: number;
     declare area: number[] | null;
     declare pending: number[] | null;
+    declare covered: ((x: number, z: number) => boolean) | null;
 
     // `half` the half-width of the square floor in metres; `reflect` what a wet surface shows.
     constructor(scene: BABYLON.Scene, half: number, reflect: BABYLON.BaseTexture | null) {
@@ -85,6 +86,7 @@ export class Floor {
         this.sent = 0;
         this.area = null;
         this.pending = null;
+        this.covered = null;     // where something stands on the floor (map.ts): blood does not run in under it
 
         this.mesh = BABYLON.MeshBuilder.CreateGround('bloodFloor', { width: 1, height: 1 }, scene);
         this.mesh.position.y = 0.0007;
@@ -124,6 +126,8 @@ export class Floor {
             const x = gx * CELL, z = gz * CELL;
             this.rise[c] = 0.0016 * noise2(x / 0.45, z / 0.45) + 0.0006 * noise2(x / 0.11 + 7, z / 0.11) + 0.00015 * noise2(x / 0.03, z / 0.03 + 3);
             this.edge[c] = STANDS * (0.6 + 0.55 * noise2(x / 0.05 + 11, z / 0.05) + 0.35 * noise2(x / 0.017, z / 0.017 + 5));
+            // Under a wall or a ledge, the floor is a metre higher: nothing flows uphill into it.
+            if (this.covered?.(this.x0 + x + CELL / 2, this.z0 + z + CELL / 2)) this.rise[c] = 1;
         }
     }
 

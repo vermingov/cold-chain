@@ -49,7 +49,7 @@ export class Solids {
 }
 
 // Push `at` clear of one solid. The way it went, or null.
-function clear(at, radius, solid) {
+export function clear(at, radius, solid) {
     const round = solid.radius !== undefined;
     // The nearest point of the solid's edge-or-inside to the body's middle.
     const nx = round ? solid.x : Math.max(solid.x0, Math.min(at.x, solid.x1));

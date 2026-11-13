@@ -21,6 +21,7 @@ const BODY = {
     stride: 0.74,                   // metres between footfalls
     drain: 0.065, recover: 0.11,    // of a full breath, a second: about fifteen seconds of running from full
     winded: 0.3,                    // once out of breath, how much has to come back before running again
+    climb: 0.45,                    // metres: the highest step taken in a stride
 };
 
 export class Player {
@@ -43,12 +44,15 @@ export class Player {
     declare breathing: number;
     declare winded: boolean;
     declare onStep: any;
+    declare falling: number;
     declare held: boolean;
     declare slowed: number;
     declare keys: Set<any>;
     declare dispose: () => void;
 
-    // `place` is { ground(x, z), solids, limits: { x0, z0, x1, z1 }, underfoot(x, z) }.
+    // `place` is { ground(x, z, below), solids, limits: { x0, z0, x1, z1 }, underfoot(x, z) }: `ground` is the height of
+    // what is underfoot no higher than `below` (a place with floors one over another tells them apart by it), and
+    // `solids.push(at, radius, feet)` is told how high the feet are (so that what is under them is not in the way).
     constructor(scene, canvas, place) {
         this.canvas = canvas;
         this.place = place;
@@ -73,6 +77,7 @@ export class Player {
         this.breathLeft = 1;
         this.running = false;
         this.height = 0;            // of the ground under the feet, eased
+        this.falling = 0;           // m/s, off an edge
         this.travelled = 0;         // since the last footfall
         this.steps = 0;
         this.bobPhase = 0;
@@ -118,6 +123,7 @@ export class Player {
         this.stand = eye;
         this.crouch = 0;
         this.height = this.place.ground(x, z);
+        this.falling = 0;
         if (toward) {
             const dx = toward[0] - x, dy = toward[1] - (this.height + eye), dz = toward[2] - z;
             this.yaw = Math.atan2(dx, dz);
@@ -155,7 +161,7 @@ export class Player {
         const before = { x: this.pos.x, z: this.pos.z };
         this.pos.x += this.vel.x * dt;
         this.pos.z += this.vel.z * dt;
-        const pushed = this.place.solids.push(this.pos, BODY.radius);
+        const pushed = this.place.solids.push(this.pos, BODY.radius, this.height);
         if (pushed) {
             // Lose the speed that was into the thing and keep what was along it.
             const into = this.vel.x * pushed[0] + this.vel.z * pushed[1];
@@ -178,9 +184,17 @@ export class Player {
     }
 
     _see(dt) {
-        // The ground under the feet, eased: a head does not follow every dip.
-        const ground = this.place.ground(this.pos.x, this.pos.z);
-        this.height += (ground - this.height) * (dt ? Math.min(1, dt * 12) : 1);
+        // The ground under the feet, eased: a head does not follow every dip, or a stair. Off anything higher than a stair,
+        // they fall, and land.
+        const ground = this.place.ground(this.pos.x, this.pos.z, this.height + BODY.climb);
+        if (this.falling || this.height - ground > BODY.climb) {
+            this.falling += 9.81 * dt;
+            this.height = Math.max(ground, this.height - this.falling * dt);
+            if (this.height === ground) {
+                if (this.onStep) this.onStep(this.place.underfoot(this.pos.x, this.pos.z), Math.min(1.5, this.falling / 4));
+                this.falling = 0;
+            }
+        } else this.height += (ground - this.height) * (dt ? Math.min(1, dt * 12) : 1);
         this.breathing += dt * (this.running ? 2.6 : 1.1 + (1 - this.breathLeft) * 2);
 
         const going = Math.min(1, this.speed / BODY.walk);

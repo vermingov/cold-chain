@@ -205,7 +205,7 @@ export class Marks {
     // The lips of an opening right through the body's wall (viscera.ts): its edge through skin crossings `edge` (in
     // order, all round it), and out from it, in a band about `lip` metres wide, the wall's layers as its cut face shows
     // them: the skin's cut edge, the fat under it, the white sheath, then the muscle, deeper the nearer the hole, and
-    // blood in them. A torn wall draws back unevenly, so the band is wider here and narrower there. (Inside the edge,
+    // a little blood in them. A torn wall draws back unevenly, so the band is wider here and narrower there. (Inside the edge,
     // no skin is drawn.) The depth runs down evenly across the band, so that each layer shows as wide as it is thick
     // in it; flat steps of depth showed one layer only, the fat, as a band of one colour.
     lip(edge, lip: number) {
@@ -219,9 +219,11 @@ export class Marks {
         g.filter = 'blur(1px)';
         const STEPS = 10;
         for (let s = 0; s < STEPS; s++) {
-            // From the band's outer edge (out = 1: the skin's cut edge, 1 mm deep) to the hole (2 cm, a lean wall).
-            const out = 1 - s / STEPS, deep = 0.03 + 0.47 * (1 - out);
-            g.strokeStyle = `rgb(${Math.round(255 * deep)},${Math.round(200 * Math.min(1, 0.25 + deep * 1.6))},0)`;
+            // From the band's outer edge (out = 1: the skin's cut edge, 1 mm deep) to the hole (the muscle, 14 mm on the
+            // sheet's scale, where Gore draws it red; deeper it draws a wound's dark depths). A little blood in it, most
+            // in the muscle: more and it covers the layers.
+            const out = 1 - s / STEPS, deep = 0.03 + 0.33 * (1 - out);
+            g.strokeStyle = `rgb(${Math.round(255 * deep)},${Math.round(255 * (0.08 + 0.5 * deep))},0)`;
             for (let k = 0; k < n; k++) {
                 const a = edge[k].uv, b = edge[(k + 1) % n].uv;
                 if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.04) continue;

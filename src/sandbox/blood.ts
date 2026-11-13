@@ -74,6 +74,8 @@ export class Blood {
     declare contact: WeakMap<any, BABYLON.Vector3>;
     declare looks: number;
     declare lain: WeakMap<any, { hit: any; at: BABYLON.Vector3 }>;
+    declare map: { ground(x: number, z: number, below?: number): number; land(at: BABYLON.Vector3, vel: BABYLON.Vector3): BABYLON.Vector3 | null } | null;
+    declare tops: Map<number, number>;
 
     // `room` is the half-width and half-depth of the floor and the height of its walls; `reflect` what wet blood shows.
     constructor(scene, room, reflect = null) {
@@ -95,6 +97,8 @@ export class Blood {
         this.streams = new Map();
         this.gathering = new Map();
         this.wallRuns = [];
+        this.map = null;
+        this.tops = new Map();
 
         const wet = (name, texture) => {
             const m = new BABYLON.PBRMaterial(name, scene);
@@ -351,11 +355,13 @@ export class Blood {
         if (live) this.drop.thinInstanceBufferUpdated('matrix');
     }
 
-    // Whether a drop at `at` has met the floor, a wall or the ceiling; if it has, what it leaves there.
+    // Whether a drop at `at` has met the floor, a wall, the ceiling or something standing in the room (`map`); if it has,
+    // what it leaves there.
     _lands(at: BABYLON.Vector3, vel: BABYLON.Vector3, d: number, ml: number) {
         const { x: W, z: D, height: H } = this.room;
-        let normal = null;
-        if (at.y <= 0) { normal = V3.UpReadOnly; at.y = 0; }
+        let normal = this.map?.land(at, vel) ?? null;
+        if (normal) { /* on it already */ }
+        else if (at.y <= 0) { normal = V3.UpReadOnly; at.y = 0; }
         else if (Math.abs(at.x) >= W) { normal = new V3(-Math.sign(at.x), 0, 0); at.x = Math.sign(at.x) * (W - 0.002); }
         else if (Math.abs(at.z) >= D) { normal = new V3(0, 0, -Math.sign(at.z)); at.z = Math.sign(at.z) * (D - 0.002); }
         else if (at.y >= H) { normal = V3.DownReadOnly; at.y = H - 0.002; }
@@ -441,9 +447,10 @@ export class Blood {
     _splash(at: BABYLON.Vector3, vel: BABYLON.Vector3, normal: BABYLON.Vector3, d: number, ml: number) {
         const speed = vel.length();
         this.onLand?.(at, speed);
-        const floor = normal.y > 0.9;
+        const floor = normal.y > 0.9 && at.y < 0.01;
         // Into blood already there: it joins it.
         if (floor && this.floor.depth(at.x, at.z) > 0.0004) { this.floor.add(at.x, at.z, ml); return; }
+        if (normal.y > 0.9 && !floor && this._top(at, normal, ml)) return;
         const into = speed > 1e-4 ? Math.max(0.05, -V3.Dot(vel, normal) / speed) : 1;
         const kind = into < 0.72 ? 8 + Math.floor(Math.random() * 4) : (splashes(d, speed) ? 4 : 0) + Math.floor(Math.random() * 4);
         // The tiles' blots fill about 40% of the tile: the quad is as much bigger than the stain.
@@ -469,6 +476,25 @@ export class Blood {
             // On a wall a big enough drop runs down it, until what it leaves behind has used it up.
             this._wallRun(at, normal, Math.max(0.002, d * 0.8), Math.min(0.6, ml / 0.003 / 100));
         }
+    }
+
+    // Blood landing on the top of something above the floor (a ledge, a crate), which has no pools of its own (shortcut:
+    // only the floor flows, floor.ts; a second Floor per raised top if pools up there are wanted). Drops landing within
+    // 3 cm of each other gather there as one stain: the first leaves its own mark, and the stain is drawn again, round
+    // and as wide as a pool of what has gathered, each time that has doubled (so a body bleeding on a ledge does not use
+    // up the room's marks a drop at a time). True if it was taken.
+    _top(at: BABYLON.Vector3, normal: BABYLON.Vector3, ml: number) {
+        const key = Math.floor(at.x / 0.03) * 7919 + Math.floor(at.z / 0.03) * 31 + Math.round(at.y * 20);
+        const was = this.tops.get(key) ?? 0, have = was + ml;
+        this.tops.set(key, have);
+        if (!was) return false;
+        if (Math.floor(Math.log2(have / GATHERS)) > Math.floor(Math.log2(was / GATHERS)) && have > GATHERS) {
+            // Spread 2.5 mm deep, as on the floor (floor.ts STANDS); the tile's blot fills about 40% of its quad.
+            const wide = 2 * Math.sqrt((have * 1e-6) / (Math.PI * 0.0025)) * 1.6;
+            const way = V3.Cross(normal, V3.Right()).normalize(), side = V3.Cross(normal, way).normalize();
+            this._mark(Math.floor(Math.random() * 4), way.scale(wide), side.scale(wide), normal, at);
+        }
+        return true;
     }
 
     // One mark: tile `kind`, its X axis `x` and Y axis `y` (scaled), facing out of a surface with `normal`, at `at`.
@@ -619,11 +645,13 @@ export class Blood {
     _feet() {
         const eye = this.scene.activeCamera?.globalPosition;
         if (!eye) return;
+        // Up on something, the soles print on it, but there is no pool up there to step in.
+        const under = this.map?.ground(eye.x, eye.z, eye.y - 0.5) ?? 0;
         const f = this.foot ?? (this.foot = { x: eye.x, z: eye.z, carried: 0, walked: 0, left: false });
         const moved = Math.hypot(eye.x - f.x, eye.z - f.z);
         const yaw = Math.atan2(eye.x - f.x, eye.z - f.z);
         f.x = eye.x; f.z = eye.z;
-        if (this.floor.depth(eye.x, eye.z) > 0.0004) f.carried = Math.min(5, f.carried + this.floor.take(eye.x, eye.z, 0.12, 1.5));
+        if (under < 0.01 && this.floor.depth(eye.x, eye.z) > 0.0004) f.carried = Math.min(5, f.carried + this.floor.take(eye.x, eye.z, 0.12, 1.5));
         if (moved > 0.5) return;
         if (f.carried < 0.05) { f.walked = 0; return; }
         f.walked += moved;
@@ -638,7 +666,7 @@ export class Blood {
         const kind = 16 + (print > 0.6 ? 0 : print > 0.3 ? 1 : print > 0.12 ? 2 : 3);
         const along = new V3(Math.sin(yaw), 0, Math.cos(yaw)), across = new V3(Math.cos(yaw), 0, -Math.sin(yaw));
         this._mark(kind, across.scale(f.left ? -0.13 : 0.13), along.scale(0.33), V3.UpReadOnly,
-            new V3(eye.x + across.x * side, 0, eye.z + across.z * side));
+            new V3(eye.x + across.x * side, under, eye.z + across.z * side));
     }
 
     // Blood on the room drying: every ten seconds each mark still drying is coloured by how long it has lain there.
@@ -663,6 +691,7 @@ export class Blood {
         this.streams.clear();
         this.wallRuns = [];
         this.gathering.clear();
+        this.tops.clear();
         this.marks.forEach((m, k) => { m.thinInstanceCount = 0; m.isVisible = false; this.markCount[k] = 0; this.markNext[k] = 0; });
         this.markChanged.clear();
         this.floor.clear();
