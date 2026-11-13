@@ -64,6 +64,10 @@ export async function open(url, { width = 1280, height = 720, port = 9333 + Math
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     proc.stderr.on('data', (d) => { stderr += d; });
+    // The browser goes with this process however it ends: a `finally` does not run when node is killed by a signal
+    // (`timeout`, a stopped task), and each browser left behind holds a gigabyte or two.
+    process.on('exit', () => proc.kill('SIGKILL'));
+    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, () => { proc.kill('SIGKILL'); process.exit(128); });
 
     await waitForEndpoint(port);
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
