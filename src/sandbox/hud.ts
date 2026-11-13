@@ -38,6 +38,7 @@ export class Hud {
         this.help = add(layer, 'help', [
             'Left click: fire, stab, swing, grab or throw. Right click: cut with a blade, punch with your hands, or change what you throw.',
             '1 to 6 or the mouse wheel: change what you hold. R: reload. E: take from the wall. G: put it back. Tab: what you carry.',
+            'Bandage or medkit: hold left click on a wound (the medkit dresses all of them, one after another).',
             'N: another person where you are looking. X: see inside them. K: clear the room. H: hide this.',
         ].map((l) => `<p>${l}</p>`).join(''));
         this.fault = add(layer, 'fault');
@@ -82,7 +83,7 @@ export class Hud {
         const bar = weapons.slots.map((key, i) => `<span class="${i === weapons.slot ? 'on' : ''}${key ? '' : ' empty'}"><b>${i + 1}</b> ${key ? name(key) : 'Hands'}</span>`).join('');
         if (bar !== this._bar) { this.arms.innerHTML = bar; this._bar = bar; }
         const on = document.pointerLockElement ? weapons.looking() : null;
-        const prompt = on ? `<b>E</b> ${weapons.slots.includes(on) ? 'Hold' : weapons.slots.includes(null) ? 'Take' : 'Swap for'} the ${name(on)}` : '';
+        const prompt = on ? `<b>E</b> ${weapons.slots.includes(on) ? 'Hold' : weapons.slots.includes(null) ? 'Take' : 'Swap for'} the ${name(on)}` : weapons.medic?.prompt ?? '';
         if (this.prompt.innerHTML !== prompt) this.prompt.innerHTML = prompt;
         const arm = weapons.arm;
         const ammo = arm.gun ? (weapons.reloading > 0 ? 'Reloading' : `${weapons.ammo.get(arm.key)} / ${arm.gun.rounds}`)
@@ -108,5 +109,9 @@ export class Hud {
             + `</table>${injuries || more ? `<ul>${injuries}${more}</ul>` : ''}`;
     }
 
-    error(e) { this.fault.textContent = String(e?.stack ?? e).split('\n').slice(0, 3).join(' '); }
+    // Firefox's stack leaves out the message (Chrome's starts with it), and a stack alone said nothing of a Havok trap.
+    error(e) {
+        const stack = String(e?.stack ?? e), said = e?.message ? `${e.name ?? 'Error'}: ${e.message}` : '';
+        this.fault.textContent = (said && !stack.includes(e.message) ? said + ' ' : '') + stack.split('\n').slice(0, 3).join(' ');
+    }
 }

@@ -54,6 +54,8 @@ export async function open(url, { width = 1280, height = 720, port = 9333 + Math
         '--mute-audio',
         '--autoplay-policy=no-user-gesture-required',
         '--no-first-run', '--no-default-browser-check',
+        // Chromium will not run its sandbox as root (a container).
+        ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-backgrounding-occluded-windows',

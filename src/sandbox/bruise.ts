@@ -11,22 +11,26 @@
 // fifth punch to a cheek does far more than the first. Then, on its own
 // clock, a few times a second and only where something is still changing:
 //
-// - redness (vessels opened up) comes within a second or two and fades over
-//   minutes; a hard blow's middle is blanched for a few seconds;
-// - torn vessels go on leaking for a while, until they clot, and the blood
-//   out comes up through the tissue to show (in seconds over bone, in a
-//   minute or so through thick flesh), red-purple at first and darker and
-//   bluer as it loses its oxygen;
-// - that blood spreads, and settles downhill (a blow to the brow ends up
-//   round the eye), collecting in lax tissue;
-// - the tissue swells (oedema) over tens of seconds to minutes, and the blood
-//   out swells it too: the skin is pushed out along its normal in the skin's
-//   own vertex shader, its normals bent to match, and an eye swells shut.
+// - nothing at the instant of the blow; redness (vessels opened up) comes
+//   over a few seconds (the red reaction of Lewis's triple response, 3 to 15
+//   s) and fades over half an hour; a hard blow's middle is blanched for a
+//   few seconds;
+// - torn vessels go on leaking for minutes, until they clot, and the blood
+//   out comes up through the tissue to show: over bone in tens of minutes,
+//   through thick flesh over hours. Red-purple at first, darker and bluer
+//   over hours as it loses its oxygen; never darker than skin whose dermis
+//   is full of blood (more below that does not show through it);
+// - that blood spreads over hours, and settles downhill (a blow to the brow
+//   ends up round the eye over a day), collecting in lax tissue;
+// - the tissue swells (oedema) over minutes to hours, and the blood out
+//   swells it too as it gathers: the skin is pushed out along its normal in
+//   the skin's own vertex shader, its normals bent to match, and an eye
+//   swells shut.
 //
 // The dead have no circulation: no new redness or swelling, and no new
 // bleeding into a bruise past the first minute or two; blood already out
-// still comes up. Sped up from hours to minutes, as little as play needs
-// (dev/research/blunt-trauma.md has the real course).
+// still comes up. On the real clock: the game has no time scale of its own
+// (dev/research/blunt-trauma.md has the course and its sources).
 //
 // Hard or repeated blows over bone split the skin (brow, cheekbone, lip on
 // the teeth, scalp), and a blow to the nose makes it bleed; both through the
@@ -46,16 +50,20 @@ const STRIDE = 10;              // floats a corner sends: tint (4), shift (3), t
 const RECORDS = 16;             // recent blows whose shape (a bat's tramlines, a hard blow's pale middle) is drawn
 const DOSE = 120;               // J into the soft tissue for one unit of damage at the middle of a fist's patch
 const TEARS = 0.12;             // damage a blow must do before vessels tear (a light slap only reddens)
-const LEAK = 0.08;              // per second, of what tore, still leaking out of the vessels at first
-const CLOTS = 20;               // seconds for the leak to clot down to a third
-const FADES = 180;              // seconds for redness to fade to a third
-const SWELLS = 45;              // seconds for swelling to come up to two thirds of what it will be
+const LEAK = 0.00875;           // per second, of what tore, leaking out of the vessels at first (2.1 of it in all)
+const CLOTS = 240;              // seconds for the leak to clot down to a third
+const REDDENS = 3;              // seconds for redness to come up to two thirds
+const FADES = 1800;             // seconds for redness to fade to a third
+const SWELLS = 900;             // seconds for swelling to come up to two thirds of what it will be
+const SHOWS = 600;              // seconds for blood out to come up to show through skin over bone (two thirds)
+const DEEP = 10800;             // and as many more through thick flesh
+const BLUES = 10800;            // seconds for blood that shows to lose most of its oxygen (red-purple to blue-purple)
 const SWELL = 0.0035;           // m of oedema a unit of damage brings, over bone
 const HAEMATOMA = 0.004;        // m of swelling a unit of blood out brings
-const SPREADS = 1.5e-6;         // m2/s: how fast blood out spreads through the tissue, fresh
-const SETTLES = 240;            // seconds for that to slow to a third, as it clots
-const SINKS = 1.5e-5;           // m/s: how fast blood that shows creeps downhill
-const TRACKS = 9e-5;            // m/s: and deep blood, along the planes between the layers
+const SPREADS = 1.7e-8;         // m2/s: how fast blood out spreads through the tissue, fresh (about 2 cm in all)
+const SETTLES = 21600;          // seconds for that to slow to a third, as it clots
+const SINKS = 1.7e-7;           // m/s: how fast blood that shows creeps downhill
+const TRACKS = 5e-7;            // m/s: and deep blood, along the planes between the layers (brow to lids in a day)
 const SPLITS = 1.6;             // damage over bone past which skin splits under one more blow
 
 // What hits (bones.ts's TOOLS): how stiff it is (N/m) and the patch it lands on (cm2).
@@ -433,7 +441,7 @@ export class Bruise {
             const before = this.damage[i];
             this.damage[i] += q;
             const torn = Math.max(0, q * (1 + 1.2 * before) - TEARS) * this.lax[i];
-            this.pool[i] += torn * 0.5 * Math.min(1, bleeds * 2);
+            // (all of it through the leak: none out, so none swelling or showing, at the instant of the blow)
             this.leak[i] += torn * LEAK * bleeds;
             this.eryT[i] = 1 - (1 - this.eryT[i]) * Math.exp(-4 * q);
             this.oedT[i] += peak * swells * (0.35 + 0.65 * a) * (0.5 + a) * this.lax[i] * SWELL;
@@ -612,26 +620,26 @@ export class Bruise {
             this.last[i] = this.clock;
             if (this.leak[i] > 0) {
                 this.pool[i] += this.leak[i] * dt * late;
-                this.leak[i] *= Math.exp(-dt / (flow > 0 ? CLOTS : 3));
+                this.leak[i] *= Math.exp(-dt / (flow > 0 ? CLOTS : 60));
                 if (this.leak[i] < 1e-5) this.leak[i] = 0;
             }
-            // Blood out comes up to show: over bone in seconds, through thick flesh in a minute or so.
+            // Blood out comes up to show: over bone in tens of minutes, through thick flesh over hours.
             if (this.pool[i] > 0) {
-                const up = this.pool[i] * Math.min(1, dt / (6 + 50 * (1 - this._anvil(i))));
+                const up = this.pool[i] * Math.min(1, dt / (SHOWS + DEEP * (1 - this._anvil(i))));
                 this.pool[i] -= up;
                 this.age[i] = (this.age[i] * this.blood[i]) / (this.blood[i] + up + 1e-9);
                 this.blood[i] += up;
             }
             this.age[i] += dt;
             // Redness needs blood coming: it goes from a dead face within seconds.
-            this.ery[i] += (this.eryT[i] * Math.min(1, flow) - this.ery[i]) * Math.min(1, dt / (flow > 0 ? 0.8 : 15));
+            this.ery[i] += (this.eryT[i] * Math.min(1, flow) - this.ery[i]) * Math.min(1, dt / (flow > 0 ? REDDENS : 15));
             this.eryT[i] *= Math.exp(-dt / FADES);
             if (flow > 0) this.oed[i] += (this.oedT[i] - this.oed[i]) * Math.min(1, (dt * flow) / SWELLS);
             if (this.blood[i] > 1e-4 || this.pool[i] > 1e-4) this._spread(i, flow > 0 ? dt : dt * 0.3);
             this._touch(i);
             // What is still changing stays on the clock; what has settled leaves it.
             const busy = this.leak[i] > 0 || this.pool[i] > 2e-3 || this.eryT[i] > 0.004 || Math.abs(this.ery[i] - this.eryT[i] * Math.min(1, flow)) > 0.004
-                || (flow > 0 && this.oedT[i] - this.oed[i] > 2e-5) || (this.blood[i] > 0.01 && this.age[i] < 500);
+                || (flow > 0 && this.oedT[i] - this.oed[i] > 2e-5) || (this.blood[i] > 0.01 && this.age[i] < 3 * BLUES);
             if (busy) { this._next++; continue; }
             this.active[i] = 0;
             const last = this.list.pop();
@@ -670,7 +678,7 @@ export class Bruise {
         const cap = 0.003 + 0.006 * this.lax[i];
         const swollen = this.oed[i] + HAEMATOMA * (this.pool[i] + this.blood[i]);
         const h = (this.h[i] = cap * (1 - Math.exp(-swollen / cap)) * this.rim[i]);
-        const w = this.sent, blue = 1 - Math.exp(-this.age[i] / 100);
+        const w = this.sent, blue = 1 - Math.exp(-this.age[i] / BLUES);
         const moved = !(Math.abs(h - w[i * 4 + 3]) < 6e-5);
         if (!moved && Math.abs(this.ery[i] - w[i * 4]) < 0.004 && Math.abs(this.blood[i] - w[i * 4 + 1]) < 0.004 && Math.abs(blue - w[i * 4 + 2]) < 0.02) return;
         w.set([this.ery[i], this.blood[i], blue, h], i * 4);
@@ -792,7 +800,8 @@ float bruiseGloss = 0.0;
         pale = max(pale, mid * exp(-age / 6.0));
     }
     float n1 = bruiseNoise(vBruiseRest * 160.0), n2 = bruiseNoise(vBruiseRest * 1400.0), n3 = bruiseNoise(vBruiseRest * 48.0);
-    float b = bt.y * clamp(1.0 + pat * 0.85, 0.3, 2.2) * (0.62 + 0.5 * n3 + 0.3 * (n1 - 0.5));
+    // The dermis full of blood is as dark as a bruise gets: blood under that does not show through it.
+    float b = 0.65 * (1.0 - exp(-bt.y / 0.65)) * clamp(1.0 + pat * 0.85, 0.3, 2.2) * (0.62 + 0.5 * n3 + 0.3 * (n1 - 0.5));
     // A thin edge shows only in places; pinpoint bleeds round a fresh one.
     b = max(0.0, b - 0.07 * (1.0 - n1));
     b += step(0.92, n2) * smoothstep(0.08, 0.2, bt.y) * (1.0 - smoothstep(0.3, 0.7, bt.y)) * 0.3 * (1.0 - smoothstep(0.2, 0.6, bt.z));

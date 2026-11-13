@@ -547,8 +547,13 @@ export class Dismember {
     }
 
     dispose() {
-        // (The pieces wear the person's own materials; the cut faces have one of their own.)
-        for (const cut of this.cuts) for (const [k, m] of cut.meshes.entries()) m.dispose(false, k >= 2);
+        // The pieces wear the person's own materials; the cut faces have one of their own, whose textures are in
+        // `_textures`. Its reflection is the room's probe, shared by all the wet things: disposing it with the material
+        // left every other material reading a dead probe's null matrix (the crash after K).
+        for (const cut of this.cuts) {
+            cut.meshes[2]?.material?.dispose();
+            for (const m of cut.meshes) m.dispose();
+        }
         for (const t of this._textures) t.dispose();
     }
 }

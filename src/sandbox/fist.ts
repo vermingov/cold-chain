@@ -33,8 +33,9 @@ export class Fist {
     declare t: number;
     declare at: BABYLON.Vector3;
     declare contact: number;
-    declare land: (() => boolean) | null;
-    declare driving: (() => void) | null;
+    declare speed: number;
+    declare land: ((speed: number, ahead: number) => boolean) | null;
+    declare aim: (() => number | null) | null;
 
     constructor(people, body: string, camera: BABYLON.Camera, cast?: (m: BABYLON.AbstractMesh) => void) {
         this.camera = camera;
@@ -48,22 +49,36 @@ export class Fist {
         this.t = -1;
         this.at = DOWN.clone();
         this.contact = -1;
-        this.land = this.driving = null;
+        this.speed = 0;
+        this.land = this.aim = null;
     }
 
-    // A punch at `target` (a point of the world in reach, or null for none). `driving` is told when the fist sets off
-    // toward it, `land` asked when the knuckles get there: true if something was there to stop them.
-    punch(target: BABYLON.Vector3 | null, { driving, land }: { driving?: () => void; land?: () => boolean } = {}) {
+    // A punch, thrown straight ahead of the eye. `aim` is asked as the fist sets off from beside the cheek: how far ahead
+    // of the eye what it is thrown at is (m), or null for nothing in reach; it goes there, or on to the end of the arm.
+    // (Asked then and not at the press, so that someone who staggered while it was drawn back is still where it lands.)
+    // `land` is asked when the knuckles get there, with how fast they are going and how far ahead of the eye they are:
+    // true if something was there to stop them.
+    punch({ aim, land }: { aim?: () => number | null; land?: (speed: number, ahead: number) => boolean } = {}) {
         const from = this.t >= 0 ? this.at.clone() : DOWN.clone();
-        const to = target ? V3.TransformCoordinates(target, this.camera.getWorldMatrix().clone().invert()) : MISS.clone();
         const up = 0.11 * Math.min(1, Math.max(0.35, V3.Distance(from, COCKED) / V3.Distance(DOWN, COCKED)));
-        // The mean of `drive` is three quarters of its most.
-        const go = Math.min(0.17, Math.max(0.06, V3.Distance(COCKED, to) / (SPEED * 0.75)));
-        this.keys = [{ at: from, t: 0, turn: 0, ease: smooth }, { at: COCKED, t: up, turn: 0, ease: smooth }, { at: to, t: up + go, turn: 1, ease: drive, arc: 0.05 }];
-        this.contact = up + go;
+        this.keys = [{ at: from, t: 0, turn: 0, ease: smooth }, { at: COCKED, t: up, turn: 0, ease: smooth }, { at: MISS, t: up + 1, turn: 1, ease: drive }];
+        this.contact = Infinity;
         this.t = 0;
-        this.driving = driving ?? null;
+        this.aim = aim ?? (() => null);
         this.land = land ?? (() => false);
+    }
+
+    // Set off from beside the cheek at what `aim` says. `drive` is fastest two thirds of the way and lands at its mean
+    // speed, three quarters of its most: an untrained arm going flat out lands at about 5 m/s, 670 N into a face
+    // behind 1.8 kg of fist and forearm giving at 9 kN/m (weapons.ts), inside the 500 to 850 N measured.
+    _drive() {
+        const ahead = this.aim();
+        this.aim = null;
+        const to = ahead === null ? MISS.clone() : new V3(0, 0, ahead), far = V3.Distance(COCKED, to);
+        const up = this.keys[1].t, go = Math.min(0.17, Math.max(0.06, far / (SPEED * 0.75)));
+        this.keys[2] = { at: to, t: up + go, turn: 1, ease: drive, arc: 0.05 };
+        this.contact = up + go;
+        this.speed = far / go;
     }
 
     // Whatever is under way, put away (another thing taken up).
@@ -76,9 +91,8 @@ export class Fist {
         if (this.t < 0) return;
         const was = this.t;
         this.t += dt;
-        const go = this.keys[1].t;
-        if (this.driving && was < go && this.t >= go) { this.driving(); this.driving = null; }
-        if (this.land && this.t >= this.contact) this._landed(this.land());
+        if (this.aim && was < this.keys[1].t && this.t >= this.keys[1].t) this._drive();
+        if (this.land && this.t >= this.contact) this._landed(this.land(this.speed, this.keys[2].at.z));
         const keys = this.keys, last = keys[keys.length - 1];
         if (this.t >= last.t) { this.stop(); return; }
         let k = 1;

@@ -14,7 +14,8 @@ const RESERVE = 10;             // seconds a brain stays awake with no blood rea
 const BRAIN_DEATH = 300;        // seconds of no blood to the brain before it is gone for good
 const COLLAPSE = 75;            // seconds a punctured lung takes to collapse
 
-export type Bleed = { name: string; rate: number; arterial: boolean; internal: boolean; clots: number; lost: number; spurts?: boolean; source?: any; flow?: number; jet?: number };
+export type Bleed = { name: string; rate: number; arterial: boolean; internal: boolean; clots: number; lost: number; spurts?: boolean; source?: any; flow?: number; jet?: number;
+    dressed?: number; dressing?: any };     // what a dressing over it leaves of its flow, and the dressing (dressing.ts)
 
 export class Vitals {
     declare full: number;
@@ -166,7 +167,7 @@ export class Vitals {
         const drains = this.beating ? 0 : 0.2 * Math.exp(-this.stopped / 300);
         for (const b of this.bleeds) {
             const push = Math.max(Math.pow(Math.max(0, this.map) / NORMAL.map, b.arterial ? 1 : 0.6), b.internal ? 0 : drains);
-            b.flow = b.rate * push;
+            b.flow = b.rate * push * (b.dressed ?? 1);
             const lost = b.flow * dt;
             b.lost += lost;
             out += lost;

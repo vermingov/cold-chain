@@ -204,6 +204,8 @@ export class Behaviour {
     hit(seg, impulse: BABYLON.Vector3, point: BABYLON.Vector3, jolt: number) {
         const rd = this.rd;
         rd.push(seg.name, impulse, point);
+        // A piece cut off is not felt: the push is all there is to it.
+        if (rd.cutOff(seg)) return;
         const into = seg.node.computeWorldMatrix(true).clone().invert();
         this.wound = { seg, local: V3.TransformCoordinates(point, into), out: V3.TransformNormal(impulse.normalizeToNew().negateInPlace(), into), t: 0 };
         const k = Math.min(1, impulse.length() / 16) * (0.4 + jolt);
@@ -549,6 +551,15 @@ export class Behaviour {
         this.favour = null;
         this.hunch = 0;
         if (!w) return;
+        // A wound on a piece since cut off is tended where the piece was cut from: the stump, held at its end (the hand
+        // went after the arm lying on the floor).
+        while (this.rd.cutOff(w.seg)) {
+            let root = w.seg;
+            while (!root.severed) root = root.parent;
+            w.seg = root.parent;
+            w.local = root.head.subtract(root.parent.head);
+            w.out = w.local.normalizeToNew();
+        }
         w.t += dt;
         // Quick to it (a third of a second), as much as it hurts, and not at all once the mind is going.
         // (A blow to the head that dazes hurts little, but the hands still go to the face.)

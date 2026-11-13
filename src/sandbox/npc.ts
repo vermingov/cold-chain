@@ -74,6 +74,7 @@ export class Npc {
     declare _said: { until: number; pain: number; next: number; awake: boolean };
     declare dismember: Dismember;
     declare viscera: Viscera;
+    declare dressings: { dispose(): void }[];
 
     // `world` is the sandbox: { scene, blood, sound, frame, camera, shadows }.
     static async make(world, people, body, { at, yaw = 0, bit = 4, mass = 75, name = body } = {} as any) {
@@ -354,6 +355,8 @@ export class Npc {
             const flow = (b.flow ?? 0) * (b.internal ? 0.08 : 1);
             if (flow < 1e-6) continue;
             const ml = flow * dt * 1000;
+            // Under a dressing it goes into the gauze, and out from under it once that is full (dressing.ts).
+            if (b.dressing) { b.dressing.take(b, ml); continue; }
             if (b.spurts && !b.internal && v.beating) {
                 // The pressure in the artery now: up fast as the heart squeezes, falling away till the next beat. What
                 // gets past the tissue round the hole throws the blood out as fast as Bernoulli says, and it surges with it.
@@ -514,6 +517,7 @@ export class Npc {
         this.bruise.dispose();
         this.film.dispose();
         this.soak.dispose();
+        for (const d of [...(this.dressings ?? [])]) d.dispose();
         this.clothes.dispose();
         this.person.dispose();
     }

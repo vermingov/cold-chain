@@ -30,7 +30,7 @@ const _q = new Q(), _q2 = new Q(), _local = new Q(), _v = new V3(), _w = new V3(
 export class Muscles {
     declare ragdoll: Ragdoll;
     declare joints: { seg: any; part: string; bones: any[][]; target: number[]; q: BABYLON.Quaternion }[];
-    declare fingers: { bone: BABYLON.Bone; turns: any[] }[];
+    declare fingers: { bone: BABYLON.Bone; turns: any[]; hand: any }[];
     declare _curl: string;
 
     constructor(ragdoll: Ragdoll) {
@@ -51,7 +51,7 @@ export class Muscles {
             .map((seg) => ({ seg, part: PART(seg.name), bones: seg.chain.map((n) => turns.get(n) ?? []), target: [0, 0, 0], q: new Q() }));
         // The fingers have no bodies: they are posed straight from the pose, to curl round nothing or open to brace.
         this.fingers = [...turns.entries()].filter(([, list]) => list.some((t) => t.fingers))
-            .map(([name, list]) => ({ bone: person.byName[name].bone, turns: list }));
+            .map(([name, list]) => ({ bone: person.byName[name].bone, turns: list, hand: ragdoll.byName.get('hand' + name.slice(-1)) }));
         this._curl = '';
     }
 
@@ -84,7 +84,8 @@ export class Muscles {
         const curl = `${pose.curlL | 0},${pose.curlR | 0},${pose.thumbL | 0},${pose.thumbR | 0}`;
         if (curl !== this._curl) {
             this._curl = curl;
-            for (const f of this.fingers) f.bone.setRotationQuaternion(this._turn([f.turns], pose, _q2).clone(), BABYLON.Space.LOCAL);
+            // (A hand cut off keeps the fingers as they were: nothing curls them any more.)
+            for (const f of this.fingers) if (!rd.cutOff(f.hand)) f.bone.setRotationQuaternion(this._turn([f.turns], pose, _q2).clone(), BABYLON.Space.LOCAL);
         }
     }
 

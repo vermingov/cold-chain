@@ -11,6 +11,7 @@
 | ak.glb | High-poly AK-47 | lamoot (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/high-poly-ak-47 |
 | m4.glb | M4A1 Assault Rifle | nisu (OpenGameArt) | CC0 1.0 | https://opengameart.org/content/m4a1-assault-rifle |
 | grenade.glb | built in code (tools/arms/m67.mjs) | Cold Chain | — | textures: https://ambientcg.com/view?id=PaintedMetal002 and https://ambientcg.com/view?id=Metal038 (ambientCG, CC0 1.0) |
+| (bandage, medkit) | built in code (src/sandbox/dressing.ts buildKit) | Cold Chain | — | no outside assets; textures drawn in code |
 
 CC BY 4.0 requires attribution: "Double Barrel Shotgun" by ExodeCode (https://exode.itch.io/double-barrel-shotgun), licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Changed: converted from FBX to glTF, AO/roughness/metalness packed into one texture, textures downscaled to 1024 px WebP.
 

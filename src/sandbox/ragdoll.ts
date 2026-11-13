@@ -460,6 +460,8 @@ export class Ragdoll {
             this._cuts = this.segments.filter((seg) => seg.severed).map((seg) => this._cuts.find((c) => c.seg === seg) ?? this._cut(seg));
             this.attached = this.segments.filter((seg) => !this.cutOff(seg));
             this.mass = this.attached.reduce((sum, seg) => sum + seg.mass, 0);
+            this._toned = false;
+            this.setTone(this.tone);
         }
         for (const c of this._cuts) {
             if (c.clear) continue;
@@ -484,7 +486,9 @@ export class Ragdoll {
         return false;
     }
 
-    // How much the joints resist being moved, muscles or no: 'alive', 'out' (unconscious) or 'dead', or N m.
+    // How much the joints resist being moved, muscles or no: 'alive', 'out' (unconscious) or 'dead', or N m. A piece cut
+    // off has no tone to keep: its joints are a dead body's whatever the person's are (with the living tone a severed
+    // leg landed with its ankle held as it was, 5 degrees of give against 20 dead).
     setTone(state) {
         const tone = typeof state === 'number' ? state : TONE[state];
         if (Math.abs(tone - this.tone) < 0.01 && this._toned) return;
@@ -492,7 +496,8 @@ export class Ragdoll {
         this._toned = true;
         for (const seg of this.segments) {
             if (!seg.constraint || seg.locked) continue;
-            for (const axis of ANGULAR) seg.constraint.setAxisFriction(axis, this.tone * seg.mass / 6);
+            const k = this.cutOff(seg) ? TONE.dead : this.tone;
+            for (const axis of ANGULAR) seg.constraint.setAxisFriction(axis, k * seg.mass / 6);
         }
     }
     declare _toned: boolean;

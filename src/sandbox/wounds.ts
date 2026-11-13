@@ -16,7 +16,7 @@
 
 import * as BABYLON from '@babylonjs/core';
 import { edge, charge } from './dismember.ts';
-import { blown } from './viscera.ts';
+import { blown, bled } from './viscera.ts';
 const V3 = BABYLON.Vector3;
 
 export type Missile = {
@@ -110,7 +110,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
             fragments = Math.min(2, fragments + (broke.pieces ? 0.25 * broke.pieces : 0.2));
             continue;
         }
-        organ(npc, s.part, length, m, fragments);
+        organ(npc, s.part, length, m, fragments, origin.add(dir.scale(Math.max(t, s.enter))));
         if (!spend(Math.min(s.leave, limit), m.soft * (kind === 'liver' || kind === 'brain' ? 0.8 : 1))) break;
         if (t >= limit) { stopAt = limit; break; }
     }
@@ -138,7 +138,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         if (k === 0 || h.t >= stopAt || m.slash) return;
         const out = k % 2 === 1;
         npc.wound(h, out ? 'out' : 'in', m.calibre * (out ? 1.6 + fragments : 1));
-        if (out) { exitAt = h.point; exitHit = h; }
+        if (out) { exitAt = h.point; exitHit = h; h.open = true; }    // (open: a hole a dressing can go on, dressing.ts)
     });
     if (exited) for (const h of surface) if (h.kind === 'cloth' && h.t > skins[skins.length - 1].t) {
         npc.wound(h, 'out', m.calibre * 2);
@@ -163,15 +163,17 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     // A heavy edge may go right through a limb once the swing is through (npc.slash); a charge that is still one mass
     // (a shotgun's at contact range) may tear one off now.
     if (m.slash) edge(npc, m.energy, enter.point, dir);
-    else if (m.channel >= 0.015 && !m.blade) charge(npc, m.energy - (exited ? energy : 0), enter.point, dir) || blown(npc, enter, m.energy - (exited ? energy : 0));
+    else if (m.channel >= 0.015 && !m.blade) charge(npc, m.energy - (exited ? energy : 0), enter.point, dir) || blown(npc, enter, m.energy - (exited ? energy : 0), m.calibre);
     return { stopped: !exited, at: exited ? exitAt : origin.add(dir.scale(Math.min(stopAt, far))), energy: exited ? energy : 0, hit: true, enter };
 }
 
-function organ(npc, part, length, m, fragments) {
+// `at`: the world point where it went into the organ, where blood lies on it after.
+function organ(npc, part, length, m, fragments, at: BABYLON.Vector3) {
     const v = npc.vitals, kind = part.kind;
     const size = THROUGH[kind] ?? 0.08;
     const wreck = Math.min(1, (length / size) * (m.channel / 0.006) * 0.4 * fragments);
     npc.insides.hurt(part.name);
+    bled(npc, part, at, m.channel);
     const name = cap(part.name);
     switch (kind) {
         case 'heart':
@@ -248,7 +250,7 @@ function shards(npc, at: BABYLON.Vector3, dir: BABYLON.Vector3, count: number, e
         const reach = Math.min(0.12, piece.energy / piece.soft / 100);
         if (reach < 0.01) continue;
         const { spans, vessels } = npc.insides.trace(at, d, reach, piece.channel);
-        for (const s of spans) if (!/bone|skull|cartilage/.test(s.part.kind)) organ(npc, s.part, Math.min(s.leave, reach) - s.enter, piece, 1);
+        for (const s of spans) if (!/bone|skull|cartilage/.test(s.part.kind)) organ(npc, s.part, Math.min(s.leave, reach) - s.enter, piece, 1, at.add(d.scale(s.enter)));
         for (const hit of vessels) vessel(npc, hit, piece);
     }
     if (count > 2) npc.vitals.injure('Bone shattered into the flesh around it', 4);

@@ -27,19 +27,26 @@ export async function openSandbox(engine, canvas, hud) {
     scene.clearColor = new BABYLON.Color4(0.02, 0.02, 0.022, 1);
     const havok = await HavokPhysics();
     scene.enablePhysics(new V3(0, -9.81, 0), new BABYLON.HavokPlugin(true, havok));
-    // Never a step longer than a hundred and twentieth of a second: a frame is cut into as many as that takes. One long
-    // step (up to a tenth of a second, on a hitch) tore the people's joints apart and sank them into the floor, and at
-    // a sixtieth a standing body still sagged and sprang on its legs by four centimetres.
+    // Every step a hundred and twentieth of a second: as many a frame as its time holds, to the nearest, and what is
+    // over or short carried to the next. One long step (up to a tenth of a second, on a hitch) tore the people's joints
+    // apart and sank them into the floor, and at a sixtieth a standing body still sagged and sprang on its legs by four
+    // centimetres. Nor may the length change from frame to frame: a frame cut into steps of its own length (16.6 ms in
+    // two of 8.3, 17 ms in three of 5.7) moved where Havok's joints and the floor settle a standing body each time, and
+    // the people bobbed on their legs at the frame rate's wander (the pelvis over 1.2 to 1.6 cm, a millimetre a frame,
+    // at frames of 12 to 22 ms; 3 to 7 mm of breathing and sway with every step the same length).
     // Before each, the people push on what they push on (behaviour.ts).
     // A frame longer than a thirtieth runs the bodies slower than the clock: each step costs a millisecond or two, and
     // stepping through all of a slow frame made the next one slower still (9 steps a frame after a grenade).
     const physics = scene.getPhysicsEngine() as BABYLON.PhysicsEngine;
     const step = physics._step.bind(physics);
+    let owed = 0;
     physics._step = (delta) => {
-        const pieces = Math.ceil(Math.min(delta, 1 / 30) * 120 - 1e-6), piece = Math.min(delta, 1 / 30) / pieces;
-        for (let i = 0; i < pieces; i++) {
-            for (const npc of world.npcs) npc.behaviour.beforeStep(piece);
-            step(piece);
+        owed = Math.min(owed + delta, 1 / 30);
+        const steps = Math.round(owed * 120);
+        owed -= steps / 120;
+        for (let i = 0; i < steps; i++) {
+            for (const npc of world.npcs) npc.behaviour.beforeStep(1 / 120);
+            step(1 / 120);
         }
     };
 
@@ -103,6 +110,7 @@ export async function openSandbox(engine, canvas, hud) {
             for (const npc of world.npcs) see(npc, seeing);
         }
         if (e.code === 'KeyK') {
+            weapons._letGo();  // a hand on someone or their bowel would pull on a disposed body next frame
             for (const npc of world.npcs) npc.dispose();
             world.npcs.length = 0;
             lastHurt = null;

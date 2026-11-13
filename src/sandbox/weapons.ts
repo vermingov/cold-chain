@@ -15,6 +15,7 @@ import { rayToSegment } from './anatomy.ts';
 import { blast } from './dismember.ts';
 import * as viscera from './viscera.ts';
 import { Fist } from './fist.ts';
+import { Medic, buildKit } from './dressing.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const FRAGMENTS = 1000;      // an M67's body breaks into roughly this many that can wound
 
@@ -31,6 +32,8 @@ const HELD = {
     ak: { at: [0.17, -0.2, 0.5], turn: [0, 0, 0] },
     m4: { at: [0.16, -0.19, 0.42], turn: [0, 0, 0] },
     grenade: { at: [0.2, -0.2, 0.46], turn: [0, 0, 0] },
+    bandage: { at: [0.17, -0.2, 0.4], turn: [0.3, 0.4, 0] },
+    medkit: { at: [0.2, -0.27, 0.45], turn: [0.35, 0.2, 0] },
 };
 
 export const ARMS = [
@@ -54,6 +57,9 @@ export const ARMS = [
     { key: 'grenade', name: 'M67 grenade', kind: 'grenade' },
     { key: 'hands', name: 'Hands', kind: 'grab' },
     { key: 'throw', name: 'Throw things', kind: 'throw' },
+    // Held on a wound (dressing.ts): the bandage dresses the one looked at, the medkit every one the person has.
+    { key: 'bandage', name: 'Bandage', kind: 'dress' },
+    { key: 'medkit', name: 'Medkit', kind: 'dress' },
 ];
 
 // Things to throw: the props from Poly Haven already in the game, and what each weighs.
@@ -88,6 +94,7 @@ export class Weapons {
     declare grenades: any[];
     declare flashAt: number;
     declare fist: Fist | null;
+    declare medic: Medic;
 
     constructor(world) {
         this.world = world;
@@ -99,6 +106,7 @@ export class Weapons {
         this.arsenal = null;
         this.grenades = [];
         this.fist = null;
+        this.medic = new Medic(this);
         const { scene, camera } = world;
         this.hand = new BABYLON.TransformNode('hand', scene);
         this.hand.parent = camera;
@@ -183,6 +191,12 @@ export class Weapons {
         }));
         // The arm a punch is thrown with: a working man's, in the sleeve of his jacket.
         if (this.world.people) this.fist = new Fist(this.world.people, 'sexton', this.world.camera, (m) => this.world.shadows?.addShadowCaster(m));
+        for (const [key, node] of Object.entries(buildKit(this.world.scene))) {
+            node.parent = this.hand;
+            for (const mesh of node.getChildMeshes()) { mesh.isPickable = false; mesh.receiveShadows = true; }
+            node.setEnabled(false);
+            this.models.set(key, node);
+        }
         this.select(this.slot);
     }
 
@@ -477,22 +491,27 @@ export class Weapons {
             const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
             const person = this._person(eye, ahead, reach + 0.08);
             const hit = person?.npc.surface(eye, ahead, reach + 0.08).find((h) => h.kind === 'skin' || h.kind === 'cloth');
-            return hit ? { npc: person.npc, hit, ahead } : null;
+            return hit ? { npc: person.npc, hit, ahead, far: V3.Distance(eye, hit.point) } : null;
         };
-        const aim = look();
-        const land = () => {
+        const aim = () => {
+            this.world.sound?.shot('swing', { gain: 0.35, rate: 1.4 });
             const at = look();
-            if (!at) return false;
-            // A fist and the arm behind it give: about 9 kN/m, which is what makes 1.8 kg at 7 m/s land with the 500 to
-            // 850 N an untrained punch is measured at (dev/research/blunt-trauma.md), not with the force of a brick.
-            blow(at.npc, at.hit.point, at.ahead, 1.8, 7, 9000);
+            return at && at.far <= reach ? at.far : null;
+        };
+        // Whatever is in front of the eye where the knuckles are when they get there (a little short: the knuckles went into it).
+        const land = (speed: number, ahead: number) => {
+            const at = look();
+            if (!at || at.far > ahead + 0.03 || at.far < ahead - 0.08) return false;
+            // A fist and the arm behind it give: about 9 kN/m, which is what makes 1.8 kg at the 5 m/s it lands at
+            // (fist.ts) land with the 500 to 850 N an untrained punch is measured at (dev/research/blunt-trauma.md), not
+            // with the force of a brick.
+            blow(at.npc, at.hit.point, at.ahead, 1.8, speed, 9000);
             this.world.sound?.shot('blunt', { at: at.hit.point.asArray(), gain: 0.6 });
             return true;
         };
-        const driving = () => this.world.sound?.shot('swing', { gain: 0.35, rate: 1.4 });
-        if (this.fist) { this.fist.punch(aim && V3.Distance(camera.globalPosition, aim.hit.point) <= reach ? aim.hit.point : null, { driving, land }); return; }
-        driving();
-        if (aim) setTimeout(land, 110);
+        if (this.fist) { this.fist.punch({ aim, land }); return; }
+        const ahead = aim();
+        if (ahead !== null) setTimeout(() => land(5.25, ahead), 110);
     }
 
     _hold(dt) {
@@ -606,7 +625,7 @@ export class Weapons {
         const { scene, sound, player } = this.world;
         const at = g.ball.position.clone();
         g.agg.dispose();
-        g.node.dispose(false, true);
+        g.node.dispose();  // its clones wear the grenade model's own materials, still drawn on the wall and in the hand
         g.ball.dispose();
         sound?.shot('explosion', { at: at.asArray(), gain: 1 });
         this.flash.position.copyFrom(at.add(new V3(0, 0.3, 0)));
@@ -694,6 +713,7 @@ export class Weapons {
         }
         this._hold(dt);
         this.fist?.update(dt);
+        this.medic.update(dt);
         // The flash goes as fast as it came.
         // By the clock, not by frames: a frame held up by a limb coming off must not keep a flash on screen.
         if (this.flash.intensity > 0) {
@@ -722,6 +742,15 @@ export class Weapons {
                 pos.x -= p * 0.35;
                 pos.y += arc * 0.1;
             }
+        }
+        // A dressing being put on: the roll brought in to the wound and wound round and round it; the kit held low, open.
+        const dressing = this.medic.working;
+        if (dressing !== null) {
+            const s = Math.min(1, dressing * 8), t = this.medic.clock * 6;
+            if (this.arm.key === 'bandage') {
+                pos.addInPlace(new V3(-0.08 + Math.cos(t) * 0.05, 0.05 + Math.sin(t) * 0.04, 0.2).scale(s));
+                rot.x += t * s;
+            } else { pos.y -= 0.1 * s; pos.z += 0.05 * s; rot.x += 0.7 * s; rot.z += Math.sin(t) * 0.05 * s; }
         }
         this.hand.position.copyFrom(pos);
         this.hand.rotation.copyFrom(rot);
