@@ -94,6 +94,7 @@ export class Sound {
     declare ring: ConvolverNode;
     declare wet: GainNode;
     declare rooms: Map<string, AudioBuffer>;
+    declare following: { panner: PannerNode; where: () => number[]; until: number }[];
 
     constructor() {
         this.context = new AudioContext({ latencyHint: 'interactive' });
@@ -116,6 +117,7 @@ export class Sound {
         this.room('none');
         this.takes = new Map();         // name -> [{ buffer, bursts }]
         this.streams = [];
+        this.following = [];
         // A page may not sound until somebody has touched it.
         for (const first of ['pointerdown', 'keydown']) window.addEventListener(first, () => this.context.resume(), { once: true });
     }
@@ -197,14 +199,18 @@ export class Sound {
     // at `rate` times its own speed (a little either way of 1 keeps two the
     // same from sounding the same).
     // With `most` (seconds) it is one strike instead (`hits`), cut off at most that long after it: a footstep.
-    // With `at` ([x, y, z]) it is heard from there.
-    shot(name, { gain = 1, rate = 1, most = 0, at = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number } {
+    // With `at` ([x, y, z]) it is heard from there; with `follow` (a function giving [x, y, z]) from wherever that is
+    // each frame until it ends: a voice from a head that falls or is dragged, not from where it was when it began.
+    shot(name, { gain = 1, rate = 1, most = 0, at = null, follow = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number } {
+        at = follow ? follow() : at;
         const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)], into = at ? this.place(at) : this.out;
+        const moves = (length, r) => follow && this.following.push({ panner: into as PannerNode, where: follow, until: this.context.currentTime + length / r + 0.05 });
         if (most && take.hits.length) {
             const which = Math.floor(Math.random() * take.hits.length), from = Math.max(0, take.hits[which] - BURST.lead);
             const next = which + 1 < take.hits.length ? take.hits[which + 1] - BURST.lead : take.buffer.duration;
             const r = rate * (0.96 + Math.random() * 0.08);
             this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, r, into, !!at);
+            moves(Math.min(most, next - from), r);
             return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: Math.min(most, next - from) };
         }
         const which = Math.floor(Math.random() * take.bursts.length), [from, to] = take.bursts[which];
@@ -212,6 +218,7 @@ export class Sound {
         const until = Math.min(to + BURST.rings, which + 1 < take.bursts.length ? take.bursts[which + 1][0] : take.buffer.duration);
         const r = rate * (0.96 + Math.random() * 0.08);
         this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, !!at);
+        moves(until - from, r);
         // What is playing, for whoever wants to follow it (a face mouthing its own voice).
         return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from };
     }
@@ -226,6 +233,15 @@ export class Sound {
     // Once a frame: every stream lines up what it will be playing next.
     update() {
         for (const stream of this.streams) stream._ahead();
+        const now = this.context.currentTime;
+        this.following = this.following.filter((f) => f.until > now);
+        for (const { panner, where } of this.following) {
+            const [x, y, z] = where();
+            if (!Number.isFinite(x + y + z)) continue;
+            panner.positionX.setTargetAtTime(x, now, 0.03);
+            panner.positionY.setTargetAtTime(y, now, 0.03);
+            panner.positionZ.setTargetAtTime(-z, now, 0.03);
+        }
     }
 
     // A length of a recording, from `from` for `length` seconds, starting

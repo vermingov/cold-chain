@@ -485,7 +485,7 @@ export class Npc {
         const now = performance.now() / 1000;
         if (!over && now < this._said.until) return;
         this._said.until = now + (kind === 'yell' ? 0.8 : kind === 'scream' || kind === 'cry' ? 3 : 2.2);
-        const playing = this.world.sound?.shot(`${kind}-${this.voice}`, { at: this.ragdoll.byName.get('head').node.position.asArray(), gain });
+        const playing = this.world.sound?.shot(`${kind}-${this.voice}`, { follow: () => this.ragdoll.byName.get('head').node.position.asArray(), gain });
         if (playing) this.face.speak(playing, this.world.sound.now);
         this._crying = kind === 'cry' || (this._crying && kind !== 'scream' && kind !== 'yell');
     }

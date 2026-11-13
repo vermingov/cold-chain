@@ -104,7 +104,9 @@ export class Behaviour {
     declare wasOut: boolean;
     declare settle: number;
     declare flinch: Record<string, number>;
-    declare wound: { seg: any; local: BABYLON.Vector3; out: BABYLON.Vector3; t: number } | null;
+    declare wound: { seg: any; local: BABYLON.Vector3; out: BABYLON.Vector3; t: number; size: number; hands?: string[] } | null;
+    declare hurt: Record<string, boolean>;
+    declare _grips: Record<string, { to: BABYLON.Vector3; best: number; since: number; hold: BABYLON.Vector3 | null; t: number }>;
     declare favour: { side: string; how: number } | null;
     declare hunch: number;
     declare _arms: Record<string, any>;
@@ -146,6 +148,8 @@ export class Behaviour {
         this.settle = 0;
         this.flinch = {};
         this.wound = null;
+        this.hurt = { L: false, R: false };
+        this._grips = {};
         this.favour = null;
         this.hunch = 0;
         this.com = rd.com(new V3());
@@ -213,10 +217,14 @@ export class Behaviour {
         // A piece cut off is not felt: the push is all there is to it.
         if (rd.cutOff(seg)) return;
         const into = seg.node.computeWorldMatrix(true).clone().invert();
-        this.wound = { seg, local: V3.TransformCoordinates(point, into), out: V3.TransformNormal(impulse.normalizeToNew().negateInPlace(), into), t: 0 };
+        // (Pellets or fragments landing together on one part are one wound, as big as all of them.)
+        const was = this.wound, size = impulse.length() + (was && was.seg === seg && was.t < 0.3 ? was.size : 0);
+        this.wound = { seg, local: V3.TransformCoordinates(point, into), out: V3.TransformNormal(impulse.normalizeToNew().negateInPlace(), into), t: 0, size };
         const k = Math.min(1, impulse.length() / 16) * (0.4 + jolt);
-        if (this.state !== 'stand') return;
         const hard = Math.min(1, impulse.length() / 12), base = seg.name.replace(/2?[LR]$/, '');
+        // An arm shot, cut or struck hard is not used to hold anything with.
+        if (hard > 0.15 && /^(upperarm|forearm|hand)$/.test(base)) this.hurt[seg.name.slice(-1)] = true;
+        if (this.state !== 'stand') return;
         if (hard > 0.15) {
             const kind = base === 'belly' || base === 'chest' ? 'winded' : base === 'head' ? 'guard' : /^(thigh|shin|foot)$/.test(base) ? 'leg' : '';
             const length = { winded: 1.5 + 2.5 * hard, guard: 0.8 + 1.5 * hard, leg: 0.5 + 0.6 * hard }[kind];
@@ -354,8 +362,9 @@ export class Behaviour {
         pose.headTilt = (pose.headTilt || 0) + daze * 8 * Math.sin(this.clock * 0.6 + 1);
         this._look(pose, v.conscious * 0.8);
         // Arms just clear of the belly and the hands of the thighs: hanging straight they are pulled into them and rattle.
-        pose.shoulderAbductL += 7;
-        pose.shoulderAbductR += 7;
+        // (At 7 degrees the upper arms, which meet the belly now, lay on it and shook the hands.)
+        pose.shoulderAbductL += 10;
+        pose.shoulderAbductR += 10;
 
         // Balance. Where the body's weight would come to rest if it stopped on its own (the capture point) against the
         // ground under the feet: inside, the feet keep the body upright; outside, a step.
@@ -550,11 +559,11 @@ export class Behaviour {
     }
 
     // Where it hurts, tended for as long as it hurts (the last wound, hit()): shot or cut in an arm, the other hand holds
-    // it and the arm is kept in against the body; in a leg, the weight goes onto the other one and the knee eases; in
-    // the belly, both hands go over it and they bend over it; in the chest, a hand over it; in the face or head, both
-    // hands to the face. All of it is muscle: the hands are pulled to the place by the arms (_hold) and the rest is the
-    // pose's, so a blow still moves them as it would. Nobody too far gone to mind does any of it. `lying`: on the floor,
-    // the hands only.
+    // it and the arm is kept in against the body; in a leg, the weight goes onto the other one and the knee eases, a hand
+    // on a thigh; in the trunk, the neck or the head, the hand that gets there best, both for a big wound, and they bend
+    // over it. Never with a hand whose arm is hurt, broken or cut off. All of it is muscle: the hands are pulled to the
+    // place by the arms (_hold) and the rest is the pose's, so a blow still moves them as it would. Nobody too far gone
+    // to mind does any of it. `lying`: on the floor, the hands only.
     _tend(pose, dt, lying = false) {
         const w = this.wound, v = this.npc.vitals;
         this.favour = null;
@@ -568,6 +577,7 @@ export class Behaviour {
             w.seg = root.parent;
             w.local = root.head.subtract(root.parent.head);
             w.out = w.local.normalizeToNew();
+            w.hands = undefined;
         }
         w.t += dt;
         // Quick to it (a third of a second), as much as it hurts, and not at all once the mind is going.
@@ -575,90 +585,146 @@ export class Behaviour {
         const hurt = Math.max(v.pain, w.seg.name === 'head' ? (v.daze ?? 0) : 0);
         const e = smooth(w.t / 0.35) * clamp((hurt - 0.05) / 0.2) * clamp((this.will - 0.3) / 0.3);
         if (e < 0.02) return;
-        const seg = w.seg, rd = this.rd, m = seg.node.computeWorldMatrix(true);
-        const at = V3.TransformCoordinates(w.local, m), out = V3.TransformNormal(w.out, m);
+        const seg = w.seg, m = seg.node.computeWorldMatrix(true);
+        const at = V3.TransformCoordinates(w.local, m), out = V3.TransformNormal(w.out, m).normalize();
         // Laid on it: just off the skin over it, where the shape inside the flesh stops the hand.
-        const on = at.addInPlace(out.scaleInPlace(0.02));
+        const on = at.addInPlace(out.scale(0.02));
         const name = seg.name, limb = /[LR]$/.test(name);
-        // A wound in the trunk is on the side its place is: +x is the body's right.
+        // The side a limb is on is its name's (L the person's own left, at -x in their frame, as the hands' and the pose's
+        // L); a wound in the trunk is on the side its place is: +x is the body's right.
         const side = limb ? name.slice(-1) : w.local.x > 0 ? 'R' : 'L', other = side === 'L' ? 'R' : 'L';
         const more = (changes) => { if (!lying) for (const [k, a] of Object.entries(changes)) pose[k] = (pose[k] || 0) + (a as number) * e; };
         if (/^(upperarm|forearm|hand)/.test(name)) {
-            this._hold(other, on, e, pose);
+            if (this._free(other)) this._hold(other, on, out, e, pose);
             // The hurt arm held against the belly, the forearm across it (turned in at the shoulder: positive is in for the
             // right arm), where the other hand can hold it.
             more({ ['elbow' + side]: 85, ['shoulderFlex' + side]: 18, ['shoulderTwist' + side]: side === 'R' ? 45 : -45, ['shoulderAbduct' + side]: -6,
                 ['curl' + side]: 35, spineFlex: 8, neckFlex: 14 });
         } else if (/^(thigh|shin|foot)/.test(name)) {
-            // A hand to a thigh, which it reaches standing; lower down only lying, curled up to it.
-            if (lying || name.startsWith('thigh')) this._hold(side, on, e, pose);
+            // A hand to a thigh, which it reaches standing (the one on its side, or the other if that one cannot); lower
+            // down only lying, curled up to it.
+            const by = this._free(side) ? side : this._free(other) ? other : null;
+            if (by && (lying || name.startsWith('thigh'))) this._hold(by, on, out, e, pose);
             this.strength['leg' + side] *= 1 - 0.45 * e;
             this.favour = { side: other, how: e };
             more({ ['knee' + side]: 16, ['hipFlex' + side]: 8, ['ankle' + side]: 6, spineFlex: 8 });
-        } else if (name === 'head') {
-            // Both hands to the face, the head down into them.
-            const head = rd.byName.get('head'), face = rd.worldPoint(head, head.centre, new V3());
-            const ahead = this._front(), right = V3.Cross(V3.Up(), ahead).normalize();
-            face.addInPlace(ahead.scale(0.1));
-            this._hold('L', face.subtract(right.scale(0.045)), e, pose);
-            this._hold('R', face.add(right.scale(0.045)), e, pose);
-            this.hunch = 10 * e;
-            more({ spineFlex: 10, neckFlex: 22 });
         } else {
-            // The belly: one hand on it and the other over that one, bent over it; the chest: a hand over it.
-            this._hold(side, on, e, pose);
-            const belly = name !== 'chest';
-            if (belly) this._hold(other, on.add(V3.Up().scale(0.05)), e * 0.8, pose);
-            this.hunch = (belly ? 26 : 12) * e;
-            more({ spineFlex: belly ? 26 : 12, neckFlex: 10, kneeL: belly ? 8 : 0, kneeR: belly ? 8 : 0 });
+            // The trunk, the neck, the face or the scalp: the free hand that gets nearest it (the arm's own reach worked out
+            // round the body, _armTo), and for a big wound (a shotgun's, a rifle's way out) the other over it.
+            if (!w.hands || w.hands.some((k) => !this._free(k))) {
+                const free = ['L', 'R'].filter((k) => this._free(k));
+                const miss = (k) => this._armTo(k, on).miss + (k === side ? 0 : 0.02);
+                free.sort((a, b) => miss(a) - miss(b));
+                w.hands = free.slice(0, w.size > 6 ? 2 : 1);
+            }
+            const [first, second] = w.hands;
+            if (first) this._hold(first, on, out, e, pose);
+            if (second) this._hold(second, on.add(name === 'head' ? out.scale(0.025) : this._up().scale(0.05)), out, e * 0.8, pose);
+            if (name === 'head') {
+                // The head down into the hands.
+                this.hunch = 10 * e;
+                more({ spineFlex: 10, neckFlex: 22 });
+            } else {
+                const belly = name !== 'chest';
+                this.hunch = (belly ? 26 : 12) * e;
+                more({ spineFlex: belly ? 26 : 12, neckFlex: 10, kneeL: belly ? 8 : 0, kneeR: belly ? 8 : 0 });
+            }
         }
     }
 
-    // Hand `side` put on `at` (world): the arm's joints posed to reach it (_armTo), blended in by `how` (0 to 1), and the
-    // last of the way, and the press on it, by a pull of the hand itself, which its arm pays for at the chest.
-    _hold(side, at: BABYLON.Vector3, how, pose) {
+    // Which way is up the trunk.
+    _up() { return new V3(0, 1, 0).applyRotationQuaternion(this.rd.byName.get('chest').node.rotationQuaternion); }
+
+    // Whether hand `side` can hold anything: an arm with strength in it, not hurt (hit()), broken above the hand or cut off.
+    _free(side) {
         const rd = this.rd, hand = rd.byName.get('hand' + side);
-        if (this.strength['arm' + side] < 0.05 || rd.loose(hand) || how <= 0.05) return;
+        return this.strength['arm' + side] >= 0.05 && !this.hurt[side] && !rd.loose(hand) && !rd.cutOff(hand);
+    }
+
+    // Hand `side` put on `at` (world, just off the skin, which faces `out`): the arm's joints posed to reach it (_armTo),
+    // blended in by `how` (0 to 1), and the last of the way, and the press on it, by a pull of the hand itself, which its
+    // arm pays for at the chest. Where the arm cannot get to it without going through the body, the hand goes as near as
+    // it can. On it, it only presses; held up on the way (the other arm, the body), it stays where it got to and stops
+    // pulling, and tries again a little later: a hand pulled on through the body fought its shape and shook.
+    _hold(side, at: BABYLON.Vector3, out: BABYLON.Vector3, how, pose) {
+        const rd = this.rd, hand = rd.byName.get('hand' + side);
+        if (!this._free(side) || how <= 0.05) return;
         // A reach starts from the arm out in front, bent: from where it hangs, the nearest way to a place across the
         // body is through it.
         if (how < 0.06 && this._arms?.[side]) this._arms[side].x = [-40, 10, 0, 80];
+        // Not into anything else of the body (a wound on an arm held in against the side): out over it until clear.
+        const mine = (s) => /^(upperarm|forearm|hand)/.test(s.name) && s.name.endsWith(side);
+        for (let k = 0; k < 3 && rd.attached.some((s) => !mine(s) && s !== this.wound?.seg && rd.outside(s, at) < 0.01); k++) at = at.add(out.scale(0.02));
+        const now = rd.worldPoint(hand, hand.centre, new V3());
+        let g = this._grips[side];
+        if (!g || V3.Distance(g.to, at) > 0.05) g = this._grips[side] = { to: at.clone(), best: Infinity, since: this.clock, hold: null, t: this.clock };
+        const reach = this._armTo(side, g.hold ?? at), to = g.hold ?? (reach.miss > 0.03 ? reach.hand : at);
+        const d = V3.Distance(now, to);
+        const touching = d < 0.04;
+        if (!g.hold) {
+            if (d < g.best - 0.01) { g.best = d; g.since = this.clock; }
+            if (!touching && this.clock - g.since > 0.3) { g.hold = now.clone(); g.t = this.clock; }
+        } else if (this.clock - g.t > 1.5) this._grips[side] = null;
         // A hand goes all the way or not at all: how much it hurts is in how hard it presses (and how bent over they are).
-        const reach = this._armTo(side, at), all = smooth(how * 2.5);
+        const all = smooth(how * 2.5);
         for (const k of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) pose[k + side] = (pose[k + side] || 0) + (reach[k] - (pose[k + side] || 0)) * all;
         pose['curl' + side] = 25;
-        const most = 30 * this.will * how;
-        this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, at, 60, 1.5, most, _t), [rd.byName.get('chest')], dt));
+        if (g.hold) return;
+        const chest = rd.byName.get('chest');
+        if (touching) {
+            // Pressed into the skin a little, as firmly as it hurts.
+            const into = at.subtract(out.scale(0.03)), most = 12 * this.will * how;
+            this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, into, 25, 1.5, most, _t), [chest], dt));
+        } else {
+            const most = 30 * this.will * how;
+            this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, to, 60, 1.5, most, _t), [chest], dt));
+        }
     }
 
     // The shoulder and elbow (pose controls, degrees) that put the middle of hand `side` at `at` (world), as near as the
-    // arm reaches, from where they were asked to be last time: a few steps of damped least squares on the arm as the
-    // skeleton turns it (person.ts: twist, then out to the side, then forward, at the shoulder; the elbow on its own
-    // hinge), in the chest's own frame, where the shoulder does not move. The twist is what takes a bent arm's hand
-    // across the front of the body (to the belly, the other arm); it is kept as little as will do.
+    // arm reaches without going through the trunk, from where they were asked to be last time: damped least squares on
+    // the arm as the skeleton turns it (person.ts: twist, then out to the side, then forward, at the shoulder; the elbow
+    // on its own hinge), in the chest's own frame, where the shoulder does not move. The twist is what takes a bent arm's
+    // hand across the front of the body (to the belly, the other arm); it is kept as little as will do. Also `miss`, how
+    // far from `at` the hand stays, and `hand`, where it gets to (world).
     _armTo(side, at: BABYLON.Vector3) {
         const rd = this.rd, person = this.npc.person, chest = rd.byName.get('chest');
         let arm = this._arms?.[side];
         if (!arm) {
             const b = (n) => person.byName[`${n}.${side}`].head, hand = rd.byName.get('hand' + side);
-            arm = (this._arms ??= {})[side] = { x: [P.RELAXED['shoulderAbduct' + side], P.RELAXED['shoulderFlex' + side], 0, 30], seed: [0, 0, 0, 0], frame: 0,
+            arm = (this._arms ??= {})[side] = { x: [P.RELAXED['shoulderAbduct' + side], P.RELAXED['shoulderFlex' + side], 0, 30], seed: [0, 0, 0, 0], frame: 0, goal: null,
                 s: b('upperarm01'), upper: b('lowerarm01').subtract(b('upperarm01')), fore: b('wrist').add(hand.centre).subtract(b('lowerarm01')),
                 axes: ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow'].map((k) => person.hinges[k + side].axis),
-                out: { shoulderAbduct: 0, shoulderFlex: 0, shoulderTwist: 0, elbow: 0 } };
+                boxes: ['chest', 'belly', 'pelvis'].map((n) => ({ seg: rd.byName.get(n), o: new V3(), inv: new Q() })),
+                out: { shoulderAbduct: 0, shoulderFlex: 0, shoulderTwist: 0, elbow: 0, miss: 0, hand: new V3() } };
         }
-        // The place as it would be with the chest standing at rest.
+        // The place as it would be with the chest standing at rest, and the trunk's boxes as they stand to the chest now.
         Q.InverseToRef(chest.node.rotationQuaternion, _q);
         at.subtractToRef(chest.node.position, _goal).applyRotationQuaternionInPlace(_q).addInPlace(chest.head);
-        // From where the arm was, and now and then from up in front of the chest (where a hand goes to reach across the
-        // body, which the arm hanging does not find its way to): the nearer, unless it is barely nearer, so the arm does
-        // not flick from one to the other.
-        const x = arm.x, miss = descend(arm, x, 3, side);
-        if (miss > 0.03 && arm.frame++ % 8 === 0) {
-            const seed = arm.seed;
-            seed[0] = -60; seed[1] = 40; seed[2] = 0; seed[3] = 95;
-            if (descend(arm, seed, 12, side) < miss - 0.03) for (let k = 0; k < 4; k++) x[k] = seed[k];
+        for (const b of arm.boxes) {
+            b.seg.node.position.subtractToRef(chest.node.position, b.o).applyRotationQuaternionInPlace(_q).addInPlace(chest.head);
+            Q.InverseToRef(_q.multiplyToRef(b.seg.node.rotationQuaternion, _qa), b.inv);
         }
-        [arm.out.shoulderAbduct, arm.out.shoulderFlex, arm.out.shoulderTwist, arm.out.elbow] = x;
-        return arm.out;
+        // From where the arm was; and, when the place has moved or the hand is not getting there, from each of a few ways
+        // of holding the arm (up in front of the chest, across it, down by the side), which the arm hanging does not find
+        // its way to: the best, unless it is barely better, so the arm does not flick from one to the other.
+        const x = arm.x;
+        let miss = descend(arm, x, 3, side);
+        const moved = !arm.goal || V3.DistanceSquared(arm.goal, _goal) > 0.02 * 0.02;
+        if (moved || (miss > 0.03 && arm.frame++ % 8 === 0)) {
+            arm.goal = _goal.clone();
+            for (const seed of SEEDS) {
+                for (let k = 0; k < 4; k++) arm.seed[k] = seed[k];
+                const m = descend(arm, arm.seed, 12, side);
+                if (m < miss - 0.03) { for (let k = 0; k < 4; k++) x[k] = arm.seed[k]; miss = m; }
+            }
+            descend(arm, x, 1, side);
+        }
+        const o = arm.out;
+        [o.shoulderAbduct, o.shoulderFlex, o.shoulderTwist, o.elbow] = x;
+        o.miss = arm.reach;
+        handAt(arm, x, o.hand).subtractInPlace(chest.head).applyRotationQuaternionInPlace(chest.node.rotationQuaternion).addInPlace(chest.node.position);
+        return o;
     }
 
     // The leg's joints (pose controls) that put its ankle at `ankle` (world) with the foot level with the floor, from
@@ -727,7 +793,7 @@ export class Behaviour {
         const trunk = ['pelvis', 'belly', 'chest'].map((n) => rd.byName.get(n));
         if (!this.landed && trunk.some((seg) => rd.lowest(seg) < this.floor + TOUCH)) {
             this.landed = true;
-            this.npc.world.sound?.shot('body-fall', { at: rd.centre.asArray(), gain: clamp(0.4 + Math.abs(this.vel.y) / 4) });
+            this.npc.world.sound?.shot('body-fall', { follow: () => rd.centre.asArray(), gain: clamp(0.4 + Math.abs(this.vel.y) / 4) });
         }
         if ((this.com.y - this.floor < this.heights.stand.pelvis * 0.5 && this.vel.length() < 0.5 && this.t > 0.4) || this.t > 4) this._go('down');
         return pose;
@@ -1028,41 +1094,77 @@ export function inside(hull: number[][], x: number, z: number, dx: number, dz: n
 }
 
 // Where the middle of an arm's hand is for its controls `x` (_armTo: out to the side, forward, twist, elbow; degrees),
-// in rest space as the chest stands.
-const _goal = new V3(), _elbow = new V3(), _now = new V3(), _moved = new V3(), _J = [new V3(), new V3(), new V3(), new V3()];
+// in rest space as the chest stands; and the elbow (_elbow) and the forearm from it to the hand (_fore).
+const _goal = new V3(), _elbow = new V3(), _fore = new V3(), _now = new V3(), _pt = new V3(), _loc = new V3();
 const _A = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], _g = [0, 0, 0, 0];
 function handAt(arm, x: number[], out: BABYLON.Vector3) {
     const [ab, fl, tw, el] = arm.axes;
     Q.RotationAxisToRef(fl, x[1] * RAD, _qa).multiplyInPlace(Q.RotationAxisToRef(ab, x[0] * RAD, _qb)).multiplyInPlace(Q.RotationAxisToRef(tw, x[2] * RAD, _qb));
     arm.upper.rotateByQuaternionToRef(_qa, _elbow).addInPlace(arm.s);
     _qa.multiplyInPlace(Q.RotationAxisToRef(el, x[3] * RAD, _qb));
-    return arm.fore.rotateByQuaternionToRef(_qa, out).addInPlace(_elbow);
+    arm.fore.rotateByQuaternionToRef(_qa, _fore);
+    return out.copyFrom(_fore).addInPlace(_elbow);
 }
 
-// `steps` of damped least squares taking `x` toward putting the hand at _goal; how far from it the hand is then.
+// The ways of holding an arm a reach is tried from (_armTo): up in front of the chest, across it high and low, in front
+// of the belly, down by the side.
+const SEEDS = [[-60, 40, 0, 95], [-80, 65, 25, 105], [-45, 80, -30, 125], [-30, 20, 60, 85], [10, 25, 10, 60]];
+// The forearm kept out of the trunk's boxes (_armTo): at the elbow, half way down it and near the wrist, by about its
+// flesh (m). The hand itself is meant to come to the body.
+const ALONG = [0, 0.5, 0.75], FLESH = [0.04, 0.036, 0.03];
+
+// What a reach misses by, as a list (_r, its length returned): the hand from _goal, then how deep each point of the
+// forearm is in the trunk.
+const _r = new Array(6).fill(0), _r2 = new Array(6).fill(0), _J = [_r.slice(), _r.slice(), _r.slice(), _r.slice()];
+function misses(arm, x: number[], r: number[]) {
+    handAt(arm, x, _now);
+    r[0] = _now.x - _goal.x; r[1] = _now.y - _goal.y; r[2] = _now.z - _goal.z;
+    for (let k = 0; k < 3; k++) {
+        _pt.copyFrom(_fore).scaleInPlace(ALONG[k]).addInPlace(_elbow);
+        let deep = 0;
+        for (const b of arm.boxes) {
+            const g = b.seg.geo;
+            _pt.subtractToRef(b.o, _loc).applyRotationQuaternionInPlace(b.inv);
+            const into = Math.max(Math.abs(_loc.x - g.c.x) - g.h.x, Math.abs(_loc.y - g.c.y) - g.h.y, Math.abs(_loc.z - g.c.z) - g.h.z) - FLESH[k];
+            if (into < 0) deep = Math.max(deep, -into);
+        }
+        r[3 + k] = 2 * deep;
+    }
+    return Math.hypot(...r);
+}
+
+// `steps` of damped least squares taking `x` toward putting the hand at _goal with the forearm outside the trunk; what
+// it misses by then (misses()), and how far the hand is from _goal (arm.reach).
 // (Never back behind the body, nor in across it: a hand for a wound goes in front of the trunk, not through it; held
 // forward, the arm crosses the front of the chest as far as the shoulder lets it.)
 const ARM_LO = [-42, -36, -80, 0], ARM_HI = [129, 149, 80, 145];
 function descend(arm, x: number[], steps: number, side: string) {
     for (let it = 0; it < steps; it++) {
-        const r = handAt(arm, x, _now).subtractInPlace(_goal);
-        if (r.length() < 0.004) break;
+        if (misses(arm, x, _r) < 0.004) break;
         for (let k = 0; k < 4; k++) {
             x[k] += 1;
-            handAt(arm, x, _moved);
+            misses(arm, x, _r2);
             x[k] -= 1;
-            _moved.subtractInPlace(_goal).subtractToRef(r, _J[k]);
+            for (let i = 0; i < _r.length; i++) _J[k][i] = _r2[i] - _r[i];
         }
         // (J^T J + damping) dx = -J^T r, the arm also drawn toward the way it is most often held.
         for (let i = 0; i < 4; i++) {
-            for (let j = 0; j < 4; j++) _A[i][j] = V3.Dot(_J[i], _J[j]) + (i === j ? 2e-6 + PREFER[i][1] ** 2 : 0);
-            _g[i] = -V3.Dot(_J[i], r) - PREFER[i][1] ** 2 * (x[i] - PREFER[i][0]);
+            for (let j = 0; j < 4; j++) {
+                let sum = 0;
+                for (let n = 0; n < _r.length; n++) sum += _J[i][n] * _J[j][n];
+                _A[i][j] = sum + (i === j ? 2e-6 + PREFER[i][1] ** 2 : 0);
+            }
+            let sum = 0;
+            for (let n = 0; n < _r.length; n++) sum += _J[i][n] * _r[n];
+            _g[i] = -sum - PREFER[i][1] ** 2 * (x[i] - PREFER[i][0]);
         }
         const dx = solve(_A, _g);
         for (let k = 0; k < 4; k++) x[k] = clamp(x[k] + clamp(dx[k], -25, 25), ARM_LO[k], ARM_HI[k]);
         x[0] = Math.max(x[0], Math.max(-86, ARM_LO[0] - 0.7 * Math.max(0, x[1] - P.RELAXED['shoulderFlex' + side])));
     }
-    return handAt(arm, x, _now).subtractInPlace(_goal).length();
+    const m = misses(arm, x, _r);
+    arm.reach = Math.hypot(_r[0], _r[1], _r[2]);
+    return m;
 }
 
 // x for A x = b, A square: Gaussian elimination with partial pivoting (A and b are used up).
