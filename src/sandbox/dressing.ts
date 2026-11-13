@@ -61,12 +61,16 @@ export class Medic {
     declare job: { wound: any; t: number } | null;
     declare prompt: string;
     declare clock: number;
+    declare wrap: any;
+    declare opened: any;
 
     constructor(weapons) {
         this.weapons = weapons;
         this.job = null;
         this.prompt = '';
         this.clock = 0;
+        this.wrap = null;           // the gauze heard going round, at the wound, while a dressing is being put on
+        this.opened = null;         // whom the medkit was last unzipped for
     }
 
     // How far through the one being put on, 0 to 1, or null.
@@ -74,6 +78,7 @@ export class Medic {
 
     update(dt: number) {
         const w = this.weapons, world = w.world;
+        this.wrap?.drive(this.job && this.job.t > 1 ? 0.45 : 0);
         for (const npc of world.npcs) for (const d of [...(npc.dressings ?? [])]) d.update(dt);
         const arm = w.arm;
         if (arm.kind !== 'dress') { this.job = null; this.prompt = ''; return; }
@@ -87,13 +92,20 @@ export class Medic {
         this.prompt = `<b>Hold left click</b> ${arm.key === 'medkit' ? `Dress ${n > 1 ? `all ${n} wounds` : 'the wound'}` : 'Dress the wound'}`;
         if (!w.firing) { this.job = null; return; }
         // The same wound as last frame is the one its first bleed is still in.
-        if (!this.job || !wound.bleeds.includes(this.job.wound.bleeds[0])) this.job = { wound, t: 0 };
+        if (!this.job || !wound.bleeds.includes(this.job.wound.bleeds[0])) {
+            this.job = { wound, t: 0 };
+            if (arm.key === 'medkit' && this.opened !== wound.npc) { this.opened = wound.npc; world.sound?.shot('zip', { gain: 0.7 }); }
+        }
         this.job.wound = wound;
         this.clock += dt;
+        // The packet torn open in the hands, then the gauze wound on (wrap, above), then taped.
+        if (this.job.t < 0.3 && this.job.t + dt >= 0.3) world.sound?.shot('gauze-tear', { gain: 0.6 });
         this.job.t += dt;
+        (this.wrap ??= world.sound?.stream('gauze-wrap', wound.at.asArray()))?.at(wound.at.asArray());
         this.prompt = `Dressing${n > 1 ? ` (${n} left)` : ''} ${Math.round(Math.min(1, this.job.t / SECONDS) * 100)}%`;
         if (this.job.t < SECONDS) return;
         dress(wound);
+        world.sound?.shot('tape', { at: wound.at.asArray(), gain: 0.7 });
         this.job = null;
     }
 

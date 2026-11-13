@@ -128,6 +128,16 @@ export const ARMS = [
     { key: 'medkit', name: 'Medkit', kind: 'dress' },
 ];
 
+// What is heard of a reload and when, as a fraction of it (the strokes _reloading and _bolt show): the magazine out and
+// seated, the slide or charging handle; the shotgun broken open, two shells in, closed; the bolt opened, five rounds
+// thumbed in (where each press is deepest), the bolt closed.
+const MAGAZINE = (charge: string): [number, string][] => [[0.13, 'mag-out'], [0.68, 'mag-in'], [0.77, charge]];
+const RELOADS: Record<string, [number, string][]> = {
+    pistol: MAGAZINE('rack'), ak: MAGAZINE('charge'), m4: MAGAZINE('charge'),
+    shotgun: [[0.13, 'break-open'], [0.55, 'shell-in'], [0.62, 'shell-in'], [0.78, 'break-close']],
+    rifle: [[0.1, 'bolt-open'], ...[0, 1, 2, 3, 4].map((k): [number, string] => [0.34 + 0.38 * (k + 0.5) / 5, 'round-in']), [0.78, 'bolt-close']],
+};
+
 // Things to throw: the props from Poly Haven already in the game, and what each weighs.
 // And how stiff each is where it lands, N/m (none: hard as the bone it hits); a cardboard box crumples.
 const THROWN: [string, number, number?][] = [['metal_toolbox', 6], ['concrete_cat_statue', 4], ['dining_chair_02', 5], ['wooden_bucket_01', 2], ['cardboard_box_01', 0.6, 4000],
@@ -472,7 +482,8 @@ export class Weapons {
         this.world.player.pitch -= gun.kick * (0.6 + Math.random() * 0.4);
         this.world.player.yaw += (Math.random() - 0.5) * gun.kick * 0.4;
         if (key !== 'shotgun' && anchors?.ejection) this._eject(anchors, key);
-        if (key === 'rifle') setTimeout(() => sound?.shot('rack', { gain: 0.8 }), 450);
+        // The bolt worked for the next round as _cycle shows it: up and back, then forward and down.
+        if (key === 'rifle') for (const [ms, name] of [[250, 'bolt-open'], [500, 'bolt-close']] as const) setTimeout(() => sound?.shot(name, { gain: 0.8 }), ms);
     }
 
     // One bullet or pellet from `from` along `dir`, followed through whoever it goes through.
@@ -546,7 +557,6 @@ export class Weapons {
         const { key, gun } = this.arm;
         if (!gun || this.reloading > 0 || this.ammo.get(key) === gun.rounds) return;
         this.reloading = gun.reload;
-        this.world.sound?.shot('rack', { gain: 0.9 });
     }
 
     // --- blades and the bat -----------------------------------------------------------------
@@ -853,7 +863,14 @@ export class Weapons {
 
     update(dt) {
         this.busy = Math.max(0, this.busy - dt);
-        if (this.reloading > 0 && (this.reloading -= dt) <= 0) this.ammo.set(this.arm.key, this.arm.gun.rounds);
+        if (this.reloading > 0) {
+            // Each stroke of the reload heard as the hands do it (RELOADS), then the gun is full.
+            const gun = this.arm.gun, was = 1 - this.reloading / gun.reload;
+            this.reloading -= dt;
+            const now = 1 - this.reloading / gun.reload;
+            for (const [u, name] of RELOADS[this.arm.key] ?? []) if (u > was && u <= now) this.world.sound?.shot(name, { gain: name === 'round-in' ? 0.6 : 0.85 });
+            if (this.reloading <= 0) this.ammo.set(this.arm.key, gun.rounds);
+        }
         if (this.firing && this.arm.key === 'pistol' && this.busy <= 0) this.firing = false;
         // Held down, an automatic keeps firing until it is empty.
         if (this.firing && this.arm.gun?.auto && this.busy <= 0 && this.reloading <= 0) {

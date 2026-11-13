@@ -125,7 +125,8 @@ const RAD = Math.PI / 180;
 const FORWARD = new V3(0, 0, 1);
 // Collision bits. A person's own segments meet each other as they would anyone else's (a hand on the belly, one knee on
 // the other, an arm against the chest or across the other), all but neighbours at a joint, whose constraint leaves them
-// be (Havok's per-pair switch, `collision: false`). The shapes are fitted so that no other pair meets standing at rest
+// be (Havok's per-pair switch, `collision: false`; for both halves of the long bones either side of an elbow or a knee,
+// _apart). The shapes are fitted so that no other pair meets standing at rest
 // (_shape: the upper arm off the shoulder's bulge, the belly's box below the chest's). Each person has a bit of their
 // own above these, which is what tells their own segments from anyone else's; the kinds are for pieces cut off (_cut).
 const WORLD = 1;                // the room and loose things
@@ -169,6 +170,7 @@ export class Ragdoll {
     declare _moved: BABYLON.Observer<BABYLON.Scene>;
     declare attached: any[];
     declare _cuts: any[];
+    declare _apart: BABYLON.Physics6DoFConstraint[];
 
     // `person` is made from withMidBones' data; `mass` in kg; `bit` this person's own collision bit (8 and up, one bit).
     constructor(person, { mass = 75, bit = 8 } = {}) {
@@ -238,6 +240,20 @@ export class Ragdoll {
             seg.body.setAngularDamping(0.5);
         }
         for (const seg of this.segments) if (seg.joint) this._join(seg);
+        // A long bone is two bodies (withMidBones), so the two halves of an upper arm and of a forearm are not all joined
+        // to each other at the elbow, though the bones are: an elbow or a knee bent far put the far half of one into the
+        // near half of the other, and the joint's limit and the contact fought. These are kept apart the way the joints
+        // keep theirs (a constraint that holds nothing, collision off: Havok's per-pair switch). The shoulder and hip are
+        // not: the halves of an upper arm or thigh meet the trunk, which is what keeps an arm out of the chest.
+        this._apart = [];
+        for (const s of ['L', 'R']) {
+            for (const [a, b] of [['upperarm', 'forearm'], ['upperarm', 'forearm2'], ['upperarm2', 'forearm2'], ['forearm', 'hand'],
+                ['thigh', 'shin'], ['thigh', 'shin2'], ['thigh2', 'shin2'], ['shin', 'foot']]) {
+                const c = new BABYLON.Physics6DoFConstraint({ pivotA: V3.Zero(), pivotB: V3.Zero(), collision: false }, [], this.scene);
+                this.byName.get(a + s).body.addConstraint(this.byName.get(b + s).body, c);
+                this._apart.push(c);
+            }
+        }
         for (const b of this.between) b.setRotationQuaternion(Q.Identity(), BABYLON.Space.LOCAL);
         this.setTone('alive');
         // The skeleton put where the bodies are as soon as they have moved, before the picture is drawn: following them
@@ -352,11 +368,13 @@ export class Ragdoll {
             axes.push(v);
         }
         axes.push(V3.Cross(axes[0], axes[1]).normalize());
+        // (Across the palm, not out to the thumb's tip held away from it as the model stands: a hand that closes or holds
+        // something has its thumb in.)
         const lo = new V3(), hi = new V3(), at = (list, f) => list[Math.floor((list.length - 1) * f)];
         ['x', 'y', 'z'].forEach((k, i) => {
-            const along = pts.map((p) => V3.Dot(p.subtract(mid), axes[i])).sort((a, b) => a - b);
-            lo[k] = at(along, 0.02);
-            hi[k] = at(along, 0.98);
+            const along = pts.map((p) => V3.Dot(p.subtract(mid), axes[i])).sort((a, b) => a - b), edge = i === 1 ? 0.08 : 0.02;
+            lo[k] = at(along, edge);
+            hi[k] = at(along, 1 - edge);
         });
         const q = Q.RotationQuaternionFromAxis(axes[0], axes[1], axes[2]);
         const centre = mid.add(lo.add(hi).scale(0.5).applyRotationQuaternion(q)), extent = hi.subtract(lo).scaleInPlace(THIN);
@@ -526,24 +544,11 @@ export class Ragdoll {
         }
     }
 
-    // The piece's own segments meet each other only through their joints: their shapes overlap round a joint bent far
-    // (a severed arm folded at the elbow put its upper arm into its forearm's lower half), and that contact and the
-    // joint's limits pushed against each other every step (70 N through the forearm's lock), so the piece trembled and
-    // crept on the floor and never slept. A constraint that holds nothing, with collision off, is Havok's way to say two
-    // bodies do not meet.
     _cut(seg) {
         const own = seg.shape.filterMembershipMask & ~(TRUNK | ROOTS | LIMBS);
         seg.shape.filterMembershipMask = own;
         seg.shape.filterCollideMask = ~own;
-        const piece = this.segments.filter((s) => { let at = s; while (at && !at.severed) at = at.parent; return at === seg; });
-        const apart = [];
-        for (const a of piece) for (const b of piece) {
-            if (a.name >= b.name || a.parent === b || b.parent === a) continue;
-            const c = new BABYLON.Physics6DoFConstraint({ pivotA: V3.Zero(), pivotB: V3.Zero(), collision: false }, [], this.scene);
-            a.body.addConstraint(b.body, c);
-            apart.push(c);
-        }
-        return { seg, own, clear: false, apart };
+        return { seg, own, clear: false };
     }
 
     // Whether a segment hangs past a broken bone, with nothing to move it but its own weight.
@@ -689,7 +694,7 @@ export class Ragdoll {
 
     dispose() {
         this.scene.onAfterPhysicsObservable.remove(this._moved);
-        for (const c of this._cuts) for (const a of c.apart) a.dispose();
+        for (const c of this._apart) c.dispose();
         for (const seg of this.segments) {
             seg.constraint?.dispose();
             seg.body?.dispose();
