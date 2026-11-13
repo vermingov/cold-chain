@@ -418,12 +418,15 @@ export class Person {
 
             const t1 = this.byName[`finger1-1.${side}`], t2 = this.byName[`finger1-2.${side}`];
             const thumbDir = t2.head.subtract(t1.head).normalize();
+            // The thumb's bones bend toward the palm as the fingers' do (about a
+            // line across the knuckles turned it out sideways: a fist's thumb
+            // stood up off it).
             const thumbAxis = signed(V3.Cross(thumbDir, across).normalize(), 1);
-            this.hinges['thumb' + side] = { bones: [t2, this.byName[`finger1-3.${side}`]], axis: thumbAxis, fingers: true };
+            this.hinges['thumb' + side] = { bones: [t2, this.byName[`finger1-3.${side}`]], axis: thumbAxis, axes: [flexes(1, 2), flexes(1, 3)], fingers: true };
             // The thumb's own first bone, in the heel of the hand: bent the
             // way the rest of it bends, and swung in across the palm to meet
             // the fingers, about the line the hand lies along.
-            this.hinges['thumbBase' + side] = { bones: [t1], axis: thumbAxis, fingers: true };
+            this.hinges['thumbBase' + side] = { bones: [t1], axis: flexes(1, 1), fingers: true };
             const lies = this.byName[`finger3-1.${side}`].head.subtract(this.byName[`wrist.${side}`].head).normalize();
             const swung = thumbDir.applyRotationQuaternion(Q.RotationAxis(lies, 0.3)).subtract(thumbDir);
             this.hinges['thumbIn' + side] = { bones: [t1], axis: V3.Dot(swung, bend(3).towards) >= 0 ? lies : lies.scale(-1), fingers: true };

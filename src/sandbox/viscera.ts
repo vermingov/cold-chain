@@ -42,18 +42,18 @@ export const BURST = 1400;
 
 const CLOTHES = 0.04;       // m the clothes stand off the body, which what is out lies on
 const REACH = 0.2;          // m round an opening within which the organs are drawn, and within which they can come out
-const SIDES = 12;           // round each rope drawn along it
+const SIDES = 16;           // round each rope drawn along it
 const SPLIT = 2;            // pieces each step of a rope is drawn in, along a smooth curve through its points
 const DENSITY = 1040;       // kg/m3 of bowel with its contents
 const MMHG = 133.3;
 const PACKED = 10;          // the packed contents a bit of bowel has to move to come forward, over its own mass
 
 // What can come out: half its width, metres of it free behind the opening, how far its attachments let its middle go
-// from where they hold it, how many, and the look its outside is drawn in.
-const ROPES: Record<string, { r: number; length: number; tether: number; count: number; tint: number[] }> = {
-    bowel: { r: 0.014, length: 0.6, tether: 0.16, count: 3, tint: [1, 1, 1] },
-    colon: { r: 0.024, length: 0.4, tether: 0.07, count: 1, tint: [0.92, 0.95, 0.78] },
-    stomach: { r: 0.032, length: 0.26, tether: 0.05, count: 1, tint: [0.97, 0.92, 0.9] },
+// from where they hold it, and how many.
+const ROPES: Record<string, { r: number; length: number; tether: number; count: number }> = {
+    bowel: { r: 0.014, length: 0.6, tether: 0.16, count: 3 },
+    colon: { r: 0.024, length: 0.4, tether: 0.07, count: 1 },
+    stomach: { r: 0.032, length: 0.26, tether: 0.05, count: 1 },
 };
 
 // The look of each kind of thing inside: albedo (sRGB 0-255), how many fine vessels run over it, how mottled it is,
@@ -236,14 +236,16 @@ export class Viscera {
         this._stale = true;
     }
 
-    // The lips of the opening: the layers of the wall it went through, all round its edge.
+    // The lips of the opening: the layers of the wall it went through, all round its edge (the lens hider.ts leaves), in
+    // a band wider the wider it gapes: the skin draws back further than the fat under it.
     _lips(o: Opening) {
-        const npc = this.npc, line = [];
-        for (let k = -6; k <= 6; k++) {
-            const on = npc.runs.nearest(o.at.add(o.ex.scale((k / 6) * Math.max(0, o.half[0] - o.half[1]))), 0.03);
-            if (on?.kind === 'skin') line.push(on);
+        const npc = this.npc, ey = V3.Cross(o.normal, o.ex), edge = [];
+        for (let k = 0; k < 40; k++) {
+            const a = (k / 40) * Math.PI * 2, x = Math.cos(a) * o.half[0];
+            const on = npc.runs.nearest(o.at.add(o.ex.scale(x)).add(ey.scale(Math.sign(Math.sin(a)) * gape(o.half, x))), 0.03);
+            if (on?.kind === 'skin') edge.push(on);
         }
-        if (line.length) npc.marks.lip(line, o.half[1], 0.007);
+        if (edge.length > 2) npc.marks.lip(edge, Math.min(0.015, 0.006 + o.half[1] * 0.25));
     }
 
     // --- what can come out ----------------------------------------------------------------------
@@ -277,19 +279,21 @@ export class Viscera {
         }
     }
 
-    // The outside of each kind that can come out (small bowel, colon, stomach): the bowel's painted wall, tinted, wet,
-    // and blood on it where it came through the wound. (One for each kind for everybody.)
+    // The outside of each kind that can come out (small bowel, colon, stomach): its painted wall and its relief, a thin
+    // wet sheen on it (the serosa glistens; it is not lacquered), and blood on it where it came through the wound. (One
+    // for each kind for everybody.)
     _tube(kind: string) {
         const scene: BABYLON.Scene = this.npc.world.scene, old = scene.getMaterialByName(`${kind}_out`);
         if (old) return old as BABYLON.PBRMaterial;
-        const t = ROPES[kind].tint, m = new BABYLON.PBRMaterial(`${kind}_out`, scene);
-        m.albedoTexture = this._tubeLook();
-        m.albedoColor = new BABYLON.Color3(t[0], t[1], t[2]);
+        const m = new BABYLON.PBRMaterial(`${kind}_out`, scene), look = this._tubeLook(kind);
+        m.albedoTexture = look.albedo;
+        m.bumpTexture = look.relief;
+        m.bumpTexture.level = 0.7;
         m.metallic = 0;
-        m.roughness = 0.3;
+        m.roughness = 0.5;
         m.clearCoat.isEnabled = true;
-        m.clearCoat.intensity = 0.8;
-        m.clearCoat.roughness = 0.1;
+        m.clearCoat.intensity = 0.6;
+        m.clearCoat.roughness = 0.16;
         m.reflectionTexture = (scene.getMaterialByName('dropBlood') as BABYLON.PBRMaterial)?.reflectionTexture ?? null;
         m.environmentIntensity = 0.3;
         m.maxSimultaneousLights = 8;
@@ -402,43 +406,128 @@ export class Viscera {
         return m;
     }
 
-    // The bowel's outside, painted along its length: pink, glossy, the small vessels from its mesentery running round it
-    // every few millimetres, branching as they go and fading toward the far side. (Made once for everybody.)
-    _tubeLook() {
+    // The outside of a kind that can come out, painted round and along it (u along it, v round it, v = 0 and 1 the side
+    // its mesentery holds, which Loop.draw turns toward where it is held), and how high each place of it stands (a
+    // normal map). What they look like (Moore, Dalley & Agur, Clinically Oriented Anatomy, 7th ed., ch. 2, the small and
+    // large intestine compared; Gray's Anatomy, 41st ed., chs. 65 and 66):
+    // - small bowel: pinkish grey to tan, its serosa thin and glistening; straight vessels (vasa recta) from the arcades
+    //   in its mesentery run round it every few millimetres; the mesentery meets it along one side as yellow fat with
+    //   the arcades in it.
+    // - colon: greyer tan, gathered into sacculations (haustra) by three flat bands of muscle about a centimetre wide
+    //   (taeniae coli), small tags of fat (omental appendices) hanging from them.
+    // - stomach: pinkish tan, the gastroepiploic arcade in the omentum's fat along its curvature, its branches running
+    //   across the wall.
+    _tubeLook(kind: string) {
         const scene: BABYLON.Scene = this.npc.world.scene, W = 512, H = 256;
-        const had = scene.getTextureByName('bowel_wall');
-        if (had) return had;
-        const t = new BABYLON.DynamicTexture('bowel_wall', { width: W, height: H }, scene, true);
-        t.wrapU = t.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
-        const g = t.getContext() as CanvasRenderingContext2D;
-        g.fillStyle = 'rgb(214,140,126)';
+        const had = scene.getTextureByName(`${kind}_wall`);
+        if (had) return { albedo: had, relief: scene.getTextureByName(`${kind}_relief`) as BABYLON.Texture };
+        const sheet = (name: string) => {
+            const s = new BABYLON.DynamicTexture(name, { width: W, height: H }, scene, true);
+            s.wrapU = s.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+            return s;
+        };
+        const albedo = sheet(`${kind}_wall`), relief = sheet(`${kind}_relief`);
+        const g = albedo.getContext() as CanvasRenderingContext2D;
+        // Height, drawn alongside the colour: light is high.
+        const hc = document.createElement('canvas');
+        hc.width = W; hc.height = H;
+        const h = hc.getContext('2d');
+        h.fillStyle = 'rgb(128,128,128)';
+        h.fillRect(0, 0, W, H);
+        const rnd = Math.random;
+        // Each thing drawn where it is and again a picture's width or height over, so the pictures tile.
+        const tiled = (x: number, y: number, r: number, draw: (x: number, y: number) => void) => {
+            for (const dx of [0, -W, W]) for (const dy of [0, -H, H]) if (x + dx > -r && x + dx < W + r && y + dy > -r && y + dy < H + r) draw(x + dx, y + dy);
+        };
+        const blob = (x: number, y: number, rx: number, ry: number, colour: string, lift = 0) => tiled(x, y, Math.max(rx, ry), (px, py) => {
+            const turn = rnd() * 3;
+            g.fillStyle = colour;
+            g.beginPath(); g.ellipse(px, py, rx, ry, turn, 0, Math.PI * 2); g.fill();
+            if (!lift) return;
+            h.fillStyle = lift > 0 ? `rgba(255,255,255,${lift})` : `rgba(0,0,0,${-lift})`;
+            h.beginPath(); h.ellipse(px, py, rx, ry, turn, 0, Math.PI * 2); h.fill();
+        });
+        const base = { bowel: [192, 154, 142], colon: [176, 160, 140], stomach: [196, 152, 138] }[kind];
+        g.fillStyle = `rgb(${base})`;
         g.fillRect(0, 0, W, H);
-        for (let k = 0; k < 2600; k++) {
-            const r = Math.random();
-            g.fillStyle = r < 0.45 ? 'rgba(232,168,150,0.22)' : r < 0.85 ? 'rgba(176,96,86,0.16)' : 'rgba(200,170,120,0.2)';
-            g.beginPath(); g.ellipse(Math.random() * W, Math.random() * H, 2 + Math.random() * 10, 2 + Math.random() * 5, Math.random() * 3, 0, Math.PI * 2); g.fill();
+        // Mottled: greyer, pinker and tanner patches.
+        for (let k = 0; k < 1800; k++) {
+            const r = rnd(), c = r < 0.4 ? '170,152,146' : r < 0.75 ? '206,150,140' : '200,172,134';
+            blob(rnd() * W, rnd() * H, 3 + rnd() * 12, 2 + rnd() * 7, `rgba(${c},${0.1 + rnd() * 0.12})`, (rnd() - 0.5) * 0.08);
         }
-        // Across the picture (v) is round the bowel; v = 0 and 1 its mesenteric side, where the vessels come in.
-        g.lineCap = 'round';
-        // The straight vessels (vasa recta): from the mesenteric side, one every few millimetres, uneven, each running
-        // part of the way round, tapering, a branch or two off it.
-        const vessel = (x: number, y: number, dir: number, len: number, width: number) => {
-            g.strokeStyle = `rgba(${120 + Math.random() * 40},${14 + Math.random() * 14},${20 + Math.random() * 12},${0.12 + Math.random() * 0.18})`;
-            let px = x, py = y, bend = (Math.random() - 0.5) * 0.6;
+        // Vessels: a wavering line from (x, y), `dir` down (1) or up (-1) the picture, tapering, a branch now and then.
+        g.lineCap = h.lineCap = 'round';
+        const vessel = (x: number, y: number, dir: number, len: number, width: number, colour: string, lift: number, across = false) => {
+            let px = x, py = y, bend = (rnd() - 0.5) * 0.5;
             for (let s = 0; s < len; s += 3) {
-                const nx = px + Math.sin(bend) * 3 * dir + (Math.random() - 0.5) * 1.4, ny = py + Math.cos(bend) * 3 * dir;
-                g.lineWidth = Math.max(0.35, width * (1 - s / len));
-                g.beginPath(); g.moveTo(px, py); g.lineTo(nx, ny); g.stroke();
-                px = nx; py = ny; bend += (Math.random() - 0.5) * 0.25;
-                if (Math.random() < 0.04 && width > 0.9) vessel(px, py, dir, (len - s) * 0.5, width * 0.6);
+                const nx = across ? px + 3 * dir : px + Math.sin(bend) * 3 * dir + (rnd() - 0.5) * 1.2;
+                const ny = across ? py + Math.sin(bend) * 3 + (rnd() - 0.5) * 1.2 : py + Math.cos(bend) * 3 * dir;
+                const w = Math.max(0.5, width * (1 - (s / len) * 0.7));
+                tiled(px, py, 6, (ax, ay) => {
+                    g.strokeStyle = colour; g.lineWidth = w;
+                    g.beginPath(); g.moveTo(ax, ay); g.lineTo(ax + nx - px, ay + ny - py); g.stroke();
+                    h.strokeStyle = `rgba(255,255,255,${lift})`; h.lineWidth = w;
+                    h.beginPath(); h.moveTo(ax, ay); h.lineTo(ax + nx - px, ay + ny - py); h.stroke();
+                });
+                px = nx; py = ny; bend += (rnd() - 0.5) * 0.3;
+                if (rnd() < 0.05 && width > 0.9) vessel(px, py, dir, (len - s) * 0.5, width * 0.6, colour, lift, across);
             }
         };
-        for (let x = 0; x < W; x += 5 + Math.random() * 9) {
-            vessel(x, 0, 1, H * (0.15 + Math.random() * 0.35), 1 + Math.random() * 1.2);
-            vessel(x + Math.random() * 4, H, -1, H * (0.15 + Math.random() * 0.35), 1 + Math.random() * 1.2);
+        const red = () => `rgba(${105 + rnd() * 35},${22 + rnd() * 14},${34 + rnd() * 16},${0.3 + rnd() * 0.25})`;
+        const vein = () => `rgba(${84 + rnd() * 20},${46 + rnd() * 12},${70 + rnd() * 16},${0.22 + rnd() * 0.2})`;
+        // Where the mesentery (the omentum, the mesocolon) holds it: yellow lobulated fat, the arcade running along it.
+        const held = (fat: number, lobules: number) => {
+            for (let k = 0; k < lobules; k++) {
+                const y = (rnd() < 0.5 ? rnd() : -rnd()) * fat * H;
+                blob(rnd() * W, y < 0 ? H + y : y, 4 + rnd() * 8, 3 + rnd() * 6, `rgba(${222 + rnd() * 16},${186 + rnd() * 20},${96 + rnd() * 30},${0.55 + rnd() * 0.35})`, 0.35);
+            }
+            for (const y0 of [fat * H * 0.45, H - fat * H * 0.45]) vessel(0, y0, 1, W + 20, 2.2, 'rgba(98,22,32,0.7)', 0.5, true);
+        };
+        if (kind === 'bowel') {
+            held(0.07, 420);
+            for (let x = 0; x < W; x += 4 + rnd() * 6) {
+                vessel(x, H * 0.05, 1, H * (0.18 + rnd() * 0.3), 0.9 + rnd() * 0.8, rnd() < 0.7 ? red() : vein(), 0.3);
+                vessel(x + rnd() * 3, H * 0.95, -1, H * (0.18 + rnd() * 0.3), 0.9 + rnd() * 0.8, rnd() < 0.7 ? red() : vein(), 0.3);
+            }
+        } else if (kind === 'colon') {
+            // Haustra: six to a picture's length, a crease between each and the next, bulging between.
+            const N = 6;
+            for (let k = 0; k < N; k++) {
+                const x = (k / N) * W + (rnd() - 0.5) * 8;
+                for (let y = 0; y < H; y += 4) blob(x + Math.sin(y * 0.05 + k) * 4, y, 3 + rnd() * 2, 4, 'rgba(120,98,88,0.3)', -0.45);
+                for (let y = 0; y < H; y += 6) blob(x + W / N / 2, y, W / N / 3, 5, 'rgba(190,170,150,0.05)', 0.12);
+            }
+            held(0.06, 160);
+            // The taeniae: flat bands, paler, their fibres running along, at a third of the way round from each other.
+            for (const yc of [H / 3, (2 * H) / 3]) {
+                for (let x = 0; x < W; x += 2) blob(x, yc + (rnd() - 0.5) * 10, 3 + rnd() * 4, 1.5, `rgba(${200 + rnd() * 16},${186 + rnd() * 14},${160 + rnd() * 14},0.5)`, 0.05);
+                // Omental appendices: little tags of yellow fat along them.
+                for (let x = rnd() * 40; x < W; x += 35 + rnd() * 40) blob(x, yc + (rnd() - 0.5) * 24, 6 + rnd() * 6, 4 + rnd() * 5, `rgba(${226 + rnd() * 14},${192 + rnd() * 16},${98 + rnd() * 24},0.85)`, 0.6);
+            }
+            for (let x = 0; x < W; x += 9 + rnd() * 10) {
+                vessel(x, H * 0.04, 1, H * (0.1 + rnd() * 0.2), 0.8 + rnd() * 0.5, red(), 0.25);
+                vessel(x, H * 0.96, -1, H * (0.1 + rnd() * 0.2), 0.8 + rnd() * 0.5, red(), 0.25);
+            }
+        } else {
+            held(0.12, 600);
+            for (let x = 0; x < W; x += 12 + rnd() * 16) {
+                vessel(x, H * 0.08, 1, H * (0.2 + rnd() * 0.25), 1.2 + rnd() * 0.8, red(), 0.3);
+                vessel(x, H * 0.92, -1, H * (0.2 + rnd() * 0.25), 1.2 + rnd() * 0.8, red(), 0.3);
+            }
         }
-        t.update(true);
-        return t;
+        albedo.update(true);
+        // The relief: from the height, which way each place faces (a tangent-space normal map).
+        h.filter = 'blur(1px)';
+        h.drawImage(hc, 0, 0);
+        const hd = h.getImageData(0, 0, W, H).data, rg = relief.getContext() as CanvasRenderingContext2D;
+        const out = rg.createImageData(W, H), od = out.data, at = (x: number, y: number) => hd[(((y + H) % H) * W + ((x + W) % W)) * 4] / 255;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+            const dx = (at(x + 1, y) - at(x - 1, y)) * 2.5, dy = (at(x, y + 1) - at(x, y - 1)) * 2.5, l = Math.hypot(dx, dy, 1), i = (y * W + x) * 4;
+            od[i] = (0.5 - dx / l / 2) * 255; od[i + 1] = (0.5 + dy / l / 2) * 255; od[i + 2] = (0.5 + 0.5 / l) * 255; od[i + 3] = 255;
+        }
+        rg.putImageData(out, 0, 0);
+        relief.update(true);
+        return { albedo, relief };
     }
 
     // --- every frame ------------------------------------------------------------------------
@@ -583,9 +672,8 @@ class Loop {
         const E = npc.worldOf(o.at.add(o.ex), o.owner).at.subtract(F);
         E.subtractInPlace(N.scale(V3.Dot(E, N))).normalize();
         const Y = V3.Cross(N, E);
-        const long = Math.max(0, o.half[0] - o.half[1]);
         // A loop squeezes a little: through anything wider than seven tenths of itself.
-        const room = o.half[1] - R * 0.7;
+        const squeeze = R * 0.7;
         // The pressure pushing it out where it presses on the opening: the tone and the weight of what lies above, and
         // as acceleration of the bit of it in the opening (its area across over its mass, and the mass of the packed
         // contents it has to move aside to get there, some ten times its own).
@@ -667,7 +755,7 @@ class Loop {
             for (let i = 1; i < n - 1; i++) {
                 const k = i * 3, dx = p[k] - F.x, dy = p[k + 1] - F.y, dz = p[k + 2] - F.z;
                 const hn = dx * N.x + dy * N.y + dz * N.z, x = dx * E.x + dy * E.y + dz * E.z, y = dx * Y.x + dy * Y.y + dz * Y.z;
-                const through = room > 0 && Math.hypot(Math.max(Math.abs(x) - long, 0), y) < room;
+                const through = Math.abs(y) < gape(o.half, x) - squeeze;
                 const held = this.hold?.index === i;
                 this.passing[i] = through && hn > -(WALL + R * 3) && hn < R * 2 ? 1 : 0;
                 if (!this.out[i]) {
@@ -693,7 +781,7 @@ class Loop {
                     // Lying on the skin round the opening, or on the clothes further off.
                     // (In the hole torn in the clothes over the opening it lies on the skin; further off, on the clothes, which it
                     // lifts and pushes aside near the hole.)
-                    const lie = R + CLOTHES * Math.min(1, Math.max(0, Math.hypot(Math.max(Math.abs(x) - long, 0), y) - o.half[1]) / 0.1);
+                    const lie = R + CLOTHES * Math.min(1, Math.max(0, Math.abs(y) - gape(o.half, x), Math.abs(x) - o.half[0]) / 0.1);
                     if (!through && !held && hn < lie && Math.abs(x) < o.half[0] + 0.15 && Math.abs(y) < o.half[0] + 0.15) {
                         const s = lie - hn; p[k] += N.x * s; p[k + 1] += N.y * s; p[k + 2] += N.z * s;
                     }
@@ -753,8 +841,12 @@ class Loop {
         this._pos = pos;
         this._nor = new Float32Array(pos.length);
         this._line = new Float32Array(rings * 3);
+        this._index = index;
+        this._along = along;
     }
     declare _line: Float32Array;
+    declare _index: number[];
+    declare _along: number;
 
     draw() {
         const n = this.count, p = this.p, pos = this._pos, nor = this._nor, line = this._line, rings = (n - 1) * SPLIT + 1, R = this.r;
@@ -770,28 +862,55 @@ class Loop {
             }
         }
         line.set(p.subarray((n - 1) * 3, n * 3), (rings - 1) * 3);
-        // A frame carried along it (parallel transport), so the tube does not twist.
+        // A frame carried along it, its first axis turned toward where its attachments hold it (the middle of its two
+        // ends): the side its mesentery meets it (v = 0 of its picture) faces that way, as it does on a real loop. (Carried
+        // on from the last ring where that way is along it.)
+        const rx = (p[0] + p[(n - 1) * 3]) / 2, ry = (p[1] + p[(n - 1) * 3 + 1]) / 2, rz = (p[2] + p[(n - 1) * 3 + 2]) / 2;
+        const step = this.rest / SPLIT, kind = this.kind;
         let ux = 0, uy = 1, uz = 0;
         for (let i = 0; i < rings; i++) {
-            const a = Math.max(0, i - 1) * 3, b = Math.min(rings - 1, i + 1) * 3;
+            const a = Math.max(0, i - 1) * 3, b = Math.min(rings - 1, i + 1) * 3, x = line[i * 3], y = line[i * 3 + 1], z = line[i * 3 + 2];
             let tx = line[b] - line[a], ty = line[b + 1] - line[a + 1], tz = line[b + 2] - line[a + 2];
             const tl = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
             tx /= tl; ty /= tl; tz /= tl;
-            let dot = ux * tx + uy * ty + uz * tz;
+            let hx = rx - x, hy = ry - y, hz = rz - z, dot = hx * tx + hy * ty + hz * tz;
+            hx -= tx * dot; hy -= ty * dot; hz -= tz * dot;
+            const hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
+            if (hl > 0.01) { ux = hx / hl; uy = hy / hl; uz = hz / hl; }
+            dot = ux * tx + uy * ty + uz * tz;
             ux -= tx * dot; uy -= ty * dot; uz -= tz * dot;
             let ul = Math.sqrt(ux * ux + uy * uy + uz * uz);
             if (ul < 1e-3) { ux = Math.abs(ty) < 0.9 ? 0 : 1; uy = Math.abs(ty) < 0.9 ? 1 : 0; uz = 0; dot = ux * tx + uy * ty; ux -= tx * dot; uy -= ty * dot; uz -= tz * dot; ul = Math.sqrt(ux * ux + uy * uy + uz * uz); }
             ux /= ul; uy /= ul; uz /= ul;
             const wx = ty * uz - tz * uy, wy = tz * ux - tx * uz, wz = tx * uy - ty * ux;
-            const x = line[i * 3], y = line[i * 3 + 1], z = line[i * 3 + 2];
+            // Where it bends, its inner side is pressed together into soft creases and its outer side drawn smooth.
+            const a1 = Math.max(0, i - 2) * 3, b1 = Math.min(rings - 1, i + 2) * 3, span = ((b1 - a1) / 6) * step || 1;
+            let cx = line[a1] + line[b1] - 2 * x, cy = line[a1 + 1] + line[b1 + 1] - 2 * y, cz = line[a1 + 2] + line[b1 + 2] - 2 * z;
+            const cl = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1, fold = Math.min(1, ((cl / (span * span)) * R) * 1.5);
+            cx /= cl; cy /= cl; cz /= cl;
             // Wider and narrower along its length, as a bowel with its contents in it is.
-            const f = i / SPLIT, r = R * (0.88 + 0.16 * Math.sin(f * 1.7 + 0.6) * Math.sin(f * 0.53 + 1.3));
+            const f = i / SPLIT, u = f * this._along, r = R * (0.88 + 0.16 * Math.sin(f * 1.7 + 0.6) * Math.sin(f * 0.53 + 1.3));
+            // The colon gathered into haustra between creases (six to its picture's length, where it paints them).
+            const haustra = kind === 'colon' ? 0.84 + 0.16 * Math.pow(Math.sin(Math.PI * ((u * 6) % 1)), 0.6) : 1;
             for (let s2 = 0; s2 < SIDES; s2++) {
                 const c = COS[s2], sn = SIN[s2], o = (i * SIDES + s2) * 3;
                 const nx = ux * c + wx * sn, ny = uy * c + wy * sn, nz = uz * c + wz * sn;
-                pos[o] = x + nx * r; pos[o + 1] = y + ny * r; pos[o + 2] = z + nz * r;
-                nor[o] = nx; nor[o + 1] = ny; nor[o + 2] = nz;
+                let k = haustra;
+                // The mesentery's fat along the side it holds: a soft ridge (the colon's mesocolon less, the stomach's
+                // omentum more), and the colon's taeniae, flat bands drawing it in a third of the way round each.
+                const toward = Math.pow(Math.max(0, c), 8);
+                if (kind === 'colon') k *= (1 + 0.2 * toward) * (1 - 0.06 * Math.pow(Math.max(0, Math.cos(Math.atan2(sn, c) - (2 * Math.PI) / 3)), 30) - 0.06 * Math.pow(Math.max(0, Math.cos(Math.atan2(sn, c) + (2 * Math.PI) / 3)), 30));
+                else k *= 1 + (kind === 'stomach' ? 0.3 : 0.4) * toward;
+                const inner = nx * cx + ny * cy + nz * cz;
+                k *= 1 - 0.28 * fold * Math.max(0, inner) * (0.75 + 0.25 * Math.sin(f * 9 + s2)) + 0.04 * fold * Math.max(0, -inner);
+                pos[o] = x + nx * r * k; pos[o + 1] = y + ny * r * k; pos[o + 2] = z + nz * r * k;
             }
+        }
+        // Normals from the shape itself (it is not round), the seam where the picture wraps made one.
+        BABYLON.VertexData.ComputeNormals(pos, this._index, nor);
+        for (let i = 0; i < rings; i++) {
+            const a = i * SIDES * 3, b = (i * SIDES + SIDES - 1) * 3;
+            for (let j = 0; j < 3; j++) nor[a + j] = nor[b + j] = (nor[a + j] + nor[b + j]) / 2;
         }
         this.mesh.updateVerticesData(BABYLON.VertexBuffer.PositionKind, pos);
         this.mesh.updateVerticesData(BABYLON.VertexBuffer.NormalKind, nor);
@@ -825,6 +944,15 @@ function nearestOnSegment(x: number, y: number, z: number, c) {
 function distToSegment(x: number, y: number, z: number, c) {
     const [nx, ny, nz] = nearestOnSegment(x, y, z, c);
     return Math.hypot(x - nx, y - ny, z - nz);
+}
+
+// Half the width of an opening `half` metres ([half its length, half its width at most]) at `x` metres along it from its
+// middle. A cut through skin gapes as the skin either side is pulled apart by its tension, most at the middle and
+// closing to its ends (dev/research/tissue-mechanics.md, wounds.md: a cut across Langer's lines gapes into an
+// ellipse); a hole as wide as it is long is round. hider.ts draws the same shape.
+function gape(half: number[], x: number) {
+    const along = Math.min(1, Math.abs(x) / half[0]), lens = 0.5 + 0.5 * Math.min(1, Math.max(0, (half[0] / half[1] - 1) * 0.5));
+    return half[1] * Math.pow(Math.max(0, 1 - along * along), lens);
 }
 
 // Whether the capsule `c` (ends a, b) comes within `r` of point `p`.

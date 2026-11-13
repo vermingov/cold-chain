@@ -20,7 +20,7 @@ const HANGS = new V3(0.3, -1, -0.15);       // the way the elbow is off the line
 const SPEED = 7;                             // m/s at the hand, the most
 const ARM = /^(upperarm|lowerarm|wrist|finger).*\.R$/;
 // What the player wears on it: a canvas work jacket, its sleeve down to a cuff short of the wrist, standing off the skin.
-const SLEEVE = { colour: [0.13, 0.12, 0.095], rough: 0.88, off: 0.007, cuff: 0.03 };
+const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, off: 0.007, cuff: 0.03 };
 
 type Key = { at: BABYLON.Vector3; t: number; turn: number; ease: (u: number) => number; arc?: number };
 const smooth = (u: number) => u * u * (3 - 2 * u);
@@ -135,7 +135,7 @@ export class Fist {
     _pose(turn: number) {
         const m = this.camera.getWorldMatrix(), a = turn * 1.1, arm = this.arm;
         const at = V3.TransformCoordinates(this.at, m), shoulder = arm._shoulder(), [upper, fore] = arm.lengths, rest = fore + this.hand;
-        const line = at.subtract(shoulder), toward = line.normalize(), far = Math.min(line.length(), (upper + rest) * 0.985);
+        const line = at.subtract(shoulder), toward = line.normalizeToNew(), far = Math.min(line.length(), (upper + rest) * 0.985);
         const near = (upper * upper + far * far - rest * rest) / (2 * far), round = Math.sqrt(Math.max(0, upper * upper - near * near));
         const hangs = V3.TransformNormal(HANGS, m), aside = hangs.subtract(toward.scale(V3.Dot(hangs, toward))).normalize();
         const elbow = shoulder.add(toward.scale(near)).add(aside.scale(round));

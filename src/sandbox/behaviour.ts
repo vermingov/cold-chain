@@ -530,9 +530,9 @@ export class Behaviour {
             // (As far over as tending a wound there has not bent them already.)
             more({ spineFlex: Math.max(0, 34 - this.hunch), neckFlex: 12, kneeL: 12, kneeR: 12 });
         } else if (r.kind === 'guard') {
-            // Hands up in front of the face, chin down.
+            // Hands up in front of the face, closed, the thumbs in over the fingers, chin down.
             more({ shoulderFlexL: 75, shoulderFlexR: 75, shoulderAbductL: 8, shoulderAbductR: 8, elbowL: 115, elbowR: 115, curlL: 55, curlR: 55,
-                neckFlex: 14, spineFlex: 8 });
+                thumbL: 35, thumbR: 35, thumbInL: 50, thumbInR: 50, neckFlex: 14, spineFlex: 8 });
         } else if (r.kind === 'leg') {
             // A dead leg: it gives at the knee for a moment, and the balance has to cope.
             this.strength['leg' + r.side] *= 1 - 0.7 * e;

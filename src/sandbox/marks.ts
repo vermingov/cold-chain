@@ -202,28 +202,35 @@ export class Marks {
         this._dirty.add(this.depth);
     }
 
-    // The lips of an opening right through the body's wall (viscera.ts), its middle line through skin crossings `line`
-    // (in order), `half` metres either side of it: the skin's cut edge, the fat and the muscle of the wall in a band `lip`
-    // wide round it. (Inside it, no skin is drawn.)
-    lip(line, half: number, lip: number) {
-        this._open(line[0], (g, _x, _y, px) => {
-            g.lineCap = 'round';
-            g.lineJoin = 'round';
-            g.filter = 'blur(1.5px)';
-            for (const [out, share] of [[1, 0.04], [0.5, 0.18], [0.15, 0.5]]) {
-                g.lineWidth = px(2 * (half + lip * out));
-                g.strokeStyle = `rgb(${Math.round(255 * share)},${Math.round(220 * Math.min(1, share * 1.8))},0)`;
-                g.beginPath();
-                let last = null;
-                for (const h of line) {
-                    const x = h.uv[0] * SIZE, y = (1 - h.uv[1]) * SIZE;
-                    if (last && Math.hypot(h.uv[0] - last[0], h.uv[1] - last[1]) < 0.04) g.lineTo(x, y); else g.moveTo(x, y);
-                    last = h.uv;
-                }
-                if (line.length === 1) g.lineTo(line[0].uv[0] * SIZE + 0.01, (1 - line[0].uv[1]) * SIZE);
-                g.stroke();
+    // The lips of an opening right through the body's wall (viscera.ts): its edge through skin crossings `edge` (in
+    // order, all round it), and out from it, in a band about `lip` metres wide, the wall's layers as its cut face shows
+    // them: the skin's cut edge, the fat under it, the white sheath, then the muscle, deeper the nearer the hole, and
+    // blood in them. A torn wall draws back unevenly, so the band is wider here and narrower there. (Inside the edge,
+    // no skin is drawn.) The depth runs down evenly across the band, so that each layer shows as wide as it is thick
+    // in it; flat steps of depth showed one layer only, the fat, as a band of one colour.
+    lip(edge, lip: number) {
+        const g = this.depth.getContext() as CanvasRenderingContext2D, n = edge.length;
+        const px = (m: number) => Math.max(1, m * edge[0].scale * SIZE);
+        const phase = Math.random() * 6;
+        const wide = edge.map((_, k) => lip * (0.55 + 0.5 * (0.5 + 0.5 * Math.sin(k * 0.6 + phase) * Math.sin(k * 0.21 + phase * 1.7)) + 0.2 * Math.random()));
+        g.save();
+        g.globalCompositeOperation = 'lighten';
+        g.lineCap = 'round';
+        g.filter = 'blur(1px)';
+        const STEPS = 10;
+        for (let s = 0; s < STEPS; s++) {
+            // From the band's outer edge (out = 1: the skin's cut edge, 1 mm deep) to the hole (2 cm, a lean wall).
+            const out = 1 - s / STEPS, deep = 0.03 + 0.47 * (1 - out);
+            g.strokeStyle = `rgb(${Math.round(255 * deep)},${Math.round(200 * Math.min(1, 0.25 + deep * 1.6))},0)`;
+            for (let k = 0; k < n; k++) {
+                const a = edge[k].uv, b = edge[(k + 1) % n].uv;
+                if (Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.04) continue;
+                g.lineWidth = px(out * (wide[k] + wide[(k + 1) % n]));
+                g.beginPath(); g.moveTo(a[0] * SIZE, (1 - a[1]) * SIZE); g.lineTo(b[0] * SIZE, (1 - b[1]) * SIZE); g.stroke();
             }
-        });
+        }
+        g.restore();
+        this._dirty.add(this.depth);
     }
 
     // A bruise where a blow landed.
@@ -332,7 +339,7 @@ float goreWet = 0.0;
         float gfine = clamp(1.6 - gstep * 2600.0, 0.0, 1.0), gmid = clamp(1.6 - gstep * 900.0, 0.0, 1.0);
         float d = gm.r * 40.0 * (0.8 + 0.4 * mix(0.5, goreNoise(gu * 2600.0), gfine)) + (mix(0.5, goreNoise(gu * 900.0), gmid) - 0.5) * 1.2;
         // Fat in lobules a few millimetres across, each a little more or less yellow, the septa between them paler.
-        vec3 fat = vec3(0.74, 0.58, 0.36) * (0.86 + 0.24 * mix(0.5, goreNoise(gu * 1300.0 + 5.0), clamp(1.6 - gstep * 1300.0, 0.0, 1.0)));
+        vec3 fat = vec3(0.84, 0.66, 0.32) * (0.86 + 0.24 * mix(0.5, goreNoise(gu * 1300.0 + 5.0), clamp(1.6 - gstep * 1300.0, 0.0, 1.0)));
         vec3 flesh = mix(vec3(0.5, 0.17, 0.15), fat, smoothstep(1.4, 2.6, d));
         flesh = mix(flesh, vec3(0.68, 0.62, 0.56), smoothstep(9.5, 11.0, d));
         flesh = mix(flesh, vec3(0.36, 0.06, 0.05), smoothstep(11.5, 13.0, d));

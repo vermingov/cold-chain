@@ -283,8 +283,13 @@ for (int i = 0; i < ${MOST}; i++) {
     // A hole in clothes (a width below nothing): round, with a frayed edge.
     // (frayed: the edge of a hole in cloth wanders with the weave, not in a pattern)
     if (hiderB[i].w < 0.0) { if (length(onPlane) < hiderA[i].w * (0.7 + 0.45 * hiderNoise(vHiderRest * 900.0) + 0.15 * hiderNoise(vHiderRest * 3000.0))) discard; }
-    // (An opening torn in skin: its edge wanders by a tenth of its width or so, as torn skin's does.)
-    else if (length(vec2(max(abs(onPlane.x) - (hiderA[i].w - hiderB[i].w), 0.0), onPlane.y)) < hiderB[i].w * (0.92 + 0.16 * hiderNoise(vHiderRest * 260.0))) discard;
+    // An opening through the skin: a slit gaping most at its middle and closing to its ends (a lens: the skin either side
+    // pulled apart by its tension), round when it is as wide as it is long (viscera.ts's gape). Its edge wanders by a
+    // tenth of its width or so, as torn skin's does.
+    else {
+        float along = clamp(abs(onPlane.x) / hiderA[i].w, 0.0, 1.0), lens = 0.5 + 0.5 * clamp((hiderA[i].w / hiderB[i].w - 1.0) * 0.5, 0.0, 1.0);
+        if (abs(onPlane.y) < hiderB[i].w * pow(max(1.0 - along * along, 0.0), lens) * (0.92 + 0.16 * hiderNoise(vHiderRest * 260.0))) discard;
+    }
 }
 #endif
 `,
