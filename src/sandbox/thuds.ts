@@ -78,7 +78,8 @@ export class Thuds {
             at.addInPlace(c.scaleInPlace(seg.mass));
         }
         const speed = mass > 5 ? slid / mass : 0;
-        if (speed > 0.1) (this.dragging ??= sound.stream('drag', at.scale(1 / mass).asArray())).at(at.scale(1 / mass).asArray());
+        // (Streams are the sound itself's: world.sound is only the game's shot/now wrapper round it, `raw`.)
+        if (speed > 0.1 && sound.raw.has('drag')) (this.dragging ??= sound.raw.stream('drag', at.scale(1 / mass).asArray())).at(at.scale(1 / mass).asArray());
         this.dragging?.drive(speed > 0.1 ? Math.min(1, speed / 1.5) * 0.8 : 0);
     }
 }
