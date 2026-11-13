@@ -22,7 +22,7 @@ npm run build            # dist/; node server.js serves dist/ + assets from the 
 ```
 `tools/rig.mjs` drives headless Chromium over DevTools (read its header; `RIG_GPU=1` for real frame times). Every change
 is judged from screenshots taken with it. `window.__sandbox` (play.html) is the sandbox, reachable from the rig.
-Bump `version` in package.json with every update (shown top left). Current: 0.8.19.
+Bump `version` in package.json with every update (shown top left). Current: 0.8.21.
 
 Not in this zip: `node_modules`, `dist`, the git history (the last two commits' text diff is in
 `dev/last-commits.patch`), and `~/.cache/cold-chain` (fetched MakeHuman/BodyParts3D sources for tools/*.py, and old

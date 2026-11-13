@@ -821,3 +821,41 @@ Checked headless on SwiftShader (frames stepped by hand, numbers read back); not
 
 Left: the dark smudge on chin and neck; K grows ~20 materials and 22 textures a reset (not dressing-related); the
 little-finger crease in a full fist; the X-ray hand bones don't cup; performance under carnage (next).
+
+## 0.8.20 (2026-11-13, cloud session): pushed to show progress, not fully verified
+Checked headless on SwiftShader where the machine allowed; nothing seen in real time on a GPU; the smoke test of K
+after heavy damage was skipped (a hang there was seen once in the rig, cause not traced).
+- Faces: MakeHuman's face rig and 60 CC0 pose units (people rebuilt), FACS-driven pain, fear, cries, breath, shock,
+  death; blinks, saccades, converging gaze, pupils, pallor (face.ts, dev/research/faces.md).
+- First person: both arms and hands hold every weapon (hands.ts), models turned along the bore, sway, bob, recoil about
+  the grip, keyframed swings, reloads done by the hands.
+- Stab and gunshot blood from the forensic record (dev/research/stab-wounds.md, gunshot-blood.md): no spatter from blades,
+  cast-off, no instant smear or fountain, small back spatter, real exit openings, slits along the blade, drips poured into
+  pools; wound edges with thin pale fat and blood over muscle.
+- Sound: voices and falls follow their source; distance through the room (reverb send equal to direct at 2.8 m) and
+  muffling behind the map's blocks; impact sounds from Havok contacts (thuds.ts), wall slams as blunt blows, ledge
+  landings counted; 43 new ElevenLabs takes (reloads, dressing, head hits, body slams, limb slaps, drag, variations).
+- Reactions: the other hand holds an arm wound, full self-collision except jointed neighbours, head and face dressings,
+  swelling carries clothes and dressings.
+- Dismemberment, stumps and severed pieces: fixes in progress at this commit.
+- Performance: per-person culling boxes and shadow casters culled to each lamp (no pixel changed in 72 views); organ
+  loops skip unchanged redraws, own normals, fewer allocations.
+Left for 0.8.21: active-ragdoll steadiness, feet and fractures (in progress), the K hang, the chin/neck smudge, the
+material leak on K.
+
+## 0.8.21 (2026-11-13, cloud session)
+Headless checks where the machine allowed; little of this was seen running; the warm-up and the per-shot costs never
+finished a timed run on the software renderer.
+- Active ragdoll: each joint a Havok spring motor (SPRING_FORCE, stiffness from the muscle, damping 0.8 of critical for
+  the inertia beyond the joint), set once and never back to NONE (the 400-cycle trap test passes: 24,000 holds, 113,358
+  calls); arm and leg targets eased; balance damped by the trunk's spin; standing hand and head jitter cut by about two
+  thirds, the unconscious lie still. Broken limbs held at 0.35 strength and never used to brace, hold or crawl; a
+  broken mid joint keeps its grating friction; a broken heel takes the leg.
+- Dismemberment: a second cut starts from the body's weights (the stretched sleeve), pieces placed after each physics
+  step (they no longer shake with the living body), stump dressings on the stump's own skin.
+- Shooting: hit tests only through triangle boxes a line crosses (same hits); a muzzle flash per gun for one frame
+  (core, intermediate flash, M4 birdcage tongues, shotgun ball), per-gun light, smoke and sparks (muzzle.ts,
+  dev/research/muzzle-flash.md); shaders compiled during loading by a rehearsal of events, then a reset (warm.ts).
+Left: feet still buzz about 1 rad/s; the other hand ends 28-49 cm from an arm wound; the K hang after heavy damage
+(the warm-up resets the same way: if loading hangs, this is why); marks.ts uploads whole 2048 textures per paint;
+casings not pooled; the chin/neck smudge; the material leak on K.
