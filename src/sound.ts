@@ -42,6 +42,16 @@ const ROOMS = {
 };
 // How a sound with a place falls away with distance (metres).
 const FALLS = { near: 1.5, far: 60, rolls: 1.1 };
+// How much of a sound with a place goes into the room's ring, whatever its distance: a room gives back about the same
+// whether a voice is near or far, while the voice itself falls away, and how much of what is heard is room is the
+// ear's measure of how far off a thing is. 4.5 makes the two equal at 2.8 m (measured through this panner and the
+// 'cold' ring), the hall's critical distance: 0.057 * sqrt(volume / RT60) = 0.057 * sqrt(22 * 22 * 5.5 / 1.1).
+const FAR = 4.5;
+// A sound with something solid between it and the ears is heard round it, not through it: duller and quieter
+// (diffraction over a barrier costs 5 to 15 dB, the most at high frequencies: Maekawa 1968).
+// shortcut: hidden or not by the one straight line, no loss graded by how far round it is; grade it by the path
+// difference if the change sounds abrupt at an edge.
+const SHUT = { frequency: 1000, gain: 0.35 }, OPEN = 20000;
 
 // Where a recording is sounding: [[from, to], ...] in seconds.
 function bursts(buffer) {
@@ -94,7 +104,11 @@ export class Sound {
     declare ring: ConvolverNode;
     declare wet: GainNode;
     declare rooms: Map<string, AudioBuffer>;
-    declare following: { panner: PannerNode; where: () => number[]; until: number }[];
+    declare direct: GainNode;
+    declare far: GainNode;
+    declare placed: Set<Place>;
+    declare ear: number[] | null;
+    declare screened: ((a: number[], b: number[]) => boolean) | null;
 
     constructor() {
         this.context = new AudioContext({ latencyHint: 'interactive' });
@@ -112,12 +126,20 @@ export class Sound {
         this.wet = context.createGain();
         this.out.connect(this.limiter);
         this.out.connect(this.ring).connect(this.wet).connect(this.limiter);
+        // A sound with a place: itself straight to the limiter, and into the ring at the same level wherever it is.
+        this.direct = context.createGain();
+        this.direct.connect(this.limiter);
+        this.far = context.createGain();
+        this.far.gain.value = FAR;
+        this.far.connect(this.ring);
+        this.placed = new Set();
+        this.ear = null;
+        this.screened = null;       // whether something solid stands between two places (the map says)
         this.limiter.connect(context.destination);
         this.rooms = new Map();
         this.room('none');
         this.takes = new Map();         // name -> [{ buffer, bursts }]
         this.streams = [];
-        this.following = [];
         // A page may not sound until somebody has touched it.
         for (const first of ['pointerdown', 'keydown']) window.addEventListener(first, () => this.context.resume(), { once: true });
     }
@@ -147,6 +169,7 @@ export class Sound {
     listen(camera) {
         const { listener, currentTime: now } = this.context, at = camera.globalPosition, ahead = camera.getDirection(FORWARD), up = camera.getDirection(UP);
         if (!Number.isFinite(at.x + at.y + at.z)) return;
+        this.ear = [at.x, at.y, at.z];
         // (Babylon's world is left-handed and Web Audio's right-handed: z is turned round.)
         // Firefox's listener has no positionX and the rest, only the older setPosition and setOrientation.
         if (!listener.positionX) {
@@ -159,14 +182,42 @@ export class Sound {
             [listener.upX, up.x], [listener.upY, up.y], [listener.upZ, -up.z]]) param.setTargetAtTime(value, now, 0.02);
     }
 
-    // A place in the world to hear something from, [x, y, z] in the game's world; its node is what the sound goes into.
-    place(at) {
-        const panner = new PannerNode(this.context, {
+    // A place in the world to hear something from, [x, y, z] in the game's world, or wherever `follow` says each frame;
+    // its `input` is what the sound goes into. Let go of with release().
+    place(at, follow = null): Place {
+        const context = this.context;
+        const input = context.createGain(), muffle = new BiquadFilterNode(context, { type: 'lowpass', frequency: OPEN, Q: 0.5 }), hush = context.createGain();
+        const panner = new PannerNode(context, {
             panningModel: 'HRTF', distanceModel: 'inverse', refDistance: FALLS.near, maxDistance: FALLS.far, rolloffFactor: FALLS.rolls,
             positionX: at[0], positionY: at[1], positionZ: -at[2],
         });
-        panner.connect(this.out);
-        return panner;
+        input.connect(muffle).connect(hush).connect(panner).connect(this.direct);
+        input.connect(this.far);
+        const place = { input, muffle, hush, panner, at, follow };
+        this.placed.add(place);
+        this._hear(place, true);
+        return place;
+    }
+
+    release(place: Place) {
+        for (const node of [place.input, place.muffle, place.hush, place.panner]) node.disconnect();
+        this.placed.delete(place);
+    }
+
+    // Where a place is now, and whether anything solid stands between it and the ears.
+    _hear(place: Place, first = false) {
+        const now = this.context.currentTime, at = place.follow ? place.follow() : place.at;
+        if (!Number.isFinite(at[0] + at[1] + at[2])) return;
+        place.at = at;
+        if (!first) {
+            place.panner.positionX.setTargetAtTime(at[0], now, 0.03);
+            place.panner.positionY.setTargetAtTime(at[1], now, 0.03);
+            place.panner.positionZ.setTargetAtTime(-at[2], now, 0.03);
+        }
+        const shut = !!(this.ear && this.screened?.(this.ear, at));
+        if (first) { place.muffle.frequency.value = shut ? SHUT.frequency : OPEN; place.hush.gain.value = shut ? SHUT.gain : 1; return; }
+        place.muffle.frequency.setTargetAtTime(shut ? SHUT.frequency : OPEN, now, 0.05);
+        place.hush.gain.setTargetAtTime(shut ? SHUT.gain : 1, now, 0.05);
     }
 
     // The ring of a room, made once: a burst that dies away as the room's walls give back less of it each time, darker
@@ -190,7 +241,7 @@ export class Sound {
 
     // A stream of the recordings called `name`; heard from a place (`at`) if it has one.
     stream(name, at = null) {
-        const stream = new Stream(this, this.takes.get(name), at && this.place(at));
+        const stream = new Stream(this, this.takes.get(name), at ? this.place(at) : null);
         this.streams.push(stream);
         return stream;
     }
@@ -202,23 +253,20 @@ export class Sound {
     // With `at` ([x, y, z]) it is heard from there; with `follow` (a function giving [x, y, z]) from wherever that is
     // each frame until it ends: a voice from a head that falls or is dragged, not from where it was when it began.
     shot(name, { gain = 1, rate = 1, most = 0, at = null, follow = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number } {
-        at = follow ? follow() : at;
-        const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)], into = at ? this.place(at) : this.out;
-        const moves = (length, r) => follow && this.following.push({ panner: into as PannerNode, where: follow, until: this.context.currentTime + length / r + 0.05 });
+        const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)];
+        const place = at || follow ? this.place(follow ? follow() : at, follow) : null, into = place ? place.input : this.out;
         if (most && take.hits.length) {
             const which = Math.floor(Math.random() * take.hits.length), from = Math.max(0, take.hits[which] - BURST.lead);
             const next = which + 1 < take.hits.length ? take.hits[which + 1] - BURST.lead : take.buffer.duration;
             const r = rate * (0.96 + Math.random() * 0.08);
-            this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, r, into, !!at);
-            moves(Math.min(most, next - from), r);
+            this._play(take.buffer, this.context.currentTime, from, Math.min(most, next - from), 0.004, 0.08, gain, r, into, place);
             return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: Math.min(most, next - from) };
         }
         const which = Math.floor(Math.random() * take.bursts.length), [from, to] = take.bursts[which];
         // It rings on after it has gone quiet, as far as the next one or the end.
         const until = Math.min(to + BURST.rings, which + 1 < take.bursts.length ? take.bursts[which + 1][0] : take.buffer.duration);
         const r = rate * (0.96 + Math.random() * 0.08);
-        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, !!at);
-        moves(until - from, r);
+        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, place);
         // What is playing, for whoever wants to follow it (a face mouthing its own voice).
         return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from };
     }
@@ -226,27 +274,19 @@ export class Sound {
     // A stream no longer wanted: it falls silent and is no longer kept going.
     drop(stream) {
         stream.level.disconnect();
-        stream.panner?.disconnect();
+        if (stream.place) this.release(stream.place);
         this.streams = this.streams.filter((s) => s !== stream);
     }
 
     // Once a frame: every stream lines up what it will be playing next.
     update() {
         for (const stream of this.streams) stream._ahead();
-        const now = this.context.currentTime;
-        this.following = this.following.filter((f) => f.until > now);
-        for (const { panner, where } of this.following) {
-            const [x, y, z] = where();
-            if (!Number.isFinite(x + y + z)) continue;
-            panner.positionX.setTargetAtTime(x, now, 0.03);
-            panner.positionY.setTargetAtTime(y, now, 0.03);
-            panner.positionZ.setTargetAtTime(-z, now, 0.03);
-        }
+        for (const place of this.placed) this._hear(place);
     }
 
     // A length of a recording, from `from` for `length` seconds, starting
-    // at `when`, faded in and out, into `into` (let go of with it when `owned`).
-    _play(buffer, when, from, length, fadeIn, fadeOut, gain, rate, into, owned = false) {
+    // at `when`, faded in and out, into `into` (its place, `owned`, let go of with it).
+    _play(buffer, when, from, length, fadeIn, fadeOut, gain, rate, into, owned: Place | null = null) {
         const source = this.context.createBufferSource(), level = this.context.createGain();
         source.buffer = buffer;
         source.playbackRate.value = rate;
@@ -259,14 +299,16 @@ export class Sound {
         source.start(when, from, length);
         source.onended = () => {
             level.disconnect();
-            if (owned) into.disconnect();
+            if (owned) this.release(owned);
         };
     }
 }
 
+type Place = { input: GainNode; muffle: BiquadFilterNode; hush: GainNode; panner: PannerNode; at: number[]; follow: (() => number[]) | null };
+
 class Stream {
     declare sound: any;
-    declare panner: PannerNode | null;
+    declare place: Place | null;
     declare takes: any;
     declare level: any;
     declare driven: number;
@@ -276,13 +318,13 @@ class Stream {
     declare head: number;
     declare until: number;
 
-    constructor(sound, takes, panner = null) {
+    constructor(sound, takes, place: Place | null = null) {
         this.sound = sound;
         this.takes = takes;
-        this.panner = panner;
+        this.place = place;
         this.level = sound.context.createGain();
         this.level.gain.value = 0;
-        this.level.connect(panner || sound.out);
+        this.level.connect(place ? place.input : sound.out);
         this.driven = 0;
         this.rate = 1;
         this.next = 0;                  // when the next length is due to start
@@ -293,10 +335,7 @@ class Stream {
 
     // Heard from somewhere else now, [x, y, z] (only a stream made with a place has one).
     at(where) {
-        const now = this.sound.context.currentTime;
-        this.panner?.positionX.setTargetAtTime(where[0], now, 0.03);
-        this.panner?.positionY.setTargetAtTime(where[1], now, 0.03);
-        this.panner?.positionZ.setTargetAtTime(-where[2], now, 0.03);
+        if (this.place) this.place.at = where;     // (moved there by Sound.update, as every place is)
     }
 
     // How loud it is to be from now (0 is silent), and how fast its recordings are to run.

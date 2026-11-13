@@ -13,7 +13,7 @@ import { Npc } from './npc.ts';
 import { Blood } from './blood.ts';
 import { Weapons } from './weapons.ts';
 import { buildArsenal } from './arsenal.ts';
-import { HALL, buildMap, ground, solids, land, covered } from './map.ts';
+import { HALL, buildMap, ground, solids, land, covered, screened } from './map.ts';
 const V3 = BABYLON.Vector3;
 
 const BODIES = ['oldman', 'sexton', 'buyer', 'hood'];
@@ -96,6 +96,32 @@ export async function openSandbox(engine, canvas, hud) {
     let seeing = false;
     await lineUp();
 
+    // Each person's skinned meshes (body, clothes, insides, cut-off pieces, dressings, teeth) culled by a box round the
+    // bodies their skeleton follows, in view and in each shadow lamp's: the bounds Babylon keeps are of the rest pose
+    // where the person was made, so all of them were drawn always. The box takes in last frame's bodies too, where a
+    // cut-off piece's bones still are (dismember.ts puts them before the step), and reaches past the segments' heads to
+    // the crown and the fingertips. A box for every submesh (theirs are of the rest pose too).
+    const FLESH = 0.35;
+    const boxes = new Map<BABYLON.Skeleton, [BABYLON.Vector3, BABYLON.Vector3]>(), was = new WeakMap<Npc, [BABYLON.Vector3, BABYLON.Vector3]>();
+    scene.dispatchAllSubMeshesOfActiveMeshes = true;
+    scene.onBeforeRenderObservable.add(() => {
+        boxes.clear();
+        for (const npc of world.npcs) {
+            const lo = new V3(Infinity, Infinity, Infinity), hi = lo.scale(-1);
+            for (const seg of npc.ragdoll.segments) { lo.minimizeInPlace(seg.node.position); hi.maximizeInPlace(seg.node.position); }
+            const before = was.get(npc) ?? [lo.clone(), hi.clone()];
+            was.set(npc, [lo.clone(), hi.clone()]);
+            boxes.set(npc.person.skeleton, [lo.minimizeInPlace(before[0]).addInPlaceFromFloats(-FLESH, -FLESH, -FLESH), hi.maximizeInPlace(before[1]).addInPlaceFromFloats(FLESH, FLESH, FLESH)]);
+        }
+        for (const mesh of scene.meshes) {
+            const box = mesh.skeleton && boxes.get(mesh.skeleton);
+            if (!box) continue;
+            mesh.doNotSyncBoundingInfo = true;
+            mesh.alwaysSelectAsActiveMesh = false;
+            mesh.getBoundingInfo().reConstruct(box[0], box[1]);     // in the world
+        }
+    });
+
     // N: another person standing where the eye is looking (on the floor, a ledge, the ramp). X: their insides shown
     // through them. K: the room cleared.
     window.addEventListener('keydown', async (e) => {
@@ -126,6 +152,7 @@ export async function openSandbox(engine, canvas, hud) {
         const sound = await new Sound().load('assets/sounds/', await (await fetch('assets/sounds/manifest.json')).json());
         await sound.load('assets/cries/', await (await fetch('assets/cries/manifest.json')).json());
         sound.room('cold');
+        sound.screened = screened;
         world.sound = { shot: (name, o = {}) => (sound.has(name) ? sound.shot(name, o) : null), now: () => sound.context.currentTime, raw: sound };
         player.onStep = (_, weight) => world.sound.shot('step-tarmac', { gain: weight * 0.8, most: 0.4 });
         if (sound.has('room-sandbox')) world.tone = sound.stream('room-sandbox');

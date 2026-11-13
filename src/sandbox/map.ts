@@ -96,6 +96,28 @@ export function ground(x: number, z: number, below = Infinity) {
     return g;
 }
 
+// Whether the straight line from `a` to `b` ([x, y, z]) passes through anything built: what a sound has to go round.
+// Each block is taken 5 cm in from its faces, so that a sound on a surface is not hidden by the surface it is on.
+export function screened(a: number[], b: number[]) {
+    const IN = 0.05;
+    for (const k of BLOCKS) {
+        let t0 = 0, t1 = 1;
+        for (const [i, lo, hi] of [[0, k.x0 + IN, k.x1 - IN], [1, k.y0 + IN, k.y1 - IN], [2, k.z0 + IN, k.z1 - IN]] as const) {
+            const d = b[i] - a[i];
+            if (Math.abs(d) < 1e-9) { if (a[i] < lo || a[i] > hi) { t0 = 2; break; } continue; }
+            const u = (lo - a[i]) / d, v = (hi - a[i]) / d;
+            t0 = Math.max(t0, Math.min(u, v));
+            t1 = Math.min(t1, Math.max(u, v));
+            if (t0 > t1) break;
+        }
+        if (t0 > t1) continue;
+        // The ramp fills its box only under its slope.
+        if (k.ramp) { const t = (t0 + t1) / 2, x = a[0] + (b[0] - a[0]) * t, z = a[2] + (b[2] - a[2]) * t; if (a[1] + (b[1] - a[1]) * t > top(k, x, z)) continue; }
+        return true;
+    }
+    return false;
+}
+
 // Whether the floor at (x, z) is under something standing on it (blood does not run in there).
 export function covered(x: number, z: number) {
     return near(x, z).some((k) => { const b = BLOCKS[k]; return b.y0 === 0 && x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1; });
@@ -288,6 +310,16 @@ function light(scene) {
         s.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
         s.bias = 0.0006;
         s.normalBias = 0.012;
+        // A shadow map draws every caster on its list, wherever it is: only those inside the lamp's frustum are drawn
+        // (what is outside it is not in the map). The lamps never move.
+        let planes: BABYLON.Plane[] | null = null;
+        const inside: BABYLON.AbstractMesh[] = [];
+        s.getShadowMap().getCustomRenderList = (_, list, n) => {
+            planes ??= BABYLON.Frustum.GetPlanes(s.getTransformMatrix());
+            inside.length = 0;
+            for (let i = 0; i < n; i++) if (list[i].alwaysSelectAsActiveMesh || list[i].isInFrustum(planes)) inside.push(list[i]);
+            return inside;
+        };
         shadows.push(s);
     }
     return { fill, lamps, shadows };
