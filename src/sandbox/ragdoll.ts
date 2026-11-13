@@ -218,7 +218,7 @@ export class Ragdoll {
         const isLead = new Set(ALL.map(([, bone]) => bone));
         this.between = [];
         for (const b of bones) {
-            if (isLead.has(b.name) || /finger|toe|eye|jaw|tongue|orbic|levator|risor|oris|temporal|special|cheek|nose|brow|lip|mouth|labi|mental|masseter/.test(b.name)) continue;
+            if (isLead.has(b.name) || /finger|metacarpal|toe|eye|jaw|tongue|orbic|levator|risor|oris|temporal|special|cheek|nose|brow|lip|mouth|labi|mental|masseter/.test(b.name)) continue;
             this.between.push(byName[b.name].bone);
         }
         this._place();

@@ -489,8 +489,8 @@ export class Blood {
         this.tops.set(key, have);
         if (!was) return false;
         if (Math.floor(Math.log2(have / GATHERS)) > Math.floor(Math.log2(was / GATHERS)) && have > GATHERS) {
-            // Spread 2.5 mm deep, as on the floor (floor.ts STANDS); the tile's blot fills about 40% of its quad.
-            const wide = 2 * Math.sqrt((have * 1e-6) / (Math.PI * 0.0025)) * 1.6;
+            // Spread 2.5 mm deep, as on the floor (floor.ts STANDS), on a quad as much bigger than its blot as a splash's.
+            const wide = 2 * Math.sqrt((have * 1e-6) / (Math.PI * 0.0025)) * 2.6;
             const way = V3.Cross(normal, V3.Right()).normalize(), side = V3.Cross(normal, way).normalize();
             this._mark(Math.floor(Math.random() * 4), way.scale(wide), side.scale(wide), normal, at);
         }

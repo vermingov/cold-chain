@@ -18,7 +18,7 @@ const COCKED = new V3(0.14, -0.09, 0.2);    // drawn back beside the jaw, at the
 const MISS = new V3(0.02, -0.04, 0.6);      // the arm's end, nothing met
 const HANGS = new V3(0.3, -1, -0.15);       // the way the elbow is off the line from shoulder to fist: down, a little out
 const SPEED = 7;                             // m/s at the hand, the most
-const ARM = /^(upperarm|lowerarm|wrist|finger).*\.R$/;
+const ARM = /^(upperarm|lowerarm|wrist|metacarpal|finger).*\.R$/;
 // What the player wears on it: a canvas work jacket, its sleeve down to a cuff short of the wrist, standing off the skin.
 const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, off: 0.007, cuff: 0.03 };
 

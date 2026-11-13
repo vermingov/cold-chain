@@ -282,7 +282,7 @@ export class Viscera {
         }
     }
 
-    // The outside of each kind that can come out (small bowel, colon, stomach): its painted wall and its relief, a thin
+    // The outside of each kind that can come out (small bowel, colon, stomach): its painted wall and its relief, a soft
     // wet sheen on it (the serosa glistens; it is not lacquered), and blood on it where it came through the wound. (One
     // for each kind for everybody.)
     _tube(kind: string) {
@@ -291,12 +291,16 @@ export class Viscera {
         const m = new BABYLON.PBRMaterial(`${kind}_out`, scene), look = this._tubeLook(kind);
         m.albedoTexture = look.albedo;
         m.bumpTexture = look.relief;
-        m.bumpTexture.level = 0.7;
+        m.bumpTexture.level = 1;
         m.metallic = 0;
         m.roughness = 0.5;
+        // The wet film on it: a thin coat with its own small sharp highlights, broken up by the same relief. (A clear
+        // coat takes no part of the bump map unless given it: on a smooth tube its highlight ran the length of a loop as
+        // one white streak.)
         m.clearCoat.isEnabled = true;
-        m.clearCoat.intensity = 0.6;
-        m.clearCoat.roughness = 0.16;
+        m.clearCoat.intensity = 0.45;
+        m.clearCoat.roughness = 0.24;
+        m.clearCoat.bumpTexture = look.relief;
         m.reflectionTexture = (scene.getMaterialByName('dropBlood') as BABYLON.PBRMaterial)?.reflectionTexture ?? null;
         m.environmentIntensity = 0.3;
         m.maxSimultaneousLights = 8;
@@ -397,10 +401,10 @@ export class Viscera {
         const m = new BABYLON.PBRMaterial(`organ_${kind}`, scene);
         m.albedoColor = BABYLON.Color3.FromInts(look.c[0], look.c[1], look.c[2]).toLinearSpace();
         m.metallic = 0;
+        // Wet, but its sheen from the surface itself, broken by the unevenness Wet bends its normal with. (A clear coat
+        // here takes the bare normal of the anatomy's broad flat facets: each a mirror of the room, a glass dome seen down
+        // a hole into the belly.)
         m.roughness = look.rough;
-        m.clearCoat.isEnabled = true;
-        m.clearCoat.intensity = 0.8;
-        m.clearCoat.roughness = 0.08;
         m.reflectionTexture = (scene.getMaterialByName('dropBlood') as BABYLON.PBRMaterial)?.reflectionTexture ?? null;
         m.environmentIntensity = 0.3;
         m.maxSimultaneousLights = 8;
@@ -458,7 +462,13 @@ export class Viscera {
             const r = rnd(), c = r < 0.4 ? '170,152,146' : r < 0.75 ? '206,150,140' : '200,172,134';
             blob(rnd() * W, rnd() * H, 3 + rnd() * 12, 2 + rnd() * 7, `rgba(${c},${0.1 + rnd() * 0.12})`, (rnd() - 0.5) * 0.08);
         }
+        // The serosa is not smooth: fine lumps, a millimetre or two, that break the light into small highlights.
+        for (let k = 0; k < 3000; k++) {
+            const x = rnd() * W, y = rnd() * H, r = 1.5 + rnd() * 3, lift = (rnd() - 0.4) * 0.35;
+            tiled(x, y, r, (px, py) => { h.fillStyle = lift > 0 ? `rgba(255,255,255,${lift})` : `rgba(0,0,0,${-lift})`; h.beginPath(); h.arc(px, py, r, 0, Math.PI * 2); h.fill(); });
+        }
         // Vessels: a wavering line from (x, y), `dir` down (1) or up (-1) the picture, tapering, a branch now and then.
+        // They lie under the serosa, a thin translucent layer: seen through it, soft-edged and low in contrast.
         g.lineCap = h.lineCap = 'round';
         const vessel = (x: number, y: number, dir: number, len: number, width: number, colour: string, lift: number, across = false) => {
             let px = x, py = y, bend = (rnd() - 0.5) * 0.5;
@@ -467,8 +477,9 @@ export class Viscera {
                 const ny = across ? py + Math.sin(bend) * 3 + (rnd() - 0.5) * 1.2 : py + Math.cos(bend) * 3 * dir;
                 const w = Math.max(0.5, width * (1 - (s / len) * 0.7));
                 tiled(px, py, 6, (ax, ay) => {
-                    g.strokeStyle = colour; g.lineWidth = w;
+                    g.filter = 'blur(1.2px)'; g.strokeStyle = colour; g.lineWidth = w;
                     g.beginPath(); g.moveTo(ax, ay); g.lineTo(ax + nx - px, ay + ny - py); g.stroke();
+                    g.filter = 'none';
                     h.strokeStyle = `rgba(255,255,255,${lift})`; h.lineWidth = w;
                     h.beginPath(); h.moveTo(ax, ay); h.lineTo(ax + nx - px, ay + ny - py); h.stroke();
                 });
@@ -476,21 +487,22 @@ export class Viscera {
                 if (rnd() < 0.05 && width > 0.9) vessel(px, py, dir, (len - s) * 0.5, width * 0.6, colour, lift, across);
             }
         };
-        const red = () => `rgba(${105 + rnd() * 35},${22 + rnd() * 14},${34 + rnd() * 16},${0.2 + rnd() * 0.2})`;
-        const vein = () => `rgba(${84 + rnd() * 20},${46 + rnd() * 12},${70 + rnd() * 16},${0.22 + rnd() * 0.2})`;
+        // Arteries a dull red, veins beside them blue-purple, both faint through the serosa.
+        const red = () => `rgba(${128 + rnd() * 25},${46 + rnd() * 14},${58 + rnd() * 14},${0.1 + rnd() * 0.1})`;
+        const vein = () => `rgba(${92 + rnd() * 16},${70 + rnd() * 14},${112 + rnd() * 18},${0.12 + rnd() * 0.1})`;
         // Where the mesentery (the omentum, the mesocolon) holds it: yellow lobulated fat, the arcade running along it.
         const held = (fat: number, lobules: number) => {
             for (let k = 0; k < lobules; k++) {
                 const y = (rnd() < 0.5 ? rnd() : -rnd()) * fat * H;
                 blob(rnd() * W, y < 0 ? H + y : y, 4 + rnd() * 8, 3 + rnd() * 6, `rgba(${222 + rnd() * 16},${186 + rnd() * 20},${96 + rnd() * 30},${0.55 + rnd() * 0.35})`, 0.35);
             }
-            for (const y0 of [fat * H * 0.45, H - fat * H * 0.45]) vessel(0, y0, 1, W + 20, 2.2, 'rgba(98,22,32,0.7)', 0.5, true);
+            for (const y0 of [fat * H * 0.45, H - fat * H * 0.45]) vessel(0, y0, 1, W + 20, 2, 'rgba(116,44,58,0.32)', 0.25, true);
         };
         if (kind === 'bowel') {
             held(0.07, 420);
-            for (let x = 0; x < W; x += 4 + rnd() * 6) {
-                vessel(x, H * 0.05, 1, H * (0.18 + rnd() * 0.3), 0.9 + rnd() * 0.8, rnd() < 0.7 ? red() : vein(), 0.3);
-                vessel(x + rnd() * 3, H * 0.95, -1, H * (0.18 + rnd() * 0.3), 0.9 + rnd() * 0.8, rnd() < 0.7 ? red() : vein(), 0.3);
+            for (let x = 0; x < W; x += 9 + rnd() * 12) {
+                vessel(x, H * 0.05, 1, H * (0.15 + rnd() * 0.25), 0.7 + rnd() * 0.6, rnd() < 0.6 ? red() : vein(), 0.15);
+                vessel(x + rnd() * 5, H * 0.95, -1, H * (0.15 + rnd() * 0.25), 0.7 + rnd() * 0.6, rnd() < 0.6 ? red() : vein(), 0.15);
             }
         } else if (kind === 'colon') {
             // Haustra: six to a picture's length, a crease between each and the next, bulging between.
@@ -508,14 +520,14 @@ export class Viscera {
                 for (let x = rnd() * 40; x < W; x += 35 + rnd() * 40) blob(x, yc + (rnd() - 0.5) * 24, 6 + rnd() * 6, 4 + rnd() * 5, `rgba(${226 + rnd() * 14},${192 + rnd() * 16},${98 + rnd() * 24},0.85)`, 0.6);
             }
             for (let x = 0; x < W; x += 9 + rnd() * 10) {
-                vessel(x, H * 0.04, 1, H * (0.1 + rnd() * 0.2), 0.8 + rnd() * 0.5, red(), 0.25);
-                vessel(x, H * 0.96, -1, H * (0.1 + rnd() * 0.2), 0.8 + rnd() * 0.5, red(), 0.25);
+                vessel(x, H * 0.04, 1, H * (0.1 + rnd() * 0.2), 0.7 + rnd() * 0.5, rnd() < 0.6 ? red() : vein(), 0.15);
+                vessel(x, H * 0.96, -1, H * (0.1 + rnd() * 0.2), 0.7 + rnd() * 0.5, rnd() < 0.6 ? red() : vein(), 0.15);
             }
         } else {
             held(0.12, 600);
             for (let x = 0; x < W; x += 12 + rnd() * 16) {
-                vessel(x, H * 0.08, 1, H * (0.2 + rnd() * 0.25), 1.2 + rnd() * 0.8, red(), 0.3);
-                vessel(x, H * 0.92, -1, H * (0.2 + rnd() * 0.25), 1.2 + rnd() * 0.8, red(), 0.3);
+                vessel(x, H * 0.08, 1, H * (0.2 + rnd() * 0.25), 1 + rnd() * 0.6, rnd() < 0.6 ? red() : vein(), 0.15);
+                vessel(x, H * 0.92, -1, H * (0.2 + rnd() * 0.25), 1 + rnd() * 0.6, rnd() < 0.6 ? red() : vein(), 0.15);
             }
         }
         albedo.update(true);

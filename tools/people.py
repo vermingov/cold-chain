@@ -81,9 +81,10 @@ CAST = {
 
 # --- skeleton ---------------------------------------------------------------
 #
-# MakeHuman's default rig has 163 bones. The game animates about seventy: the
-# spine, limbs and fingers, the jaw, the eyes and eyelids, and the two
-# muscles that pull the corners of the mouth. Every other bone hands its
+# MakeHuman's default rig has 163 bones. The game animates about eighty: the
+# spine, limbs and fingers (with the four metacarpals, whose ring and little
+# ones bend at their base to cup the palm), the jaw, the eyes and eyelids, and
+# the two muscles that pull the corners of the mouth. Every other bone hands its
 # weights up to its nearest kept ancestor.
 
 KEEP = [
@@ -97,6 +98,7 @@ for s in ('L', 'R'):
         'clavicle', 'shoulder01', 'upperarm01', 'upperarm02',
         'lowerarm01', 'lowerarm02', 'wrist',
         'pelvis', 'upperleg01', 'upperleg02', 'lowerleg01', 'lowerleg02', 'foot')]
+    KEEP += [f'metacarpal{m}.{s}' for m in (1, 2, 3, 4)]
     for f in range(1, 6):
         KEEP += [f'finger{f}-{k}.{s}' for k in (1, 2, 3)]
 
@@ -300,6 +302,107 @@ def quantise(per_vertex):
     return joints, amounts
 
 
+# --- the hands -----------------------------------------------------------------
+#
+# MakeHuman's finger joints are not where a hand's are, and a hand closed on them
+# folds wrong. Its knuckles (MCP) sit at the web between the fingers, 1 to 1.5 cm
+# beyond the heads of the metacarpals, so the proximal phalanx is a quarter too
+# short: closed into a fist, the fingertips came round through the back of the
+# hand. And every finger joint lies 3 to 5 mm under the skin of the back of the
+# finger, a fifth of the way through it, where the centre of a real one is a third
+# of the way through (the head of the bone it turns on; at the knuckle the
+# metacarpal head, 1 cm under the skin): bent, the back folded round a line just
+# under its skin and the palm side collapsed into the finger. The thumb's base
+# (CMC) is a centimetre out along it from the trapezium, a short metacarpal.
+#
+# So each finger's joints are moved, by what the skin around them says: the MCP
+# back toward the wrist along the line of the finger by SHIFT of the finger's
+# length, and every joint down to DEPTH of the finger's thickness there, measured
+# through the skin square to the palm. The PIP and DIP stay where they are along
+# the finger: the skin's creases (the photographed skin's and the mesh's rings)
+# are there. The thumb's CMC goes back CMC of its metacarpal's length. The weights
+# of each finger's chain (metacarpal and three phalanges) are then split again
+# along it: each vertex keeps how much it belongs to that finger, as MakeHuman
+# painted it, and that share goes from bone to bone across each joint over
+# BLEND of the finger's length either side of the plane that halves the joint.
+
+HAND = {'SHIFT': 0.13, 'DEPTH': (0.33, 0.36, 0.32), 'BLEND': (0.09, 0.055, 0.045), 'CMC': 0.3}
+
+
+def ray_hit(tris, o, d):
+    """How far from `o` along unit `d` the nearest of the triangles (n, 3 corners, 3) is, or None."""
+    a, e1, e2 = tris[:, 0], tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0]
+    p = np.cross(d, e2)
+    det = (e1 * p).sum(1)
+    ok = np.abs(det) > 1e-12
+    inv = np.where(ok, 1 / np.where(ok, det, 1), 0)
+    s = o - a
+    u = (s * p).sum(1) * inv
+    q = np.cross(s, e1)
+    v = (q @ d) * inv
+    t = (e2 * q).sum(1) * inv
+    hit = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 0)
+    return float(t[hit].min()) if hit.any() else None
+
+
+def hands(bones, body, skin_faces, weights):
+    """Move the finger joints to the knuckles and split the fingers' weights again round them (see above)."""
+    unit = lambda v: v / np.linalg.norm(v)
+    index_of = {b['name']: i for i, b in enumerate(bones)}
+    corners = np.array([body[[vs[a], vs[b], vs[c]]] for _, vs, _ in skin_faces
+                        for a, b, c in (((0, 1, 2), (0, 2, 3)) if len(vs) == 4 else ((0, 1, 2),))])
+    for side in ('L', 'R'):
+        bone = lambda n: bones[index_of[f'{n}.{side}']]
+        wrist = bone('wrist')['head']
+        tris = corners[np.linalg.norm(corners[:, 0] - wrist, axis=1) < 3.0]
+        # Toward the palm: across the hand, the way the fingers already curl at rest.
+        palm = unit(np.cross(bone('finger2-1')['head'] - wrist, bone('finger5-1')['head'] - wrist))
+        j1, j2, j3 = (bone(f'finger3-{k}')['head'] for k in (1, 2, 3))
+        if palm @ (unit(j3 - j2) - unit(j2 - j1)) < 0:
+            palm = -palm
+
+        def through(at, along, depth):
+            """`at` moved square to the palm to `depth` of the way through the skin from the back of the hand."""
+            q = unit(palm - along * (palm @ along))
+            front, back = ray_hit(tris, at, q), ray_hit(tris, at, -q)
+            return at + q * (depth * (front + back) - back)
+
+        chains = []
+        for f in (2, 3, 4, 5):
+            meta, phalanges = bone(f'metacarpal{f - 1}'), [bone(f'finger{f}-{k}') for k in (1, 2, 3)]
+            old = [b['head'] for b in phalanges] + [phalanges[2]['tail']]
+            length = sum(np.linalg.norm(old[k + 1] - old[k]) for k in range(3))
+            mcp = old[0] - unit(old[1] - old[0]) * HAND['SHIFT'] * length
+            # (each measured square to the line from the joint before it to the one after)
+            new = [through(mcp, unit(old[1] - mcp), HAND['DEPTH'][0]), through(old[1], unit(old[2] - mcp), HAND['DEPTH'][1]),
+                   through(old[2], unit(old[3] - old[1]), HAND['DEPTH'][2])]
+            meta['tail'] = new[0]
+            for k, b in enumerate(phalanges):
+                b['head'] = new[k]
+                if k < 2:
+                    b['tail'] = new[k + 1]
+            ways = [unit(new[0] - meta['head']), unit(new[1] - new[0]), unit(new[2] - new[1]), unit(old[3] - new[2])]
+            planes = [(new[k], unit(ways[k] + ways[k + 1]), HAND['BLEND'][k] * length) for k in range(3)]
+            chains.append(([index_of[b['name']] for b in [meta] + phalanges], planes))
+        thumb, proximal = bone('finger1-1'), bone('finger1-2')
+        thumb['head'] = thumb['head'] - (proximal['head'] - thumb['head']) * HAND['CMC']
+
+        for chain, planes in chains:
+            for v, w in enumerate(weights):
+                share = sum(w.pop(b, 0.0) for b in chain)
+                if share <= 0:
+                    continue
+                # How far past each joint the vertex is, 0 to 1 across the blend.
+                past = []
+                for at, normal, half in planes:
+                    x = min(1.0, max(0.0, ((body[v] - at) @ normal + half) / (2 * half)))
+                    past.append(x * x * (3 - 2 * x))
+                parts = [1 - past[0], past[0] * (1 - past[1]), past[0] * past[1] * (1 - past[2]), past[0] * past[1] * past[2]]
+                for b, part in zip(chain, parts):
+                    if part > 1e-4:
+                        w[b] = w.get(b, 0.0) + share * part
+
+
 # --- fitting a proxy to a body ---------------------------------------------------
 
 def fit(proxy, body, weights):
@@ -464,9 +567,10 @@ def build(name, spec, base, data, assets, cache, textures):
     bones, remap = skeleton(cache['skel'], body)
     index_of = {b['name']: i for i, b in enumerate(bones)}
     weights = base_weights(cache['weights'], remap, index_of, len(body))
+    skin_faces = [f for f in faces if f[0] == 'body']
+    hands(bones, body, skin_faces, weights)
     joints, amounts = quantise(weights)
 
-    skin_faces = [f for f in faces if f[0] == 'body']
     game = to_game(body)
     floor = min(game[v][1] for _, vs, _ in skin_faces for v in vs)
     game[:, 1] -= floor

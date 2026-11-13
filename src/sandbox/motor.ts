@@ -32,6 +32,7 @@ export class Muscles {
     declare joints: { seg: any; part: string; bones: any[][]; target: number[]; q: BABYLON.Quaternion }[];
     declare fingers: { bone: BABYLON.Bone; turns: any[]; hand: any }[];
     declare _curl: string;
+    declare _hands: string[];
 
     constructor(ragdoll: Ragdoll) {
         this.ragdoll = ragdoll;
@@ -44,7 +45,7 @@ export class Muscles {
                 const name = b.bone.name;
                 if (!turns.has(name)) turns.set(name, []);
                 // (a finger bone bends about its own line across it: person.ts's `axes`)
-                turns.get(name).push({ control, axis: h.axes?.[k] ?? h.axis, share, order: h.order ?? 1, fingers: !!h.fingers });
+                turns.get(name).push({ control, axis: h.axes?.[k] ?? h.axis, share, order: h.order ?? 1, fingers: !!h.fingers, bend: h.bend ? (deg) => h.bend(deg, k) : null });
             });
         }
         for (const list of turns.values()) list.sort((a, b) => a.order - b.order);
@@ -53,6 +54,7 @@ export class Muscles {
         // The fingers have no bodies: they are posed straight from the pose, to curl round nothing or open to brace.
         this.fingers = [...turns.entries()].filter(([, list]) => list.some((t) => t.fingers))
             .map(([name, list]) => ({ bone: person.byName[name].bone, turns: list, hand: ragdoll.byName.get('hand' + name.slice(-1)) }));
+        this._hands = [...new Set(this.fingers.flatMap((f) => f.turns.map((t) => t.control)))];
         this._curl = '';
     }
 
@@ -64,7 +66,7 @@ export class Muscles {
             for (const t of list) {
                 const deg = pose[t.control];
                 if (!deg) continue;
-                Q.RotationAxisToRef(t.axis, deg * RAD * t.share, _q);
+                Q.RotationAxisToRef(t.axis, (t.bend ? t.bend(deg) : deg) * RAD * t.share, _q);
                 _q.multiplyToRef(_local, _q2);
                 _local.copyFrom(_q2);
             }
@@ -82,7 +84,10 @@ export class Muscles {
             if (s > 0.004) rd.hold(j.seg, jointAngles(this._turn(j.bones, pose, j.q).multiplyInPlace(j.seg.unneutral), j.seg.frame, j.target), s);
             else rd.hold(j.seg, j.target, 0);
         }
-        const curl = `${pose.curlL | 0},${pose.curlR | 0},${pose.thumbL | 0},${pose.thumbR | 0}`;
+        // (Every control a finger answers to: keyed on the curl and thumb alone, a hand told to cup or to hold its
+        // thumb in did not.)
+        let curl = '';
+        for (const c of this._hands) curl += (pose[c] | 0) + ',';
         if (curl !== this._curl) {
             this._curl = curl;
             // (A hand cut off keeps the fingers as they were: nothing curls them any more.)

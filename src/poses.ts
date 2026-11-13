@@ -15,7 +15,8 @@ const RELAXED = {
     shoulderAbductL: -36, shoulderAbductR: -36,
     shoulderFlexL: -26, shoulderFlexR: -26,
     elbowL: 12, elbowR: 12,
-    curlL: 18, curlR: 18, thumbL: 10, thumbR: 10,
+    // (the hands loosely curled, the thumb in alongside the index: a hand hanging with nothing working it)
+    curlL: 30, curlR: 28, thumbL: 14, thumbR: 12, thumbInL: 8, thumbInR: 8,
     hipAbductL: -2, hipAbductR: -2,
 };
 
@@ -159,7 +160,7 @@ export function hang(t, { side = 1 } = {}) {
     return over(RELAXED, {
         shoulderAbductL: -4, shoulderAbductR: -2, shoulderFlexL: 4 + sway, shoulderFlexR: 1 - sway,
         shrugL: 14, shrugR: 14,                 // the shoulders dragged up by the weight below them
-        elbowL: 18, elbowR: 11, curlL: 34, curlR: 28, thumbL: 22, thumbR: 20,
+        elbowL: 18, elbowR: 11, curlL: 10, curlR: 6, thumbL: 6, thumbR: 4,
         hipFlexL: 9, hipFlexR: 14, kneeL: 22, kneeR: 31, hipTwistL: 8, hipTwistR: -5,
         ankleL: -58, ankleR: -52,
         spineFlex: 7, spineSide: -4 * side,
@@ -226,7 +227,7 @@ export function reach(side, amount, base) {
     const k = side < 0 ? 'L' : 'R';
     return over(base, {
         ['shoulderFlex' + k]: 78 * a, ['shoulderAbduct' + k]: 26 * a,
-        ['elbow' + k]: -8 * a, ['curl' + k]: -16 * a, ['thumb' + k]: -8 * a,
+        ['elbow' + k]: -8 * a, ['curl' + k]: -40 * a, ['thumb' + k]: -18 * a,
     });
 }
 

@@ -334,21 +334,34 @@ float goreWet = 0.0;
         vec3 gt = gp2 * gdu1.x + gp1 * gdu2.x, gb = gp2 * gdu1.y + gp1 * gdu2.y;
         float gs = inversesqrt(max(dot(gt, gt), dot(gb, gb)) + 1e-20);
         normalW = normalize(gn + (gt * gs * hx + gb * gs * hy) * 6.0);
-        // Depth in millimetres, made uneven so that the lips and the layers in the walls wander as real ones do.
-        // (The finest noise fades to its middle where a pixel covers more than one of its cells: further off it only
-        // sparkles.)
+        // Depth in millimetres, made uneven so that the layers wander along a lip as real ones do: by a few millimetres
+        // over a centimetre or two, by a millimetre over a few. (Added, and smooth. A fine noise multiplying the depth threw
+        // the deep side of a lip across the muscle's and the dark depths' thresholds cell by cell: black specks.)
         float gstep = max(max(abs(gdu1.x), abs(gdu2.x)), max(abs(gdu1.y), abs(gdu2.y)));
-        float gfine = clamp(1.6 - gstep * 2600.0, 0.0, 1.0), gmid = clamp(1.6 - gstep * 900.0, 0.0, 1.0);
-        float d = gm.r * 40.0 * (0.8 + 0.4 * mix(0.5, goreNoise(gu * 2600.0), gfine)) + (mix(0.5, goreNoise(gu * 900.0), gmid) - 0.5) * 1.2;
-        // Fat in lobules a few millimetres across, each a little more or less yellow, the septa between them paler.
-        vec3 fat = vec3(0.84, 0.66, 0.32) * (0.86 + 0.24 * mix(0.5, goreNoise(gu * 1300.0 + 5.0), clamp(1.6 - gstep * 1300.0, 0.0, 1.0)));
-        vec3 flesh = mix(vec3(0.5, 0.17, 0.15), fat, smoothstep(1.4, 2.6, d));
+        float gmid = clamp(1.6 - gstep * 900.0, 0.0, 1.0), glob = clamp(1.6 - gstep * 700.0, 0.0, 1.0);
+        float d0 = gm.r * 40.0;
+        float d = d0 + ((goreNoise(gu * 110.0) - 0.5) * 5.0 + (mix(0.5, goreNoise(gu * 900.0), gmid) - 0.5) * 1.2) * clamp(d0 / 4.0, 0.0, 1.0);
+        // Fat bulging from a cut face in lobules of a few millimetres, big and small, the hollows between them deeper
+        // yellow, blood lying in them.
+        float lob = mix(0.5, goreNoise(gu * 350.0 + 5.0) * 0.65 + goreNoise(gu * 800.0 + 9.0) * 0.35, glob);
+        float inFat = smoothstep(1.6, 3.0, d) * (1.0 - smoothstep(8.5, 10.0, d));
+        vec3 fat = mix(vec3(0.76, 0.55, 0.24), vec3(0.9, 0.74, 0.4), smoothstep(0.3, 0.7, lob));
+        // Torn muscle: bundles of fibres running one way, ragged, darker between them.
+        vec3 muscle = vec3(0.44, 0.09, 0.07) * (0.7 + 0.5 * mix(0.5, goreNoise(gu * vec2(180.0, 1400.0) + 2.0), gmid));
+        // The skin's cut edge, rolled a little outward, paler at its rim.
+        vec3 flesh = mix(vec3(0.66, 0.42, 0.36), vec3(0.5, 0.17, 0.15), smoothstep(0.4, 1.3, d));
+        flesh = mix(flesh, fat, smoothstep(1.6, 3.0, d));
         flesh = mix(flesh, vec3(0.68, 0.62, 0.56), smoothstep(9.5, 11.0, d));
-        flesh = mix(flesh, vec3(0.36, 0.06, 0.05), smoothstep(11.5, 13.0, d));
-        flesh = mix(flesh, vec3(0.08, 0.005, 0.004), smoothstep(15.0, 30.0, d));
+        flesh = mix(flesh, muscle, smoothstep(11.0, 12.5, d));
+        flesh = mix(flesh, vec3(0.08, 0.005, 0.004), smoothstep(16.0, 30.0, d));
         surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(flesh), smoothstep(0.1, 0.9, d));
-        // Blood fills a fresh wound from the bottom and wells over its lips.
-        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, goreNoise(gu * 1500.0), gfine));
+        // The lobules stand out of the face: the light catches their tops.
+        float lx = goreNoise((gu + vec2(goreTexel.x, 0.0)) * 350.0 + 5.0) - goreNoise((gu - vec2(goreTexel.x, 0.0)) * 350.0 + 5.0);
+        float ly = goreNoise((gu + vec2(0.0, goreTexel.y)) * 350.0 + 5.0) - goreNoise((gu - vec2(0.0, goreTexel.y)) * 350.0 + 5.0);
+        normalW = normalize(normalW + (gt * gs * lx + gb * gs * ly) * 1.5 * inFat * glob);
+        // Blood fills a fresh wound from the bottom and wells over its lips; on a cut face it lies in the hollows.
+        float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, goreNoise(gu * 400.0), gmid));
+        blood += smoothstep(0.42, 0.22, lob) * 0.55 * smoothstep(1.5, 4.0, d) * smoothstep(0.0, 0.03, gm.g);
         surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
         surfaceAlbedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);
         // Cut flesh is wet: a soft sheen on it, and more where blood lies.

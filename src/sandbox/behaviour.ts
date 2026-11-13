@@ -21,7 +21,6 @@ import { Muscles, type Strength } from './motor.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 
 const G = 9.81;
-const FLOOR = 0;                // the hall's floor: what feet, knees and hands push on
 const TOUCH = 0.035;            // m: a segment this close to the floor is on it
 const REACH = 0.72;             // m: the longest step that still catches a fall
 const STEPS = 7;                // stumbling steps before the legs give up
@@ -42,10 +41,11 @@ const add = (base, changes) => {
 // ALL4's `_pitch` and KNEEL are only for _measure, which poses the skeleton to find how high a body is in them.
 
 const ALL4 = { ...add(P.RELAXED, { hipFlexL: 92, hipFlexR: 92, kneeL: 95, kneeR: 95, ankleL: -30, ankleR: -30, shoulderFlexL: 86, shoulderFlexR: 86,
-    elbowL: -10, elbowR: -10, curlL: -12, curlR: -12, neckFlex: -35, headFlex: -10 }), _pitch: 90 };
+    elbowL: -10, elbowR: -10, curlL: -30, curlR: -30, neckFlex: -35, headFlex: -10 }), _pitch: 90 };
 const KNEEL = add(P.RELAXED, { hipFlexL: 4, hipFlexR: 4, kneeL: 92, kneeR: 92, ankleL: -40, ankleR: -40, spineFlex: 6, neckFlex: 6 });
 const LUNGE = add(P.RELAXED, { hipFlexR: 82, kneeR: 84, ankleR: 2, hipFlexL: 2, kneeL: 92, ankleL: -40, spineFlex: 18, shoulderFlexR: 22, elbowR: 30 });
-const REST = add(P.RELAXED, { hipFlexL: 10, kneeL: 16, hipFlexR: 5, kneeR: 9, elbowL: 18, elbowR: 22, curlL: 28, curlR: 24, neckFlex: 8 });
+// (The hands as a hand lies with nothing working it: loosely curled, more toward the little finger.)
+const REST = add(P.RELAXED, { hipFlexL: 10, kneeL: 16, hipFlexR: 5, kneeR: 9, elbowL: 18, elbowR: 22, curlL: 8, curlR: 5, thumbL: 4, thumbR: 2, neckFlex: 8 });
 
 // Curled up round it: knees drawn in, arms in, rocking and turning with how much it hurts.
 function curled(t, pain) {
@@ -54,7 +54,7 @@ function curled(t, pain) {
         hipFlexL: 68 + 18 * s * a, hipFlexR: 74 - 16 * s * a, kneeL: 96 + 12 * c * a, kneeR: 102 - 10 * c * a,
         spineFlex: 28 + 8 * c * a, spineTwist: 12 * Math.sin(t * 0.9) * a, spineSide: 8 * Math.sin(t * 0.6) * a,
         neckFlex: 28 + 10 * s * a, headTilt: 10 * c * a,
-        shoulderFlexL: 70, shoulderFlexR: 70, shoulderAbductL: -14, shoulderAbductR: -14, elbowL: 105, elbowR: 100, curlL: 70, curlR: 70,
+        shoulderFlexL: 70, shoulderFlexR: 70, shoulderAbductL: -14, shoulderAbductR: -14, elbowL: 105, elbowR: 100, curlL: 55, curlR: 60,
     });
 }
 
@@ -63,11 +63,11 @@ function braced(way: 'ahead' | 'behind' | 'side', side: number, give: number) {
     // The knees go first: forward onto them, back into a sit, sideways onto the near hip.
     const legs = { hipFlexL: 45 * give, hipFlexR: 40 * give, kneeL: 80 * give, kneeR: 72 * give, ankleL: -15, ankleR: -15 };
     if (way === 'ahead') return add(P.RELAXED, { ...legs, shoulderFlexL: 95, shoulderFlexR: 95, shoulderAbductL: 22, shoulderAbductR: 22, elbowL: 22, elbowR: 22,
-        curlL: -16, curlR: -16, thumbL: -8, thumbR: -8, neckFlex: -25, spineFlex: -4 });
+        curlL: -45, curlR: -45, thumbL: -22, thumbR: -22, thumbBaseL: 10, thumbBaseR: 10, neckFlex: -25, spineFlex: -4 });
     if (way === 'behind') return add(P.RELAXED, { ...legs, hipFlexL: 80 * give, hipFlexR: 74 * give, kneeL: 100 * give, kneeR: 92 * give,
-        shoulderFlexL: -40, shoulderFlexR: -40, shoulderAbductL: 38, shoulderAbductR: 38, elbowL: 14, elbowR: 14, curlL: -16, curlR: -16, neckFlex: 40, spineFlex: 28 });
+        shoulderFlexL: -40, shoulderFlexR: -40, shoulderAbductL: 38, shoulderAbductR: 38, elbowL: 14, elbowR: 14, curlL: -45, curlR: -45, thumbL: -22, thumbR: -22, neckFlex: 40, spineFlex: 28 });
     const near = side > 0 ? 'R' : 'L', far = side > 0 ? 'L' : 'R';
-    return add(P.RELAXED, { ...legs, ['shoulderAbduct' + near]: 78, ['shoulderFlex' + near]: 22, ['elbow' + near]: 12, ['curl' + near]: -16,
+    return add(P.RELAXED, { ...legs, ['shoulderAbduct' + near]: 78, ['shoulderFlex' + near]: 22, ['elbow' + near]: 12, ['curl' + near]: -45, ['thumb' + near]: -22,
         ['shoulderFlex' + far]: 55, ['shoulderAbduct' + far]: -20, ['elbow' + far]: 60, spineSide: -12 * side, neckFlex: 15 });
 }
 
@@ -127,6 +127,7 @@ export class Behaviour {
     declare strength: Strength;
     declare pushes: ((dt: number) => void)[];
     declare _why: string;           // why they last went over, for the rig
+    declare floor: number;          // the height of what is under them (the hall's floor, a ledge): what feet, knees and hands push on
 
     constructor(npc) {
         this.npc = npc;
@@ -148,6 +149,7 @@ export class Behaviour {
         this.favour = null;
         this.hunch = 0;
         this.com = rd.com(new V3());
+        this.floor = npc.world.ground?.(this.com.x, this.com.z, this.com.y) ?? 0;
         this.vel = new V3();
         this.step = null;
         this.steps = 0;
@@ -172,7 +174,11 @@ export class Behaviour {
             person.apply(pose, { ground });
             return { pelvis: person.joint('root').y, chest: person.joint('spine01').y };
         };
-        this.heights = { stand: { pelvis: rd.centre.y, chest: rd.byName.get('chest').node.position.y, hip: rd.byName.get('thighL').node.position.y }, all4: at(ALL4, 'all4'), kneel: at(KNEEL, 'knees') };
+        // (Over whatever they were made standing on.)
+        const f = this.floor;
+        const all4 = at(ALL4, 'all4'), kneel = at(KNEEL, 'knees');
+        this.heights = { stand: { pelvis: rd.centre.y - f, chest: rd.byName.get('chest').node.position.y - f, hip: rd.byName.get('thighL').node.position.y - f },
+            all4: { pelvis: all4.pelvis - f, chest: all4.chest - f }, kneel: { pelvis: kneel.pelvis - f, chest: kneel.chest - f } };
         body.position.copyFrom(was[0]);
         body.rotationQuaternion.copyFrom(was[1]);
         for (const b of rd.between) b.setRotationQuaternion(Q.Identity(), BABYLON.Space.LOCAL);
@@ -259,7 +265,10 @@ export class Behaviour {
 
         rd.com(this.com);
         rd.comVelocity(this.vel);
-        this.touching = this.state === 'stand' ? [] : rd.attached.filter((s) => rd.lowest(s) < FLOOR + TOUCH);
+        // What is under them: the highest thing under their weight no higher than their feet.
+        const low = Math.min(rd.lowest(rd.byName.get('footL')), rd.lowest(rd.byName.get('footR')));
+        this.floor = this.npc.world.ground?.(this.com.x, this.com.z, low + 0.1) ?? 0;
+        this.touching = this.state === 'stand' ? [] : rd.attached.filter((s) => rd.lowest(s) < this.floor + TOUCH);
 
         // Knocked out: two people in three hold one arm or both stiffly up for a moment as they go down (the fencing
         // response, dev/research/blunt-trauma.md), a reflex and not the will, so it is held whatever else has let go.
@@ -313,16 +322,16 @@ export class Behaviour {
         const pelvis = rd.byName.get('pelvis'), chest = rd.byName.get('chest');
         const feet = ['L', 'R'].map((side) => rd.byName.get('foot' + side));
         // A foot stepping is not stood on, even before it leaves the floor: the weight goes over the other one first.
-        const down = feet.filter((f) => rd.lowest(f) < FLOOR + TOUCH && f !== this.step?.swing);
+        const down = feet.filter((f) => rd.lowest(f) < this.floor + TOUCH && f !== this.step?.swing);
         const ground = footprint(rd, down.length ? down : feet);
         const centre = ground.centre;
         // Gone over: the body's weight leaning out past the edge of the feet further than saving (measured over both feet
         // wherever they are: a step lands one at a time; a hard blow swings the pelvis or the chest further than this on
         // its own, and they come back), sunk, or off the floor.
-        const lean = Math.atan2(Math.max(0, outside(footprint(rd, feet).hull, this.com.x, this.com.z)), this.com.y - FLOOR);
-        this.air = feet.some((f) => rd.lowest(f) < FLOOR + TOUCH) ? 0 : this.air + dt;
+        const lean = Math.atan2(Math.max(0, outside(footprint(rd, feet).hull, this.com.x, this.com.z)), this.com.y - this.floor);
+        this.air = feet.some((f) => rd.lowest(f) < this.floor + TOUCH) ? 0 : this.air + dt;
         const why = npc.grabbed ? 'grabbed' : !this._canStand() ? 'legs' : this.will < 0.3 ? 'will' : lean > TILT ? 'lean'
-            : this.com.y < this.heights.stand.pelvis * 0.6 ? 'sunk' : this.air > 0.25 ? 'air' : '';
+            : this.com.y - this.floor < this.heights.stand.pelvis * 0.6 ? 'sunk' : this.air > 0.25 ? 'air' : '';
         if (why) {
             this._why = why;
             this._go('fall');
@@ -353,21 +362,21 @@ export class Behaviour {
         const f = this._facing(), r = new V3(f.z, 0, -f.x);
         const omega = Math.sqrt(G / Math.max(0.5, this.com.y));
         const xi = this.com.add(this.vel.scale(1 / omega));
-        xi.y = FLOOR;
+        xi.y = this.floor;
 
         // The planted legs hold the hips at standing height over wherever the feet are: after a step one leg reaches
         // forward and the other back, and pulled back straight under the body they dragged the new foot back with them.
         // As high as standing, or as high as every planted leg can reach from where its foot is: feet apart, the hips are
         // lower. (Every leg held to full height in a stride pushed against the other through the floor, shoved the body
         // on and buckled a knee.)
-        let hipY = FLOOR + this.heights.stand.hip;
+        let hipY = this.floor + this.heights.stand.hip;
         for (const foot of down) {
             const side = foot.name.slice(-1), leg = this.leg[side], hip = rd.byName.get('thigh' + side).node.position, ankle = foot.node.position;
             const reach = 0.97 * (leg.a + leg.b), across = Math.hypot(ankle.x - hip.x, ankle.z - hip.z);
             hipY = Math.min(hipY, ankle.y + Math.sqrt(Math.max(0, reach * reach - across * across)));
         }
         // Not into a crouch, though: a long stride is stood in with the legs reaching, the hips a little lower.
-        hipY = Math.max(hipY, FLOOR + this.heights.stand.hip - 0.1);
+        hipY = Math.max(hipY, this.floor + this.heights.stand.hip - 0.1);
         // On one foot mid-step, the leg holds the hips up under the pelvis as it is, and leaves its lean alone: levelling
         // it through the one planted leg pushed the body on over that foot, toward the way it was already falling.
         this._tend(pose, dt);
@@ -403,7 +412,7 @@ export class Behaviour {
         if (down.length) this.act((dt) => {
             rd.com(this.com);
             rd.comVelocity(this.vel);
-            const height = Math.max(0.5, this.com.y - FLOOR);
+            const height = Math.max(0.5, this.com.y - this.floor);
             const sway = aim.subtract(this.com).scaleInPlace(kp).subtractInPlace(this.vel.scale(kd));
             sway.y = 0;
             const lever = sway.length() > 1e-6 ? inside(ground.hull, this.com.x, this.com.z, -sway.x, -sway.z) : 0;
@@ -440,7 +449,7 @@ export class Behaviour {
             // Caught already over the planted foot, the lifted one only closes up beside it, and they stand.
             if (lifted && outside(ground.hull, xi.x, xi.z) < 0.04) {
                 const at = down[0].node.position, out = lifted.name.endsWith('R') ? 1 : -1;
-                this.step.to = new V3(at.x, FLOOR, at.z).addInPlace(r.scale(0.2 * out));
+                this.step.to = new V3(at.x, this.floor, at.z).addInPlace(r.scale(0.2 * out));
                 this.step.closing = true;
                 this.steps--;
             }
@@ -467,7 +476,7 @@ export class Behaviour {
         const here = this.rd.worldPoint(swing, swing.centre, new V3());
         const landing = this._landing(xi, side, r);
         // A quick step, a little longer the further it goes: a reactive step is a quarter to a third of a second.
-        this.step = { side, swing, from: new V3(here.x, FLOOR, here.z), to: landing, t: 0, length: clamp(0.18 + 0.15 * V3.Distance(here, landing), 0.2, 0.3) };
+        this.step = { side, swing, from: new V3(here.x, this.floor, here.z), to: landing, t: 0, length: clamp(0.18 + 0.15 * V3.Distance(here, landing), 0.2, 0.3) };
         this.steps++;
     }
 
@@ -477,11 +486,11 @@ export class Behaviour {
     // with (the weight arrives over the edge of the sole), and the next step is needed at once.
     _landing(xi: BABYLON.Vector3, side, r) {
         const stance = this.rd.byName.get('foot' + (side === 'L' ? 'R' : 'L')).node.position;
-        const planted = new V3(stance.x, FLOOR, stance.z);
+        const planted = new V3(stance.x, this.floor, stance.z);
         const to = xi.subtract(planted);
         to.y = 0;
         let target = xi.add(to.normalizeToNew().scale(0.1 + 0.08 * Math.hypot(this.vel.x, this.vel.z)));
-        target.y = FLOOR;
+        target.y = this.floor;
         const out = side === 'R' ? 1 : -1;
         const sideways = V3.Dot(target.subtract(planted), r) * out;
         if (sideways < 0.14) target.addInPlace(r.scale((0.14 - sideways) * out));
@@ -499,16 +508,16 @@ export class Behaviour {
         const s = clamp(st.t / st.length), lift = 0.06 * Math.sin(Math.PI * s);
         if (s < 0.95 && !st.closing) st.to = this._landing(xi, st.side, r);
         const at = V3.Lerp(st.from, st.to, smooth(s));
-        const middle = new V3(at.x, FLOOR + this.foot.middle + lift, at.z);
+        const middle = new V3(at.x, this.floor + this.foot.middle + lift, at.z);
         const ankle = middle.subtract(f.scale(this.foot.ahead));
-        ankle.y = FLOOR + this.foot.ankle + lift;
+        ankle.y = this.floor + this.foot.ankle + lift;
         this._legTo(st.side, ankle, pose, f);
         pose['ankle' + st.side] += 8 * Math.sin(Math.PI * s);
         // The foot carried to its place by the leg's own muscles, the hip taking the pull.
         const most = 220 * this.strength['leg' + st.side];
         this.act((dt) => this.muscles.push(st.swing, this.muscles.reach(st.swing, middle, 300, 6, most, _t), [rd.byName.get('pelvis')], dt));
         // Down when it touches: a foot kept hovering for its mark let the weight run on past the other one.
-        if ((s >= 1 && rd.lowest(st.swing) < FLOOR + TOUCH) || st.t > st.length + 0.15) this.step = null;
+        if ((s >= 1 && rd.lowest(st.swing) < this.floor + TOUCH) || st.t > st.length + 0.15) this.step = null;
     }
 
     // What a standing body is doing about the last blow (hit()), laid over its pose: quick in, easing off.
@@ -531,8 +540,8 @@ export class Behaviour {
             more({ spineFlex: Math.max(0, 34 - this.hunch), neckFlex: 12, kneeL: 12, kneeR: 12 });
         } else if (r.kind === 'guard') {
             // Hands up in front of the face, closed, the thumbs in over the fingers, chin down.
-            more({ shoulderFlexL: 75, shoulderFlexR: 75, shoulderAbductL: 8, shoulderAbductR: 8, elbowL: 115, elbowR: 115, curlL: 55, curlR: 55,
-                thumbL: 35, thumbR: 35, thumbInL: 50, thumbInR: 50, neckFlex: 14, spineFlex: 8 });
+            more({ shoulderFlexL: 75, shoulderFlexR: 75, shoulderAbductL: 8, shoulderAbductR: 8, elbowL: 115, elbowR: 115, curlL: 56, curlR: 60,
+                thumbL: 30, thumbR: 33, thumbBaseL: 30, thumbBaseR: 30, thumbInL: -28, thumbInR: -28, neckFlex: 14, spineFlex: 8 });
         } else if (r.kind === 'leg') {
             // A dead leg: it gives at the knee for a moment, and the balance has to cope.
             this.strength['leg' + r.side] *= 1 - 0.7 * e;
@@ -710,17 +719,17 @@ export class Behaviour {
                 const hand = rd.byName.get('hand' + side), arm = s['arm' + side];
                 if (!arm || rd.loose(hand)) continue;
                 const spot = this.com.add(going.scale(0.5)).add(right.scale((side === 'R' ? 0.22 : -0.22)));
-                spot.y = FLOOR + 0.08;
+                spot.y = this.floor + 0.08;
                 this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, spot, 120, 3, 70 * arm * will, _t), [chest], dt));
             }
         }
         // The body meeting the floor, heard once.
         const trunk = ['pelvis', 'belly', 'chest'].map((n) => rd.byName.get(n));
-        if (!this.landed && trunk.some((seg) => rd.lowest(seg) < FLOOR + TOUCH)) {
+        if (!this.landed && trunk.some((seg) => rd.lowest(seg) < this.floor + TOUCH)) {
             this.landed = true;
             this.npc.world.sound?.shot('body-fall', { at: rd.centre.asArray(), gain: clamp(0.4 + Math.abs(this.vel.y) / 4) });
         }
-        if ((this.com.y < this.heights.stand.pelvis * 0.5 && this.vel.length() < 0.5 && this.t > 0.4) || this.t > 4) this._go('down');
+        if ((this.com.y - this.floor < this.heights.stand.pelvis * 0.5 && this.vel.length() < 0.5 && this.t > 0.4) || this.t > 4) this._go('down');
         return pose;
     }
 
@@ -827,7 +836,7 @@ export class Behaviour {
         if (this.mode === 'push') {
             pose = ALL4;
             pitch = 90;
-            done = pelvis.node.position.y > h.all4.pelvis * 0.85 && chest.node.position.y > h.all4.chest * 0.85 && this.t > 0.9;
+            done = pelvis.node.position.y - this.floor > h.all4.pelvis * 0.85 && chest.node.position.y - this.floor > h.all4.chest * 0.85 && this.t > 0.9;
         } else if (this.mode === 'lunge') {
             // One foot brought forward under the body, the trunk coming up off the hands.
             const k = smooth(this.t / 0.8);
@@ -836,7 +845,7 @@ export class Behaviour {
             lift = { pelvis: h.kneel.pelvis, chest: h.kneel.pelvis + (h.kneel.chest - h.kneel.pelvis) * 0.7 };
             const foot = rd.byName.get('footR');
             const spot = pelvis.node.position.add(this._facing().scale(0.4));
-            spot.y = FLOOR + this.foot.middle;
+            spot.y = this.floor + this.foot.middle;
             this.act((dt) => this.muscles.push(foot, this.muscles.reach(foot, spot, 120, 5, 220 * will, _t), [pelvis], dt));
             done = this.t > 0.9 && (V3.Distance(rd.worldPoint(foot, foot.centre, _v), spot) < 0.15 || this.t > 1.5);
             time = 2.5;
@@ -856,7 +865,7 @@ export class Behaviour {
             const front = rd.byName.get('footR').node.position, back = rd.byName.get('footL').node.position;
             over = V3.Lerp(back, front, 0.7).addInPlace(this._facing().scale(this.foot.ahead));
             over.y = 0;
-            done = this.t > 1.0 && pelvis.node.position.y > h.stand.pelvis * 0.93 && feet.every((foot) => rd.lowest(foot) < FLOOR + TOUCH)
+            done = this.t > 1.0 && pelvis.node.position.y - this.floor > h.stand.pelvis * 0.93 && feet.every((foot) => rd.lowest(foot) < this.floor + TOUCH)
                 && outside(footprint(rd, feet).hull, this.com.x, this.com.z) < -0.03 && Math.hypot(this.vel.x, this.vel.z) < 0.15;
             time = 3.5;
         }
@@ -883,7 +892,7 @@ export class Behaviour {
         for (const [seg, height, share] of [[pelvis, lift.pelvis, 0.45], [chest, lift.chest, 0.55]] as [any, number, number][]) {
             this.act((dt) => {
                 seg.body.getLinearVelocityToRef(_v);
-                const up = clamp(rd.mass * share * (G * 0.55 + 30 * (height - seg.node.position.y) - 9 * _v.y), 0, weight * share * most * will);
+                const up = clamp(rd.mass * share * (G * 0.55 + 30 * (this.floor + height - seg.node.position.y) - 9 * _v.y), 0, weight * share * most * will);
                 // Braced against going anywhere but up (the limbs on the floor hold the body's drift), or, rising off the
                 // front foot, carried forward over it.
                 const m = rd.mass * share, side = new V3(-_v.x * 4 * m, up, -_v.z * 4 * m);
@@ -929,9 +938,9 @@ export class Behaviour {
             const reaching = Math.cos(this.phase) * (side === 'L' ? 1 : -1);
             if (reaching > 0) {
                 const spot = chest.node.position.add(f.scale(0.62)).add(new V3(f.z, 0, -f.x).scale(side === 'R' ? 0.2 : -0.2));
-                spot.y = FLOOR + 0.04;
+                spot.y = this.floor + 0.04;
                 this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, spot, 80, 2, 45 * arm * will, _t), [chest], dt));
-            } else if (rd.lowest(hand) < FLOOR + TOUCH * 2) {
+            } else if (rd.lowest(hand) < this.floor + TOUCH * 2) {
                 // The hand on the floor holds, and the body is pulled up to it.
                 const pull = -reaching * 230 * arm * will;
                 this.act((dt) => {

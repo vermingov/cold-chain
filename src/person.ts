@@ -106,6 +106,18 @@ const CONTACTS = {
         ['wrist.L', 'head', 0.03], ['wrist.R', 'head', 0.03]],
 };
 
+// How a hand closes (_hand): the share of `curl` each joint of a finger takes
+// closing (MCP, PIP, DIP: the DIP two thirds of the PIP) and opening past
+// rest, where each stops, index to little finger how far each goes, the ring
+// and little metacarpals' bend at their base for each degree (they cup the
+// palm 7 and 15 degrees in a fist), how much one person's fingers differ, how
+// far a knuckle's axis turns toward the middle finger's, and how far the
+// thumb's turns from the fingers'.
+const HAND = {
+    GAIN: [0.86, 1, 0.67], OPEN: [1, 0.15, 0.3], RANGE: [[-35, 92], [-5, 110], [-10, 85]], CASCADE: [0.9, 1, 1.06, 1.12],
+    CUP: [0.07, 0.14], VARY: 0.12, CONVERGE: 0.6, THUMB_TURN: 100,
+};
+
 // Degrees in, radians out. Poses are written in degrees because people think
 // about joints in degrees.
 const RAD = Math.PI / 180;
@@ -372,65 +384,88 @@ export class Person {
             const axis = probe(entry, list[0], axisOf(entry, list[0]));
             this.hinges[name] = { bones: list.map((b) => this.byName[b]), axis, order: ('order' in entry ? entry.order : undefined) ?? 1 };
         }
-        // Fingers curl about the line across the knuckles, toward the palm.
-        // Which side the palm is on is read off the hand itself: the rest pose
-        // is a relaxed hand, already a little curled, so the way each finger
-        // already bends is the way it goes on bending.
-        for (const side of ['L', 'R']) {
-            const across = this.byName[`finger2-1.${side}`].head.subtract(this.byName[`finger5-1.${side}`].head).normalize();
-            const bend = (f) => {
-                const a = this.byName[`finger${f}-1.${side}`], b = this.byName[`finger${f}-2.${side}`];
-                const c = this.byName[`finger${f}-3.${side}`];
-                const d1 = b.head.subtract(a.head).normalize(), d2 = c.head.subtract(b.head).normalize();
-                return { d1, towards: d2.subtract(d1) };
-            };
-            const signed = (axis, f) => {
-                const { d1, towards } = bend(f);
-                const moved = d1.applyRotationQuaternion(Q.RotationAxis(axis, 0.3)).subtract(d1);
-                return V3.Dot(moved, towards) >= 0 ? axis : axis.scale(-1);
-            };
-            // But each bone of each finger bends about its own line: across
-            // that bone, in the palm's plane (the wrist and the first and last
-            // knuckles), toward the palm. One line across the knuckles for the
-            // whole hand is 20 degrees off square to the index and the little
-            // finger, which fan out from the middle, and turned them sideways
-            // as they closed: a fist came out a splayed claw.
-            const wrist = this.byName[`wrist.${side}`].head;
-            let palm = V3.Cross(this.byName[`finger2-1.${side}`].head.subtract(wrist), this.byName[`finger5-1.${side}`].head.subtract(wrist)).normalize();
-            if (V3.Dot(palm, bend(3).towards) < 0) palm = palm.scale(-1);
-            const flexes = (f, k) => {
-                const bone = this.byName[`finger${f}-${k}.${side}`], next = this.byName[`finger${f}-${k + 1}.${side}`];
-                const d = (next ? next.head : bone.tail).subtract(bone.head).normalize(), axis = V3.Cross(d, palm).normalize();
-                const moved = d.applyRotationQuaternion(Q.RotationAxis(axis, 0.3)).subtract(d);
-                return V3.Dot(moved, palm) >= 0 ? axis : axis.scale(-1);
-            };
-            const segs = [], axes = [];
-            for (const f of [2, 3, 4, 5]) for (const k of [1, 2, 3]) { segs.push(this.byName[`finger${f}-${k}.${side}`]); axes.push(flexes(f, k)); }
-            this.hinges['curl' + side] = { bones: segs, axis: signed(across, 3), axes, fingers: true };
+        for (const side of ['L', 'R']) this._hand(side);
+    }
 
-            // And one finger at a time, joint by joint, for a hand that is
-            // holding something: index1R is the knuckle of the right index.
-            FINGERS.forEach((finger, i) => {
-                for (const k of [1, 2, 3]) {
-                    this.hinges[`${finger}${k}${side}`] = { bones: [this.byName[`finger${i + 2}-${k}.${side}`]], axis: flexes(i + 2, k), fingers: true };
-                }
-            });
+    // The hand's controls. `curl` closes a hand the way a hand closes, every
+    // finger at once: the middle joint (PIP) leads, the knuckle (MCP) a little
+    // behind it and the last joint (DIP) two thirds of the middle one, as the
+    // tendons couple them; the index least and the little finger most (a hand
+    // at rest lies in that cascade); the ring and little metacarpals bending
+    // at their base so the palm cups round what it closes on; each joint
+    // stopping where it stops (MCP 90, PIP 110, DIP 85). Opening past rest
+    // (negative) is nearly all at the knuckles: a PIP barely straightens past
+    // flat. Every finger of every person is a little different (VARY).
+    // Then one finger at a time, joint by joint (index1R is the knuckle of
+    // the right index), for a hand holding something; `cup` the ring and
+    // little metacarpals alone; and the thumb, which bends its own way.
+    _hand(side) {
+        const b = (n) => this.byName[`${n}.${side}`];
+        // Toward the palm: the way the fingers already curl at rest.
+        const wrist = b('wrist').head;
+        let palm = V3.Cross(b('finger2-1').head.subtract(wrist), b('finger5-1').head.subtract(wrist)).normalize();
+        const curls = b('finger3-3').head.subtract(b('finger3-2').head).normalize().subtract(b('finger3-2').head.subtract(b('finger3-1').head).normalize());
+        if (V3.Dot(palm, curls) < 0) palm = palm.scale(-1);
+        const flat = (v) => v.subtract(palm.scale(V3.Dot(palm, v))).normalize();
+        const middle = flat(b('finger3-2').head.subtract(b('finger3-1').head));
+        // An axis across a bone (which way it runs: `d`) turned so that positive carries the bone toward the palm.
+        const toward = (d, axis) => {
+            const moved = d.applyRotationQuaternion(Q.RotationAxis(axis, 0.3)).subtract(d);
+            return V3.Dot(moved, palm) >= 0 ? axis : axis.scale(-1);
+        };
+        const along = (bone, next) => (next ? next.head : bone.tail).subtract(bone.head).normalize();
+        // Each bone of each finger bends about its own line across it, in the palm's plane (one line across the
+        // knuckles for the whole hand is 20 degrees off square to the index and the little finger, which fan out from
+        // the middle: they closed sideways, a splayed claw). The knuckle's line is taken square to the finger pulled
+        // CONVERGE of the way into line with the middle finger, so that closing, the fingers come together and point
+        // at the heel of the thumb (the scaphoid) as a real fist's do, instead of each folding down its own spread.
+        const flexes = (f, k) => {
+            const bone = b(`finger${f}-${k}`), d = along(bone, k < 3 ? b(`finger${f}-${k + 1}`) : null);
+            let square = d;
+            if (k === 1) {
+                const spread = flat(d), angle = Math.atan2(V3.Dot(V3.Cross(spread, middle), palm), V3.Dot(spread, middle));
+                square = d.applyRotationQuaternion(Q.RotationAxis(palm, angle * HAND.CONVERGE));
+            }
+            return toward(d, V3.Cross(square, palm).normalize());
+        };
+        const bones = [], axes = [];
+        for (const f of [2, 3, 4, 5]) for (const k of [1, 2, 3]) { bones.push(b(`finger${f}-${k}`)); axes.push(flexes(f, k)); }
+        // (people.py gives the hands their metacarpals; a file from before it does not)
+        const cups = [b('metacarpal3'), b('metacarpal4')].filter(Boolean);
+        const cupAxes = cups.map((m, i) => toward(along(m, b(`finger${i + 4}-1`)), V3.Cross(along(m, b(`finger${i + 4}-1`)), palm).normalize()));
+        const vary = [0, 1, 2, 3].map(() => 1 + (Math.random() - 0.5) * HAND.VARY);
+        const curl = (deg, k) => {
+            if (k >= 12) return Math.max(0, deg) * HAND.CUP[k - 12];
+            const joint = k % 3, finger = (k - joint) / 3, [lo, hi] = HAND.RANGE[joint];
+            const gain = (deg >= 0 ? HAND.GAIN[joint] : HAND.OPEN[joint]) * HAND.CASCADE[finger] * vary[finger];
+            return Math.max(lo, Math.min(hi, deg * gain));
+        };
+        this.hinges['curl' + side] = { bones: [...bones, ...cups], axis: axes[4], axes: [...axes, ...cupAxes], bend: curl, fingers: true };
+        FINGERS.forEach((finger, i) => {
+            for (const k of [1, 2, 3]) this.hinges[`${finger}${k}${side}`] = { bones: [bones[i * 3 + k - 1]], axis: axes[i * 3 + k - 1], fingers: true };
+        });
+        if (cups.length) this.hinges['cup' + side] = { bones: cups, axis: cupAxes[1], axes: cupAxes, bend: (deg, k) => deg * HAND.CUP[k] / HAND.CUP[1], fingers: true };
 
-            const t1 = this.byName[`finger1-1.${side}`], t2 = this.byName[`finger1-2.${side}`];
-            const thumbDir = t2.head.subtract(t1.head).normalize();
-            // The thumb's bones bend toward the palm as the fingers' do (about a
-            // line across the knuckles turned it out sideways: a fist's thumb
-            // stood up off it).
-            const thumbAxis = signed(V3.Cross(thumbDir, across).normalize(), 1);
-            this.hinges['thumb' + side] = { bones: [t2, this.byName[`finger1-3.${side}`]], axis: thumbAxis, axes: [flexes(1, 2), flexes(1, 3)], fingers: true };
-            // The thumb's own first bone, in the heel of the hand: bent the
-            // way the rest of it bends, and swung in across the palm to meet
-            // the fingers, about the line the hand lies along.
-            this.hinges['thumbBase' + side] = { bones: [t1], axis: flexes(1, 1), fingers: true };
-            const lies = this.byName[`finger3-1.${side}`].head.subtract(this.byName[`wrist.${side}`].head).normalize();
-            const swung = thumbDir.applyRotationQuaternion(Q.RotationAxis(lies, 0.3)).subtract(thumbDir);
-            this.hinges['thumbIn' + side] = { bones: [t1], axis: V3.Dot(swung, bend(3).towards) >= 0 ? lies : lies.scale(-1), fingers: true };
-        }
+        // The thumb. Its first bone (the metacarpal, in the heel of the hand) swings away from the palm (`thumbBase`)
+        // and round in front of it to meet the fingers (`thumbIn`, about the line the hand lies along). Its other two
+        // joints bend across the palm toward the little finger (`thumb`, the MCP 0.8 of the IP), about a line turned
+        // THUMB_TURN round from the fingers' (the thumb's nail faces the side, not the back of the hand); bent the
+        // fingers' way it folded down onto the palm and its tip went through them in a fist.
+        const t1 = b('finger1-1'), t2 = b('finger1-2'), t3 = b('finger1-3');
+        const thumbDir = along(t1, t2), turn = HAND.THUMB_TURN * RAD, little = b('finger5-1').head.subtract(t2.head).normalize();
+        const thumbFlex = (bone, next) => {
+            const d = along(bone, next), across = V3.Cross(d, palm).normalize(), out = palm.subtract(d.scale(V3.Dot(palm, d))).normalize();
+            const axis = across.scale(Math.cos(turn)).add(out.scale(Math.sin(turn) * (side === 'R' ? 1 : -1))).normalize();
+            const moved = d.applyRotationQuaternion(Q.RotationAxis(axis, 0.3)).subtract(d);
+            return V3.Dot(moved, little) >= 0 ? axis : axis.scale(-1);
+        };
+        const thumbAxes = [thumbFlex(t2, t3), thumbFlex(t3, null)];
+        this.hinges['thumb' + side] = { bones: [t2, t3], axis: thumbAxes[1], axes: thumbAxes, bend: (deg, k) => deg * (k ? 1 : 0.8), fingers: true };
+        this.hinges['thumbBase' + side] = { bones: [t1], axis: toward(thumbDir, V3.Cross(thumbDir, palm).normalize()), order: 1, fingers: true };
+        const lies = b('finger3-1').head.subtract(wrist).normalize();
+        const swung = thumbDir.applyRotationQuaternion(Q.RotationAxis(lies, 0.3)).subtract(thumbDir);
+        // (away from the palm first, then round: the other way round the swing carried it under the fingers)
+        this.hinges['thumbIn' + side] = { bones: [t1], axis: V3.Dot(swung, curls) >= 0 ? lies : lies.scale(-1), order: 2, fingers: true };
     }
 
     // --- posing ---------------------------------------------------------------
@@ -465,7 +500,7 @@ export class Person {
             if (!h || !deg) continue;
             const share = h.bones.length > 1 && !h.fingers ? 1 / h.bones.length : 1;
             const q = Q.RotationAxis(h.axis, deg * RAD * share);
-            h.bones.forEach((b, k) => add(b, h.axes ? Q.RotationAxis(h.axes[k], deg * RAD * share) : q, h.order));
+            h.bones.forEach((b, k) => add(b, h.axes ? Q.RotationAxis(h.axes[k], (h.bend ? h.bend(deg, k) : deg) * RAD * share) : q, h.order));
         }
         this._lookAt(add);
         for (const b of Object.values(this.byName)) {

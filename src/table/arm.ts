@@ -44,28 +44,32 @@ const WORN = { glove: 0.0006, cuff: 0.045 };
 const NITRILE = { colour: [0.08, 0.2, 0.4], rough: 0.4 };
 
 // How the fingers lie for each thing a hand does, in degrees a joint from
-// the hand at rest (a finger's three joints run from the knuckle out).
+// the hand at rest (a finger's three joints run from the knuckle out; `cup`
+// bends the ring and little metacarpals, the palm closing round what is held;
+// the thumb as person.ts's thumbBase, thumbIn and thumb). Each finger's last
+// joint takes about two thirds of its middle one, as the tendons couple them.
 export const HOLDS = {
-    // A scalpel held as a pen is: on the middle finger, under the index, the thumb against it.
+    // A scalpel held as a pen is: on the middle finger, under the index, the thumb's pad against it.
     pen: {
-        index: [52, 48, 18], middle: [58, 62, 28], ring: [70, 80, 38], little: [76, 84, 42],
-        thumbIn: 34, thumbBase: 14, thumb: 22,
+        index: [46, 38, 18], middle: [56, 52, 26], ring: [70, 82, 44], little: [76, 88, 48], cup: 5,
+        thumbIn: -10, thumbBase: 30, thumb: 15,
     },
     // A hand about to take hold: fingers a little curled, the thumb out from them.
     open: {
         index: [14, 16, 8], middle: [16, 18, 9], ring: [20, 22, 10], little: [24, 24, 12],
-        thumbIn: 12, thumbBase: 6, thumb: 8,
+        thumbIn: 5, thumbBase: 15, thumb: 6,
     },
     // Flesh taken between the thumb and the first two fingers, the other two tucked away.
     pinch: {
-        index: [42, 38, 16], middle: [50, 46, 20], ring: [72, 80, 40], little: [78, 86, 44],
-        thumbIn: 40, thumbBase: 18, thumb: 20,
+        index: [40, 34, 14], middle: [48, 42, 18], ring: [72, 86, 50], little: [78, 90, 54], cup: 6,
+        thumbIn: 10, thumbBase: 15, thumb: 15,
     },
-    // A fist: the fingers rolled tight into the palm, the thumb swung in and bent over the middle bones of the first
-    // two (less, and it stood out to the side, a hitchhiker's).
+    // A fist: the fingers rolled tight into the palm, their tips on it, the ring and little metacarpals cupped, the
+    // thumb out from the palm and across the middle bones of the first two fingers (bent down into the palm instead,
+    // it went in under them).
     fist: {
-        index: [88, 100, 62], middle: [90, 102, 64], ring: [92, 104, 64], little: [94, 104, 64],
-        thumbIn: 80, thumbBase: 22, thumb: 50,
+        index: [86, 100, 66], middle: [90, 104, 70], ring: [92, 106, 72], little: [92, 106, 72], cup: 15,
+        thumbIn: -30, thumbBase: 30, thumb: 60,
     },
 };
 
@@ -173,7 +177,7 @@ export class Arm {
         });
         const mine = (i, kinds) => owner[i].endsWith('.' + side) && kinds.test(owner[i]);
         const fromWrist = (i) => Math.hypot(arrays.position[i * 3] - wrist.head.x, arrays.position[i * 3 + 1] - wrist.head.y, arrays.position[i * 3 + 2] - wrist.head.z);
-        const onArm = (i) => mine(i, /^lowerarm/), onHand = (i) => mine(i, /^(wrist|finger)/);
+        const onArm = (i) => mine(i, /^lowerarm/), onHand = (i) => mine(i, /^(wrist|metacarpal|finger)/);
         this.meshes = [
             worn(person, 'glove' + side, (three) => three.every((i) => onHand(i) || (onArm(i) && fromWrist(i) < WORN.cuff)), WORN.glove, plain(person.scene, 'glove', NITRILE)),
         ];
