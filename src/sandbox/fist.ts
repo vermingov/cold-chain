@@ -2,10 +2,11 @@
 //
 // A person's arm (table/arm.ts: a person's bones, the hand closed into a fist, the elbow found between a shoulder
 // beside and below the eye and the wrist), in that person's own skin and sleeve. What is moved is the knuckles. An
-// untrained man telegraphs it: the fist comes up from below and is drawn back beside the cheek, then driven at the
+// untrained man telegraphs it: the fist comes up from below and is drawn back beside the jaw, then driven at the
 // middle of the view, turning over from upright to most of the way flat as it goes and fastest a little before it
-// lands (7 m/s at the hand, dev/research/blunt-trauma.md). What it lands on stops it short and gives a little under
-// it, and the arm comes back off it; a miss carries it on to the end of the arm and is pulled back slower.
+// lands (7 m/s at the most, landing at about 5). The blow is dealt on the frame the knuckles get there, at the speed
+// they get there with (weapons.ts). What it lands on stops it short and gives a little under it, and the arm comes
+// back off it; a miss carries it on to the end of the arm and is pulled back slower.
 
 import * as BABYLON from '@babylonjs/core';
 import { Arm } from '../table/arm.ts';

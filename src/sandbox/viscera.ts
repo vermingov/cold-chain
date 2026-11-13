@@ -372,11 +372,11 @@ export class Viscera {
         let mm = 0;
         for (const o of this.openings) {
             const d = Math.hypot(x - o.at.x, y - o.at.y, z - o.at.z), r = o.half[0] + 0.06;
-            if (d < r) mm = Math.max(mm, 0.12 * (1 - d / r));
+            if (d < r) mm = Math.max(mm, 0.04 * (1 - d / r));
         }
         for (const s of this.spots) {
             const d = Math.hypot(x - s.at.x, y - s.at.y, z - s.at.z);
-            if (d < s.r) mm = Math.max(mm, 0.5 * (1 - (d / s.r) ** 2));
+            if (d < s.r) mm = Math.max(mm, 0.25 * (1 - (d / s.r) ** 2));
         }
         if (!mm) return 0;
         const patch = 0.5 + 0.5 * Math.sin(x * 160 + Math.sin(y * 110) * 2) * Math.sin(z * 140 + y * 90);
@@ -589,8 +589,8 @@ class Loop {
         this.q = new Float32Array(n * 3);
         this.out = new Uint8Array(n);
         this.passing = new Uint8Array(n);
-        // In a belly that has been opened (and shot through) everything is wet with a little blood.
-        this.gore = new Float32Array(n).fill(0.03);
+        // Millimetres of blood on it, at each point: none until it comes through the wound.
+        this.gore = new Float32Array(n);
         this.came = false;
         this.hold = null;
         // (How far each point's attachments let it go, a little more or less here and there.)
@@ -639,8 +639,9 @@ class Loop {
         const pressure = tone + DENSITY * 9.81 * Math.max(0, Math.min(0.3, top - F.y));
         const push = (2 * pressure) / (Math.PI * R * DENSITY) / PACKED;
         // The belly fuller than the capsules it is drawn round: the cavity reaches the wall at the opening.
-        let fuller = 0;
-        for (const c of cavity) fuller = Math.max(fuller, distToSegment(F.x, F.y, F.z, c) - c.r);
+        let fuller = Infinity;
+        for (const c of cavity) fuller = Math.min(fuller, distToSegment(F.x, F.y, F.z, c) - c.r);
+        fuller = Math.max(0, Math.min(0.05, fuller));
         bodies = bodies.filter((c) => segmentNear(c, F, this.tether + 0.25 + c.r));
         const h = Math.min(dt, 1 / 30), g = -9.81 * h * h;
         // Inside it is packed among the rest, which hold it up and slow it (no weight of its own there: the belly's
@@ -706,26 +707,31 @@ class Loop {
                 const held = this.hold?.index === i;
                 this.passing[i] = through && hn > -(WALL + R * 3) && hn < R * 2 ? 1 : 0;
                 if (!this.out[i]) {
-                    if (through && hn > R * 0.5) { this.out[i] = 1; this.gore[i] = Math.max(this.gore[i], 0.12 + Math.random() * 0.25); this._bloody = true; continue; }
+                    if (through && hn > R * 0.5) { this.out[i] = 1; this.gore[i] = Math.max(this.gore[i], 0.01 + Math.random() * 0.05); this._bloody = true; continue; }
                     // Behind the wall where it is whole (the plane of the skin there, far enough round the opening).
                     if (!through && !held && hn > -(WALL + R) && Math.abs(x) < o.half[0] + 0.15 && Math.abs(y) < o.half[0] + 0.15) {
                         const s = hn + WALL + R; p[k] -= N.x * s; p[k + 1] -= N.y * s; p[k + 2] -= N.z * s;
                     }
                     // And in the cavity, not through the back or the sides.
-                    if (!this.passing[i]) for (const c of cavity) {
-                        const most = c.r + fuller - WALL - R;
-                        const near = nearestOnSegment(p[k], p[k + 1], p[k + 2], c);
-                        const ex = p[k] - near[0], ey = p[k + 1] - near[1], ez = p[k + 2] - near[2], d = Math.sqrt(ex * ex + ey * ey + ez * ez);
-                        if (d > most && cavity.every((c2) => c2 === c || distToSegment(p[k], p[k + 1], p[k + 2], c2) > c2.r + fuller - WALL - R)) {
-                            const s = most / d; p[k] = near[0] + ex * s; p[k + 1] = near[1] + ey * s; p[k + 2] = near[2] + ez * s;
+                    if (!this.passing[i]) {
+                        let best = null, over = Infinity;
+                        for (const c of cavity) {
+                            const e = distToSegment(p[k], p[k + 1], p[k + 2], c) - (c.r + fuller - WALL - R);
+                            if (e < over) { over = e; best = c; }
                         }
-                        break;
+                        if (best && over > 0) {
+                            const near = nearestOnSegment(p[k], p[k + 1], p[k + 2], best), d = over + best.r + fuller - WALL - R, s = (d - over) / d;
+                            p[k] = near[0] + (p[k] - near[0]) * s; p[k + 1] = near[1] + (p[k + 1] - near[1]) * s; p[k + 2] = near[2] + (p[k + 2] - near[2]) * s;
+                        }
                     }
                 } else {
                     if (through && hn < -(WALL + R)) { this.out[i] = 0; continue; }
                     // Lying on the skin round the opening, or on the clothes further off.
-                    if (!through && !held && hn < R && Math.abs(x) < o.half[0] + 0.15 && Math.abs(y) < o.half[0] + 0.15) {
-                        const s = R - hn; p[k] += N.x * s; p[k + 1] += N.y * s; p[k + 2] += N.z * s;
+                    // (In the hole torn in the clothes over the opening it lies on the skin; further off, on the clothes, which it
+                    // lifts and pushes aside near the hole.)
+                    const lie = R + CLOTHES * Math.min(1, Math.max(0, Math.hypot(Math.max(Math.abs(x) - long, 0), y) - o.half[1]) / 0.1);
+                    if (!through && !held && hn < lie && Math.abs(x) < o.half[0] + 0.15 && Math.abs(y) < o.half[0] + 0.15) {
+                        const s = lie - hn; p[k] += N.x * s; p[k + 1] += N.y * s; p[k + 2] += N.z * s;
                     }
                 }
             }
@@ -965,14 +971,15 @@ class Wet extends BABYLON.MaterialPluginBase {
     base = mix(base, vec3(0.62, 0.36, 0.09), fatty);
     base = mix(base, vec3(0.2, 0.012, 0.01), clamp(vessel, 0.0, 0.85));
     surfaceAlbedo = base;
-    // A fine unevenness (and the vessels standing a little proud) bending the light.
-    float h = mid * 0.6 + fine * 0.25 + vessel * 0.4 + fatty * 0.6;
+    // A fine unevenness (and the vessels standing a little proud) bending the light: in metres, a few tenths of a
+    // millimetre high. (Taken as metres unscaled it tipped the surface nearly flat to the eye: glinting specks.)
+    float h = (mid * 0.6 + fine * 0.25 + vessel * 0.4 + fatty * 0.6) * 0.0003;
     vec3 dpx = dFdx(vPositionW), dpy = dFdy(vPositionW);
     float dhx = dFdx(h), dhy = dFdy(h);
     vec3 r1v = cross(dpy, normalW), r2v = cross(normalW, dpx);
     float det = dot(dpx, r1v);
     vec3 grad = sign(det) * (dhx * r1v + dhy * r2v);
-    normalW = normalize(abs(det) * normalW - grad * 0.35);
+    normalW = normalize(abs(det) * normalW - grad);
 }
 #endif
 `,

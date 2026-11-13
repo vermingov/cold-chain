@@ -311,6 +311,7 @@ float goreNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.
 
 const GLSL_GORE = `
 #ifdef GORE
+float goreWet = 0.0;
 {
     vec2 gu = vMainUV1;
     vec3 gdp1 = dFdx(vPositionW), gdp2 = dFdy(vPositionW);
@@ -327,9 +328,12 @@ const GLSL_GORE = `
         // Depth in millimetres, made uneven so that the lips and the layers in the walls wander as real ones do.
         // (The finest noise fades to its middle where a pixel covers more than one of its cells: further off it only
         // sparkles.)
-        float gfine = clamp(1.6 - max(abs(gdu1.x), abs(gdu2.x)) * 2600.0, 0.0, 1.0);
-        float d = gm.r * 40.0 * (0.8 + 0.4 * mix(0.5, goreNoise(gu * 2600.0), gfine)) + (goreNoise(gu * 900.0) - 0.5) * 1.2;
-        vec3 flesh = mix(vec3(0.5, 0.17, 0.15), vec3(0.74, 0.58, 0.36), smoothstep(1.4, 2.6, d));
+        float gstep = max(max(abs(gdu1.x), abs(gdu2.x)), max(abs(gdu1.y), abs(gdu2.y)));
+        float gfine = clamp(1.6 - gstep * 2600.0, 0.0, 1.0), gmid = clamp(1.6 - gstep * 900.0, 0.0, 1.0);
+        float d = gm.r * 40.0 * (0.8 + 0.4 * mix(0.5, goreNoise(gu * 2600.0), gfine)) + (mix(0.5, goreNoise(gu * 900.0), gmid) - 0.5) * 1.2;
+        // Fat in lobules a few millimetres across, each a little more or less yellow, the septa between them paler.
+        vec3 fat = vec3(0.74, 0.58, 0.36) * (0.86 + 0.24 * mix(0.5, goreNoise(gu * 1300.0 + 5.0), clamp(1.6 - gstep * 1300.0, 0.0, 1.0)));
+        vec3 flesh = mix(vec3(0.5, 0.17, 0.15), fat, smoothstep(1.4, 2.6, d));
         flesh = mix(flesh, vec3(0.68, 0.62, 0.56), smoothstep(9.5, 11.0, d));
         flesh = mix(flesh, vec3(0.36, 0.06, 0.05), smoothstep(11.5, 13.0, d));
         flesh = mix(flesh, vec3(0.08, 0.005, 0.004), smoothstep(15.0, 30.0, d));
@@ -338,6 +342,8 @@ const GLSL_GORE = `
         float blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, goreNoise(gu * 1500.0), gfine));
         surfaceAlbedo = mix(surfaceAlbedo, toLinearSpace(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
         surfaceAlbedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);
+        // Cut flesh is wet: a soft sheen on it, and more where blood lies.
+        goreWet = max(smoothstep(0.3, 1.5, d), clamp(blood, 0.0, 1.0));
     }
 }
 #endif
@@ -371,7 +377,17 @@ export class Gore extends BABYLON.MaterialPluginBase {
 
     getCustomCode(shaderType) {
         if (shaderType !== 'fragment') return null;
-        return { CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef GORE\nuniform sampler2D goreDepth;\n${GLSL_GORE_NOISE}#endif\n`, CUSTOM_FRAGMENT_UPDATE_ALPHA: GLSL_GORE };
+        return {
+            CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef GORE\nuniform sampler2D goreDepth;\n${GLSL_GORE_NOISE}#endif\n`, CUSTOM_FRAGMENT_UPDATE_ALPHA: GLSL_GORE,
+            // (Once the roughness is read. Hider hangs its own change on the same line under the key with `float `: code of
+            // two plugins under one key is joined into one replacement, which would declare it twice.)
+            '!(roughness=reflectivityOut\\.roughness;)': `$1
+#ifdef GORE
+microSurface = mix(microSurface, 0.72, goreWet);
+roughness = 1.0 - microSurface;
+#endif
+`,
+        };
     }
 }
 
