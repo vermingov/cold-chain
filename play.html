@@ -69,9 +69,7 @@ window.addEventListener('error', (e) => hud.error(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => hud.error(e.reason));
 const sandbox = await openSandbox(engine, canvas, hud);
 const loading = document.getElementById('loading');
-const warmed = performance.now();
 await sandbox.warm((text) => { loading.textContent = text; });
-console.log('shaders prepared in', Math.round(performance.now() - warmed), 'ms');
 window.__sandbox = sandbox;
 engine.runRenderLoop(() => {
     try {
