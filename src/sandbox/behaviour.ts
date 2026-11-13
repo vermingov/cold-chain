@@ -86,6 +86,7 @@ const _v = new V3(), _t = new V3(), _q = new Q(), _qa = new Q(), _qb = new Q(), 
 // preferred value and how much it counts (metres of miss a degree away is worth). The elbow forward of the trunk, so the
 // forearm comes to the body from in front and not through its side; the upper arm as little twisted as will do.
 const PREFER = [[0, 0], [10, 0.0006], [0, 0.0006], [0, 0]];
+const ARM = ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow'], LEG = ['hipFlex', 'hipAbduct', 'knee', 'ankle'];
 
 export class Behaviour {
     declare npc: any;
@@ -447,7 +448,13 @@ export class Behaviour {
         const shift = aim.subtract(this.com);
         shift.y = 0;
         if (shift.length() > 0.1) shift.scaleInPlace(0.1 / shift.length());
-        for (const foot of down) this._legTo(foot.name.slice(-1), foot.node.position, pose, f, hipY, !this.step, shift);
+        // (Eased over 60 ms: worked out each frame from where the hips and feet had just been jolted to, a planted leg's
+        // aim jumped from frame to frame, and the foot it could not turn passed every jump up the shin, 1 to 6 rad/s of
+        // buzz in a foot and shin standing still.)
+        for (const foot of down) {
+            this._legTo(foot.name.slice(-1), foot.node.position, pose, f, hipY, !this.step, shift);
+            this._ease('leg' + foot.name.slice(-1), LEG, foot.name.slice(-1), pose, 0.06);
+        }
         this._react(pose, dt);
 
         // The ankle strategy: the body swayed back over the middle of the feet as a whole, as hard as the feet can push
@@ -702,10 +709,16 @@ export class Behaviour {
     // solved again every frame from where the body has just moved to, and now and then from a new start (its seeds),
     // and taken as it came the arm's aim jumped by degrees from one frame to the next and the arm shook after it.
     _reachPose(side, reach, all, pose) {
-        const was = (this._eased[side] ??= {}), k = Math.min(1, this._dt / 0.1);
-        for (const c of ['shoulderAbduct', 'shoulderFlex', 'shoulderTwist', 'elbow']) {
-            const want = (pose[c + side] || 0) + (reach[c] - (pose[c + side] || 0)) * all;
-            was[c] = was[c] === undefined || this.clock - (was.t ?? -1) > 0.1 ? want : was[c] + (want - was[c]) * k;
+        for (const c of ARM) pose[c + side] = (pose[c + side] || 0) + (reach[c] - (pose[c + side] || 0)) * all;
+        this._ease('arm' + side, ARM, side, pose, 0.1);
+    }
+
+    // The pose's `controls` (on `side`) eased toward over `tau` seconds, for as long as they are asked for every frame.
+    _ease(key, controls: string[], side, pose, tau) {
+        const was = (this._eased[key] ??= {}), k = Math.min(1, this._dt / tau), fresh = this.clock - (was.t ?? -1) > 0.1;
+        for (const c of controls) {
+            const want = pose[c + side] || 0;
+            was[c] = fresh || was[c] === undefined ? want : was[c] + (want - was[c]) * k;
             pose[c + side] = was[c];
         }
         was.t = this.clock;
@@ -757,7 +770,9 @@ export class Behaviour {
         pose['curl' + side] = 25;
         // On it, or held up on the way, the arm lets the hand lie where it is, its muscles easing off rather than driving
         // it on into what stopped it.
-        if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.6 : 0.75;
+        // (On it, a third: the arm's aim is just off the skin of something that moves, and at three quarters the arm's
+        // springs drove the hand on into it, 30 N at the hand for 2 cm, and it rattled there.)
+        if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.6 : 0.35;
         if (g.hold) return;
         const chest = rd.byName.get('chest'), carrier = this.wound?.seg ?? null;
         if (touching) {

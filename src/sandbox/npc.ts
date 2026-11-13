@@ -52,6 +52,8 @@ export class Npc {
     declare coughsBlood: boolean;
     declare _skinned: Float32Array | null;
     declare _skinnedAt: number;
+    declare _boxed: Float32Array | null;
+    declare _boxedAt: number;
     declare _cough: number;
     declare _restPos: Float32Array;
     declare _uv: Float32Array;
@@ -114,6 +116,8 @@ export class Npc {
         this.grabbed = false;
         this._skinned = null;
         this._skinnedAt = -1;
+        this._boxed = null;
+        this._boxedAt = -1;
         this._cough = 2;
         person.apply(P.stand(this.clock));
         this.ragdoll = new Ragdoll(person, { mass, bit });
@@ -156,14 +160,23 @@ export class Npc {
         const scale = V3.TransformNormal(dir, inv).length();
         const hits = [];
         const index = this.person.header.indexArray ?? this._indices();
+        const boxes = this._boxes(skinned, index);
         for (const p of this.person.header.parts) {
             // (The skin under the clothes is not drawn but is still where the body begins.)
             const kind = p.kind === 'skin' ? 'skin' : p.kind === 'cloth' ? 'cloth' : null;
             if (!kind) continue;
             if (!slabFor(p, skinned, o, d, far * scale)) continue;
-            for (let i = p.indexStart; i < p.indexStart + p.indexCount; i += 3) {
-                const t = triangle(o, d, skinned, index, i);
-                if (t > 0 && t < far * scale) hits.push({ t: t / scale, i, kind });
+            const end = p.indexStart + p.indexCount;
+            for (let start = p.indexStart; start < end;) {
+                // Only the runs of triangles whose box the line crosses: the same crossings as trying every triangle.
+                const run = Math.floor(start / RUN), next = Math.min(end, (run + 1) * RUN);
+                if (boxCrossed(boxes, run * 6, o, d, far * scale)) {
+                    for (let i = start; i < next; i += 3) {
+                        const t = triangle(o, d, skinned, index, i);
+                        if (t > 0 && t < far * scale) hits.push({ t: t / scale, i, kind });
+                    }
+                }
+                start = next;
             }
         }
         hits.sort((a, b) => a.t - b.t);
@@ -191,6 +204,25 @@ export class Npc {
             this._skinnedAt = this.world.frame;
         }
         return this._skinned;
+    }
+
+    // The box round each run of RUN / 3 triangles in this frame's skinned corners, made once a frame however many lines
+    // ask: a bullet's exit casts some sixty short lines round its lips (wounds.ts tear), and every one of them used to
+    // try each of the body's triangles.
+    _boxes(skinned: Float32Array, index) {
+        if (this._boxedAt === this._skinnedAt && this._boxed) return this._boxed;
+        const runs = Math.ceil(index.length / RUN);
+        const b = this._boxed?.length === runs * 6 ? this._boxed : (this._boxed = new Float32Array(runs * 6));
+        for (let r = 0; r < runs; r++) {
+            let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+            for (let i = r * RUN, end = Math.min(index.length, i + RUN); i < end; i++) {
+                const v = index[i] * 3, x = skinned[v], y = skinned[v + 1], z = skinned[v + 2];
+                if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+            }
+            b[r * 6] = x0; b[r * 6 + 1] = y0; b[r * 6 + 2] = z0; b[r * 6 + 3] = x1; b[r * 6 + 4] = y1; b[r * 6 + 5] = z1;
+        }
+        this._boxedAt = this._skinnedAt;
+        return b;
     }
 
     _describe(h, origin, dir, index, skinned) {
@@ -538,6 +570,24 @@ export class Npc {
 
 // Whether the line meets part `p`'s corners' box at all (skinned corners, so the box is made fresh: cheap next to the
 // triangles it saves).
+const RUN = 96;     // indices: 32 triangles, which lie together in the mesh (MakeHuman's faces are in order over the body)
+
+// Whether the line o + t d, 0 < t < far, meets the box at `k` in `b` (a hair larger, for rounding).
+function boxCrossed(b: Float32Array, k: number, o, d, far: number) {
+    let t0 = 0, t1 = far;
+    for (let a = 0; a < 3; a++) {
+        const ok = a === 0 ? o.x : a === 1 ? o.y : o.z, dk = a === 0 ? d.x : a === 1 ? d.y : d.z;
+        const lo = b[k + a] - 1e-5, hi = b[k + 3 + a] + 1e-5;
+        if (Math.abs(dk) < 1e-12) { if (ok < lo || ok > hi) return false; continue; }
+        let p = (lo - ok) / dk, q = (hi - ok) / dk;
+        if (p > q) { const s = p; p = q; q = s; }
+        if (p > t0) t0 = p;
+        if (q < t1) t1 = q;
+        if (t0 > t1) return false;
+    }
+    return true;
+}
+
 function slabFor(p, skinned, o, d, far) {
     let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let v = p.vertexStart; v < p.vertexStart + p.vertexCount; v += 7) {

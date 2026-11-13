@@ -18,6 +18,7 @@ import { Fist } from './fist.ts';
 import { Hands, type Grip } from './hands.ts';
 import { Medic, buildKit } from './dressing.ts';
 import { GAMMA, RHO, volume } from './fluid.ts';
+import { Muzzle } from './muzzle.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const FRAGMENTS = 1000;      // an M67's body breaks into roughly this many that can wound
 
@@ -153,7 +154,8 @@ export class Weapons {
     declare action: any;
     declare recoil: number;
     declare flash: BABYLON.PointLight;
-    declare flashCard: BABYLON.Mesh;
+    declare flashCard: BABYLON.Mesh;     // the grenade's flash
+    declare muzzle: Muzzle;
     declare holes: BABYLON.Mesh;
     declare holeCount: number;
     declare grab: any;
@@ -225,6 +227,7 @@ export class Weapons {
         this.flashCard.isPickable = false;
         this.flashCard.setEnabled(false);
         this.flashCard.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+        this.muzzle = new Muzzle(scene, this.hand);
 
         // Bullet holes in the room.
         this.holes = BABYLON.MeshBuilder.CreatePlane('holes', { size: 1 }, scene);
@@ -468,17 +471,14 @@ export class Weapons {
                 calibre: off < 0.6 ? 0.022 : 0.026, channel: 0.024, soft: 42, hard: 120, pellets: 1 });
         } else for (let p = 0; p < gun.pellets; p++) this._shot(eye, jitter(ahead, gun.spread), { ...gun });
         sound?.shot(gun.sound, { gain: 1 });
-        // The flash at the muzzle, for a frame or two.
+        // The flash at the muzzle, one frame (muzzle.ts), and the light it throws, going by the clock (update).
         const anchors = this._anchors.get(key);
-        const muzzle = anchors?.tip ? V3.TransformCoordinates(anchors.tip, this.hand.getWorldMatrix()) : eye.add(ahead.scale(0.6));
+        const tip = anchors?.tip ?? new V3(0, 0, 0.6);
+        const muzzle = V3.TransformCoordinates(tip, this.hand.getWorldMatrix());
         this.flash.position.copyFrom(muzzle);
-        this.flash.intensity = 40;
+        this.flash.intensity = this.muzzle.fire(key, tip, muzzle, ahead);
         this.flashAt = performance.now();
-        this.flashCard.position.copyFrom(muzzle.add(ahead.scale(0.05)));
         this.flash.range = 8;
-        this.flashCard.scaling.setAll(gun.pellets > 1 ? 1.6 : key === 'pistol' ? 1 : 1.35);
-        this.flashCard.rotation.z = Math.random() * Math.PI;
-        this.flashCard.setEnabled(true);
         this.world.player.pitch -= gun.kick * (0.6 + Math.random() * 0.4);
         this.world.player.yaw += (Math.random() - 0.5) * gun.kick * 0.4;
         if (key !== 'shotgun' && anchors?.ejection) this._eject(anchors, key);

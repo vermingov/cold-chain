@@ -145,7 +145,7 @@ const STIFF = 5, DAMP = 0.8;
 const AXIS_SHARE = [1, 0.6, 0.8];   // hinge, twist, side: the muscle across each
 // A broken shaft's two ends grating on each other in the flesh, N m per kg the far half weighs: it hangs and swings at
 // the break, catching a little, whatever the muscles above are doing (the tone is the joints', not the break's).
-const GRATE = 0.25;
+const GRATE = 1.2;
 
 // A turn `q` (in a joint's parent's frame) as the joint's three angles. Havok's 6DoF joint reads a turn as about its
 // first axis, then its second, then its third, each about the axis as already turned (measured: a motor target of
