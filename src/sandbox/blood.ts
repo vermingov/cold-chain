@@ -66,6 +66,7 @@ export class Blood {
     declare markBorn: Float32Array[];
     declare wallRuns: { kind: number; slot: number; at: BABYLON.Vector3; normal: BABYLON.Vector3; wide: number; length: number; reach: number }[];
     declare gathering: Map<number, number>;
+    declare wetSince: Map<number, number>;
     declare onLand: ((at: BABYLON.Vector3, speed: number) => void) | null;
     declare bodies: (() => any[]) | null;
     declare clock: number;
@@ -96,6 +97,7 @@ export class Blood {
         this.contact = new WeakMap();
         this.streams = new Map();
         this.gathering = new Map();
+        this.wetSince = new Map();
         this.wallRuns = [];
         this.map = null;
         this.tops = new Map();
@@ -453,9 +455,15 @@ export class Blood {
         // more drops have fallen there (Boos et al. 2019, drip patterns; dev/research/stab-wounds.md sec. 2). What goes
         // into the satellites, their size and speed are estimates: a twentieth of it, half-millimetre droplets at a third
         // of the speed it came in at, thrown up and out. A dried pool is a floor like any other: the drop leaves a stain.
-        if (floor && this.floor.liquid(at.x, at.z)) {
+        // A drop's own stain on the floor stays liquid a while too, so the next drop into it merges with it the same way.
+        // (shortcut: a stain is the 3 cm cell its drops gather in, wet for DRIES; finer if drops a centimetre apart should
+        // each leave a mark.)
+        const key = floor ? Math.floor(at.x / 0.03) * 7919 + Math.floor(at.z / 0.03) : 0;
+        const stain = floor && this.gathering.has(key) && this.clock - (this.wetSince.get(key) ?? -Infinity) < DRIES;
+        if (floor && (stain || this.floor.liquid(at.x, at.z))) {
             const thrown = splashes(d, speed) ? 0.05 : 0;
-            this.floor.pour(at.x, at.z, ml * (1 - thrown));
+            if (stain) this._gather(key, at, ml * (1 - thrown));
+            else this.floor.pour(at.x, at.z, ml * (1 - thrown));
             if (thrown) this.spray(at.add(new V3(0, 0.002, 0)), V3.UpReadOnly, speed * 0.33, ml * thrown, 1.0, 0.3);
             return;
         }
@@ -477,14 +485,18 @@ export class Blood {
             this._mark(kind, way.scale(w2 * long), side.scale(w2), normal, at.add(off));
         }
         if (floor) {
-            // Drops landing on the same place gather; enough of them is a pool.
-            const key = Math.floor(at.x / 0.03) * 7919 + Math.floor(at.z / 0.03);
-            const have = (this.gathering.get(key) ?? 0) + ml;
-            if (have > GATHERS) { this.floor.add(at.x, at.z, have); this.gathering.delete(key); } else this.gathering.set(key, have);
+            this.wetSince.set(key, this.clock);
+            this._gather(key, at, ml);
         } else if (Math.abs(normal.y) < 0.3 && ml > 0.015) {
             // On a wall a big enough drop runs down it, until what it leaves behind has used it up.
             this._wallRun(at, normal, Math.max(0.002, d * 0.8), Math.min(0.6, ml / 0.003 / 100));
         }
+    }
+
+    // Drops landing on the same place of the floor gather; enough of them is a pool.
+    _gather(key: number, at: BABYLON.Vector3, ml: number) {
+        const have = (this.gathering.get(key) ?? 0) + ml;
+        if (have > GATHERS) { this.floor.add(at.x, at.z, have); this.gathering.delete(key); this.wetSince.delete(key); } else this.gathering.set(key, have);
     }
 
     // Blood landing on the top of something above the floor (a ledge, a crate), which has no pools of its own (shortcut:
@@ -700,6 +712,7 @@ export class Blood {
         this.streams.clear();
         this.wallRuns = [];
         this.gathering.clear();
+        this.wetSince.clear();
         this.tops.clear();
         this.marks.forEach((m, k) => { m.thinInstanceCount = 0; m.isVisible = false; this.markCount[k] = 0; this.markNext[k] = 0; });
         this.markChanged.clear();

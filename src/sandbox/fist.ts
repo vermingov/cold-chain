@@ -18,7 +18,6 @@ const COCKED = new V3(0.14, -0.09, 0.2);    // drawn back beside the jaw, at the
 const MISS = new V3(0.02, -0.04, 0.6);      // the arm's end, nothing met
 const HANGS = new V3(0.3, -1, -0.15);       // the way the elbow is off the line from shoulder to fist: down, a little out
 const SPEED = 7;                             // m/s at the hand, the most
-const ARM = /^(upperarm|lowerarm|wrist|metacarpal|finger).*\.R$/;
 // What the player wears on it: a canvas work jacket, its sleeve down to a cuff short of the wrist, standing off the skin.
 const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, off: 0.007, cuff: 0.03 };
 
@@ -42,10 +41,7 @@ export class Fist {
 
     constructor(people, body: string, camera: BABYLON.Camera, cast?: (m: BABYLON.AbstractMesh) => void) {
         this.camera = camera;
-        this.arm = new Arm(people, body, 'R', camera, { hold: 'fist' });
-        for (const m of this.arm.meshes) m.dispose();
-        this.arm.meshes = [armOnly(this.arm.person), sleeve(this.arm)];
-        for (const m of this.arm.meshes) cast?.(m);
+        this.arm = ownArm(people, body, 'R', camera, 'fist', cast);
         this.arm.grasp = knuckles(this.arm);
         // From the wrist to the knuckles, in line with the forearm in a fist that is punching.
         this.hand = V3.Distance(this.arm.grasp.at, this.arm._in(this.arm.person.joint('wrist.R', 'head'), V3.Right(), V3.Up()).at);
@@ -64,6 +60,8 @@ export class Fist {
     // `land` is asked when the knuckles get there, with how fast they are going and how far ahead of the eye they are:
     // how far ahead the skin they met is, or null for none.
     punch({ aim, land }: { aim?: () => number | null; land?: (speed: number, ahead: number) => number | null } = {}) {
+        // (The same arm holds what is held, closed some other way round it: hands.ts.)
+        if (this.arm.holding !== 'fist') { this.arm.hold('fist'); this.arm.grasp = knuckles(this.arm); }
         const from = this.t >= 0 ? this.at.clone() : DOWN.clone();
         const up = 0.16 * Math.min(1, Math.max(0.35, V3.Distance(from, COCKED) / V3.Distance(DOWN, COCKED)));
         this.keys = [{ at: from, t: 0, turn: 0, ease: smooth }, { at: COCKED, t: up, turn: 0, ease: smooth }, { at: MISS, t: up + 1, turn: 1, ease: drive }];
@@ -146,9 +144,19 @@ export class Fist {
     }
 }
 
-// The person's own mesh cut down to the right arm's skin, in its own material (their clothes are not the player's: the
+// One of the player's arms (`side` 'R' or 'L'): a person's arm (arm.ts) in their own skin and the jacket's sleeve.
+export function ownArm(people, body: string, side: 'R' | 'L', camera: BABYLON.Camera, hold: string, cast?: (m: BABYLON.AbstractMesh) => void) {
+    const arm = new Arm(people, body, side, camera, { hold });
+    for (const m of arm.meshes) m.dispose();
+    arm.meshes = [armOnly(arm.person, side), sleeve(arm)];
+    for (const m of arm.meshes) cast?.(m);
+    return arm;
+}
+
+// The person's own mesh cut down to one arm's skin, in its own material (their clothes are not the player's: the
 // sleeve is sleeve()'s). Cut at the shoulder, which is behind the eye.
-function armOnly(person) {
+function armOnly(person, side: string) {
+    const ARM = new RegExp(`^(upperarm|lowerarm|wrist|metacarpal|finger).*\\.${side}$`);
     const { arrays } = person.lib.bodies.get(person.bodyName);
     const names = person.header.bones.map((b) => b.name), mine = new Uint8Array(person.header.vertexCount);
     for (let i = 0; i < mine.length; i++) {
@@ -176,11 +184,11 @@ function armOnly(person) {
 // a cuff short of the wrist, pushed out off it the thickness of a jacket and what is under it, on the arm's bones.
 function sleeve(arm: Arm) {
     const person = arm.person, { arrays } = person.lib.bodies.get(person.bodyName), names = person.header.bones.map((b) => b.name);
-    const wrist = arm.bones.wrist.head, P = arrays.position, W = arrays.weights;
+    const wrist = arm.bones.wrist.head, P = arrays.position, W = arrays.weights, upper = new RegExp(`^(upperarm|lowerarm).*\\.${arm.side}$`);
     const on = (i: number) => {
         let k = 0;
         for (let j = 1; j < 4; j++) if (W[i * 4 + j] > W[i * 4 + k]) k = j;
-        return /^(upperarm|lowerarm).*\.R$/.test(names[arrays.joints[i * 4 + k]])
+        return upper.test(names[arrays.joints[i * 4 + k]])
             && Math.hypot(P[i * 3] - wrist.x, P[i * 3 + 1] - wrist.y, P[i * 3 + 2] - wrist.z) > SLEEVE.cuff;
     };
     const mesh = worn(person, 'sleeve', (three: number[]) => three.every(on), SLEEVE.off, plain(person.scene, 'sleeve', SLEEVE));

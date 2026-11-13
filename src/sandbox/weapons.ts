@@ -15,6 +15,7 @@ import { rayToSegment } from './anatomy.ts';
 import { blast } from './dismember.ts';
 import * as viscera from './viscera.ts';
 import { Fist } from './fist.ts';
+import { Hands, type Grip } from './hands.ts';
 import { Medic, buildKit } from './dressing.ts';
 import { GAMMA, RHO, volume } from './fluid.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
@@ -28,20 +29,76 @@ const DRIES = 300;          // seconds for blood on the blade to go from wet red
 
 type Gun = Missile & { rounds: number; every: number; pellets: number; spread: number; kick: number; sound: string; reload: number; speed: number; auto?: boolean };
 
-// Where each thing sits in the hand, in the eye's own frame (x right, y up, z ahead), and how it is turned there.
-const HELD = {
-    knife: { at: [0.24, -0.25, 0.42], turn: [-0.25, -0.1, 0.15] },
-    sword: { at: [0.3, -0.33, 0.45], turn: [-0.9, -0.15, 0.25] },
-    bat: { at: [0.3, -0.38, 0.32], turn: [-1.2, -0.2, 0.4] },
-    pistol: { at: [0.16, -0.17, 0.4], turn: [0, 0, 0] },
-    rifle: { at: [0.16, -0.19, 0.3], turn: [0, 0, 0] },
-    shotgun: { at: [0.16, -0.2, 0.3], turn: [0, 0, 0] },
-    ak: { at: [0.17, -0.2, 0.5], turn: [0, 0, 0] },
-    m4: { at: [0.16, -0.19, 0.42], turn: [0, 0, 0] },
-    grenade: { at: [0.2, -0.2, 0.46], turn: [0, 0, 0] },
-    bandage: { at: [0.15, -0.14, 0.38], turn: [0.3, 0.4, 0] },
-    medkit: { at: [0.2, -0.27, 0.45], turn: [0.35, 0.2, 0] },
+// How each thing is held, in the eye's own frame (x right, y up, z ahead). `at` is where its grip is at rest: low and to
+// the right, a long gun's stock back in the shoulder. A blade or the bat is turned `turn` (x pitch, y yaw, z roll); a
+// gun has its bore laid on the line to the point AIMED metres ahead of the eye (the shots go from the eye, so the muzzle
+// points where they land). `right` and `left` are where each hand goes on it, in its own frame (hands.ts Grip; a hand not
+// given hangs out of sight). `kick`: how far a shot drives a gun back into the hands (m) and turns it up about its grip
+// (rad): a pistol, held out at arm's length, flips most; a rifle's stock in the shoulder takes it.
+// (The grip of each model is weapons.json's; z runs along its bore or blade, y toward its top or back.)
+const AIMED = 15;
+// A long gun's firing hand: on a pistol grip raked back some 20 degrees, the index finger along to the trigger.
+const PISTOL_GRIP: Grip = { hold: 'grip', at: [0, -0.005, -0.005], along: [0, -0.94, -0.34], back: [0, -0.34, 0.94] };
+export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip; left?: Grip; kick?: number[] }> = {
+    knife: { at: [0.17, -0.17, 0.42], turn: [-0.75, -0.2, -0.1],
+        right: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] } },
+    sword: { at: [0.16, -0.21, 0.45], turn: [-0.95, -0.3, 0.15],
+        right: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] },
+        left: { hold: 'handle', at: [0, 0, -0.1], along: [0, 0, -1], back: [0, -1, 0] } },
+    bat: { at: [0.19, -0.22, 0.42], turn: [-1.15, -0.35, 0.3],
+        right: { hold: 'handle', at: [0, 0, 0.085], along: [0, 0, -1], back: [0, -1, 0] },
+        left: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] } },
+    pistol: { at: [0.07, -0.115, 0.5], kick: [0.035, 0.2],
+        right: { hold: 'grip', at: [0, -0.005, -0.005], along: [0, -0.95, -0.31], back: [0, -0.31, 0.95] },
+        left: { hold: 'support', at: [-0.022, -0.02, 0.008], along: [0.1, -0.95, -0.3], back: [0.45, -0.25, 0.85] } },
+    rifle: { at: [0.15, -0.165, 0.32], kick: [0.06, 0.12],
+        right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
+        left: { hold: 'wrap', at: [0, 0.01, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+    shotgun: { at: [0.15, -0.17, 0.34], kick: [0.06, 0.15],
+        right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
+        left: { hold: 'wrap', at: [0, 0.04, 0.32], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+    ak: { at: [0.15, -0.175, 0.36], kick: [0.03, 0.06], right: PISTOL_GRIP,
+        left: { hold: 'wrap', at: [0, 0.065, 0.3], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+    m4: { at: [0.15, -0.165, 0.34], kick: [0.025, 0.05], right: PISTOL_GRIP,
+        left: { hold: 'wrap', at: [0, 0.06, 0.27], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0] } },
+    grenade: { at: [0.17, -0.2, 0.4], turn: [-1.3, -0.2, 0],
+        right: { hold: 'ball', at: [0, 0, -0.005], along: [0, 0, -1], back: [-1, 0, 0] } },
+    bandage: { at: [0.13, -0.16, 0.38], turn: [0.3, 0.4, 0],
+        right: { hold: 'ball', at: [0, 0, 0], along: [-1, 0, 0], back: [0, 1, 0] },
+        left: { hold: 'pinch', at: [-0.03, -0.065, -0.025], along: [0, 1, 0], back: [1, 0, 0] } },
+    medkit: { at: [0.02, -0.26, 0.42], turn: [0.35, 0.1, 0],
+        right: { hold: 'wrap', at: [0.12, 0, 0], along: [0, -1, 0], back: [0, 0, 1] },
+        left: { hold: 'wrap', at: [-0.12, 0, 0], along: [0, -1, 0], back: [0, 0, 1] } },
 };
+
+// Swings, as poses along the way (fraction of the swing, then `at` and `turn` as in HELD), from and back to rest. A stab
+// is driven home by 0.09 s (when _swing's stab lands: a quarter of the way) and held there until it comes out at three
+// quarters; a cut or a blow comes in from the right and sweeps across to the left over the middle of its time, as the
+// lines that find what it meets do (_sweep), the edge leading.
+export const SWINGS: Record<string, Record<string, number[][]>> = {
+    knife: {
+        stab: [[0.08, 0.21, -0.21, 0.33, -0.3, -0.15, -0.1], [0.26, 0.06, -0.1, 0.6, -0.08, -0.1, -0.1], [0.72, 0.06, -0.1, 0.62, -0.08, -0.1, -0.1]],
+        cut: [[0.18, 0.3, -0.1, 0.3, -0.2, 1, -0.9], [0.47, 0.06, -0.14, 0.5, -0.05, 0, -1.4], [0.75, -0.22, -0.2, 0.34, 0.05, -1.05, -1.5]],
+    },
+    sword: {
+        stab: [[0.08, 0.17, -0.28, 0.34, -0.5, -0.2, 0], [0.26, 0.07, -0.16, 0.52, -0.06, -0.1, 0], [0.72, 0.07, -0.16, 0.54, -0.06, -0.1, 0]],
+        cut: [[0.2, 0.3, -0.06, 0.26, -0.6, 1, -0.8], [0.47, 0.06, -0.16, 0.44, -0.05, 0, -1.4], [0.75, -0.24, -0.22, 0.3, 0.1, -1, -1.5]],
+    },
+    bat: {
+        blow: [[0.2, 0.32, -0.12, 0.16, -1.5, 0.5, 0.9], [0.47, 0.06, -0.18, 0.4, -0.15, 0, -1.4], [0.75, -0.24, -0.22, 0.3, 0.1, -1.1, -1.5]],
+    },
+};
+
+// Parts of a model that move in the hands, by their glTF node names: a pistol's slide and magazine, the M4's magazine
+// and charging handle, the bolt rifle's bolt, the grenade's pin.
+const PARTS: Record<string, Record<string, RegExp>> = { pistol: { slide: /slide/, mag: /magazine/ }, m4: { mag: /^Magazine$/, handle: /^Charging_Handle$/ }, rifle: { bolt: /bolt_[ab]$/ },
+    grenade: { pin: /^pin$/ }, ak: { mag: /^mag$/ }, shotgun: { barrels: /^barrels$/ } };
+// Parts that two models have only as loose pieces of one mesh, picked out by their bounds in the model's own (glTF)
+// frame: the AK's magazine (the one piece that hangs 10 cm below the bore line) and the shotgun's barrels with their
+// forend (everything ahead of the hinge), which break open.
+const SPLIT: Record<string, Record<string, (lo: BABYLON.Vector3, hi: BABYLON.Vector3) => boolean>> = {
+    ak: { mag: (lo) => lo.y < -0.1 }, shotgun: { barrels: (lo) => lo.z > 0.06 } };
+type Part = { nodes: { node: BABYLON.TransformNode; at: BABYLON.Vector3; turn: BABYLON.Quaternion; local: BABYLON.Matrix }[]; min: BABYLON.Vector3; max: BABYLON.Vector3 };
 
 export const ARMS = [
     { key: 'knife', name: 'Knife', kind: 'blade', reach: 1.0, swing: 0.32,
@@ -101,6 +158,11 @@ export class Weapons {
     declare grenades: any[];
     declare flashAt: number;
     declare fist: Fist | null;
+    declare hands: Hands | null;
+    declare parts: Map<string, Record<string, Part>>;
+    declare clock: number;
+    declare since: number;
+    declare lag: { yaw: number; pitch: number; x: number; y: number };
     declare medic: Medic;
     declare blades: Map<string, { wet: number; held: number; age: number; at: BABYLON.Vector3 | null; v: BABYLON.Vector3 | null; looks: any[] }>;
 
@@ -114,6 +176,11 @@ export class Weapons {
         this.arsenal = null;
         this.grenades = [];
         this.fist = null;
+        this.hands = null;
+        this.parts = new Map();
+        this.clock = 0;
+        this.since = Infinity;
+        this.lag = { yaw: 0, pitch: 0, x: 0, y: 0 };
         this.medic = new Medic(this);
         this.blades = new Map();
         const { scene, camera } = world;
@@ -175,10 +242,12 @@ export class Weapons {
         await Promise.all(Object.entries(json).map(async ([key, j]: [string, any]) => {
             const { root } = await place(scene, 'weapons/' + j.file.replace(/\.glb$/, ''));
             root.computeWorldMatrix(true);
-            const m = root.getWorldMatrix();
+            const m = root.getWorldMatrix().clone();
             const p = (a) => V3.TransformCoordinates(V3.FromArray(a), m);
-            const grip = p(j.grip), tip = p(j.tip), up = p(j.grip.map((x, i) => x + j.up[i])).subtract(grip);
-            const forward = tip.subtract(grip).normalize();
+            const grip = p(j.grip), tip = p(j.tip), up = p(j.grip.map((x, i) => x + j.up[i])).subtract(grip).normalize();
+            // (Ahead is along the bore, square to the model's up: a gun's muzzle is above its grip, and the line from one to
+            // the other pointed the pistol 23 degrees down.)
+            const forward = tip.subtract(grip).subtract(up.scale(V3.Dot(tip.subtract(grip), up))).normalize();
             // (Measured: turned only so, every model came out pointing back at the eye; half a turn about its own up
             // puts it the right way round.)
             const turn = Q.RotationAxis(V3.Up(), Math.PI).multiply(Q.Inverse(Q.FromLookDirectionLH(forward, up.subtract(forward.scale(V3.Dot(up, forward))).normalize())));
@@ -187,11 +256,13 @@ export class Weapons {
             align.position = grip.applyRotationQuaternion(turn).scale(-1);
             root.parent = align;
             align.parent = this.hand;
+            for (const [name, keep] of Object.entries(SPLIT[key] ?? {})) for (const mesh of root.getChildMeshes()) split(mesh as BABYLON.Mesh, keep, name);
             for (const mesh of root.getChildMeshes()) {
                 mesh.isPickable = false;
                 mesh.receiveShadows = true;
                 this.world.shadows?.addShadowCaster(mesh);
             }
+            this._parts(key, align);
             align.setEnabled(false);
             this.models.set(key, align);
             // Where the muzzle and the port are, in the hand's frame.
@@ -212,6 +283,8 @@ export class Weapons {
         }));
         // The arm a punch is thrown with: a working man's, in the sleeve of his jacket.
         if (this.world.people) this.fist = new Fist(this.world.people, 'sexton', this.world.camera, (m) => this.world.shadows?.addShadowCaster(m));
+        // And both of them, holding whatever else is held (the right is the same arm).
+        if (this.fist) this.hands = new Hands(this.world.people, 'sexton', this.world.camera, this.fist.arm, (m) => this.world.shadows?.addShadowCaster(m));
         for (const [key, node] of Object.entries(buildKit(this.world.scene))) {
             node.parent = this.hand;
             for (const mesh of node.getChildMeshes()) { mesh.isPickable = false; mesh.receiveShadows = true; }
@@ -232,10 +305,63 @@ export class Weapons {
         this.reloading = 0;
         for (const [key, node] of this.models) node.setEnabled(key === this.arm.key);
         for (const blade of this.blades.values()) blade.at = blade.v = null;
-        const held = HELD[this.arm.key];
-        if (held) {
-            this.hand.position.set(held.at[0], held.at[1], held.at[2]);
-            this.hand.rotation.set(held.turn[0], held.turn[1], held.turn[2]);
+        for (const parts of this.parts.values()) for (const part of Object.values(parts)) this._move(part);
+        this.since = Infinity;
+        this._animate(0);
+    }
+
+    // The moving parts of model `key` (PARTS), under `align`: each node where it is, and how its parent's frame lies in
+    // the hand's (which is the model's own: z along the bore, the grip at nought).
+    _parts(key: string, align: BABYLON.TransformNode) {
+        const names = PARTS[key];
+        if (!names) return;
+        const fresh = (node: BABYLON.Node) => {
+            const chain: BABYLON.Node[] = [];
+            for (let n = node; n; n = n.parent) chain.unshift(n);
+            for (const n of chain) (n as BABYLON.TransformNode).computeWorldMatrix?.(true);
+        };
+        fresh(align);
+        const home = this.hand.getWorldMatrix().clone().invert(), parts: Record<string, Part> = {};
+        for (const [name, test] of Object.entries(names)) {
+            const nodes = align.getDescendants(false).filter((n) => test.test(n.name)) as BABYLON.TransformNode[];
+            if (!nodes.length) continue;
+            const min = new V3(Infinity, Infinity, Infinity), max = min.scale(-1);
+            parts[name] = { min, max, nodes: nodes.map((node) => {
+                fresh(node);
+                for (const m of [node, ...node.getChildMeshes()]) {
+                    if (!(m instanceof BABYLON.AbstractMesh)) continue;
+                    fresh(m);
+                    for (const v of m.getBoundingInfo().boundingBox.vectorsWorld) {
+                        const h = V3.TransformCoordinates(v, home);
+                        min.minimizeInPlace(h); max.maximizeInPlace(h);
+                    }
+                }
+                node.rotationQuaternion ??= Q.FromEulerVector(node.rotation);
+                return { node, at: node.position.clone(), turn: node.rotationQuaternion.clone(),
+                    local: (node.parent as BABYLON.TransformNode).getWorldMatrix().multiply(home).invert() };
+            }) };
+        }
+        this.parts.set(key, parts);
+    }
+
+    // A part moved `by` (in the hand's frame, m) and turned `angle` about the line `axis` through `pivot` (the hand's frame);
+    // with nothing given, back where it was made. `shown` false hides it (a magazine dropped, a pin pulled).
+    _move(part: Part | undefined, by?: BABYLON.Vector3, turn?: { axis: BABYLON.Vector3; pivot: BABYLON.Vector3; angle: number }, shown = true) {
+        if (!part) return;
+        for (const n of part.nodes) {
+            n.node.scaling.setAll(shown ? 1 : 0);
+            if (!by && !turn) { n.node.position.copyFrom(n.at); n.node.rotationQuaternion.copyFrom(n.turn); continue; }
+            const local = n.local, toHand = local.clone().invert();
+            let at = V3.TransformCoordinates(n.at, toHand), q = n.turn;
+            if (turn) {
+                const r = Q.RotationAxis(turn.axis, turn.angle);
+                at = turn.pivot.add(at.subtract(turn.pivot).applyRotationQuaternion(r));
+                // (the glTF root mirrors z: a turn in the hand's frame is the other way round in the part's)
+                q = Q.RotationAxis(V3.TransformNormal(turn.axis, local).normalize(), turn.angle * Math.sign(local.determinant())).multiply(n.turn);
+            }
+            if (by) at.addInPlace(by);
+            n.node.position.copyFrom(V3.TransformCoordinates(at, local));
+            n.node.rotationQuaternion.copyFrom(q);
         }
     }
 
@@ -615,6 +741,7 @@ export class Weapons {
             const node = model.instantiateHierarchy(null, { doNotInstantiate: true });
             node.parent = null;
             node.setEnabled(true);
+            for (const m of node.getChildMeshes()) m.setEnabled(true);  // (the one in the hand is hidden as it leaves it)
             node.position.copyFrom(camera.globalPosition.add(ahead.scale(0.4)).add(up.scale(speed > 10 ? 0.1 : -0.3)));
             const meshes = node.getChildMeshes();
             for (const m of meshes) this.world.shadows?.addShadowCaster(m);
@@ -803,36 +930,202 @@ export class Weapons {
         }
     }
 
-    // The hand: kicked back by a shot, swung through a cut, lowered while reloading.
+    // The thing in the hands and the hands on it, every frame. At rest as HELD has it, breathing and swaying a little,
+    // carried along by the walk and lagging behind a turn of the head; kicked back from its grip by a shot; carried
+    // through a stab or a cut; worked through a reload by the hands that really do it. The arms follow the hands
+    // (hands.ts), so whatever moves the thing moves them.
     _animate(dt) {
-        const held = HELD[this.arm.key];
-        if (!held) return;
-        this.recoil *= Math.exp(-dt * 14);
-        const pos = new V3(held.at[0], held.at[1], held.at[2] - this.recoil * 0.06);
-        const rot = new V3(held.turn[0] - this.recoil * 0.25, held.turn[1], held.turn[2]);
-        if (this.reloading > 0) { pos.y -= 0.12; rot.x += 0.5; }
-        const a = this.action;
-        if (a) {
-            const p = Math.min(1, a.t / a.length), arc = Math.sin(p * Math.PI);
-            if (a.how === 'stab') pos.z += arc * 0.3;
-            else {
-                rot.y += 0.9 - p * 1.8;
-                rot.x += 0.6 * arc;
-                pos.x -= p * 0.35;
-                pos.y += arc * 0.1;
-            }
+        const key = this.arm.key, held = HELD[key], hands = this.hands;
+        if (!held) {
+            hands?.put('L', null);
+            if (!(this.fist?.t >= 0)) hands?.put('R', null);
+            return;
         }
-        // A dressing being put on: the roll brought in to the wound and wound round and round it; the kit held low, open.
+        const { player } = this.world;
+        this.clock += dt;
+        this.since = this.recoil === 1 ? 0 : this.since + dt;
+        this.recoil *= Math.exp(-dt * 14);
+        // Where it is and how it is turned before anything else moves it: at rest, or along a swing.
+        const pos = V3.FromArray(held.at), base = held.turn ? V3.FromArray(held.turn) : null, turn = V3.Zero();
+        const hold: { right: Grip | null; left: Grip | null } = { right: held.right ?? null, left: held.left ?? null };
+        if (this.action && SWINGS[key]?.[this.action.how]) {
+            const keys = SWINGS[key][this.action.how], p = Math.min(1, this.action.t / this.action.length);
+            const from = [0, ...held.at, ...held.turn], to = from.map((v, i) => (i ? v : 1));
+            const all = [from, ...keys, to];
+            let k = 1;
+            while (k < all.length - 1 && all[k][0] <= p) k++;
+            const a = all[k - 1], b = all[k], u = smooth((p - a[0]) / (b[0] - a[0]));
+            pos.set(lerp(a[1], b[1], u), lerp(a[2], b[2], u), lerp(a[3], b[3], u));
+            base.set(lerp(a[4], b[4], u), lerp(a[5], b[5], u), lerp(a[6], b[6], u));
+        }
+
+        // Breath, a little sway, the walk (a figure of eight over each pair of steps), and the look: the hands lag a turn
+        // of the head and catch up (its rate eased over a tenth of a second).
+        const going = Math.min(1, player.speed / 1.55) * (player.running ? 1.6 : 1), step = player.bobPhase, breath = Math.sin(player.breathing);
+        pos.x += Math.sin(step) * 0.008 * going + Math.sin(this.clock * 0.8) * 0.0012;
+        pos.y += (Math.cos(2 * step) - 1) * 0.004 * going + breath * 0.0025;
+        turn.x += breath * 0.006 + Math.sin(this.clock * 0.55) * 0.002;
+        turn.y += Math.sin(this.clock * 0.7) * 0.003 + Math.sin(step) * 0.012 * going;
+        turn.z += Math.sin(step) * 0.02 * going;
+        const lag = this.lag, most = (v: number, m: number) => Math.max(-m, Math.min(m, v));
+        if (dt > 0) {
+            const ease = Math.min(1, dt * 10);
+            lag.x += ((player.yaw - lag.yaw) / dt - lag.x) * ease;
+            lag.y += ((player.pitch - lag.pitch) / dt - lag.y) * ease;
+        }
+        lag.yaw = player.yaw;
+        lag.pitch = player.pitch;
+        turn.y -= most(lag.x * 0.03, 0.08);
+        turn.x -= most(lag.y * 0.03, 0.08);
+        pos.x -= most(lag.x * 0.008, 0.02);
+        pos.y += most(lag.y * 0.008, 0.02);
+
+        // A shot: the gun driven back into the hands and turned up about its grip, the pistol's slide run back.
+        const [back, rise] = held.kick ?? [0, 0];
+        pos.z -= this.recoil * back;
+        pos.y += this.recoil * back * 0.3;
+        turn.x -= this.recoil * rise;
+        const parts = this.parts.get(key);
+        if (key === 'pistol') this._move(parts?.slide, new V3(0, 0, -0.024 * Math.max(0, this.recoil * 2 - 1)));
+        if (this.arm.gun && this.reloading > 0) this._reloading(key, 1 - this.reloading / this.arm.gun.reload, pos, turn, hold, parts);
+        else if (key === 'rifle' && this.since < 0.9) this._cycle(this.since, pos, turn, hold, parts);
+        if (key === 'grenade') this._lobbing(this.busy > 0 ? 0.9 - this.busy : -1, pos, base, hold, parts);
+
+        // A dressing being put on: the roll taken to the wound and wound round it, the other hand off it; the kit held low, open.
         const dressing = this.medic.working;
         if (dressing !== null) {
             const s = Math.min(1, dressing * 8), t = this.medic.clock * 6;
-            if (this.arm.key === 'bandage') {
+            if (key === 'bandage') {
                 pos.addInPlace(new V3(-0.08 + Math.cos(t) * 0.05, 0.05 + Math.sin(t) * 0.04, 0.2).scale(s));
-                rot.x += t * s;
-            } else { pos.y -= 0.1 * s; pos.z += 0.05 * s; rot.x += 0.7 * s; rot.z += Math.sin(t) * 0.05 * s; }
+                turn.x += Math.sin(t) * 0.3 * s;
+                if (s > 0.5) hold.left = null;
+            } else { pos.y -= 0.1 * s; pos.z += 0.05 * s; turn.x += 0.7 * s; turn.z += Math.sin(t) * 0.05 * s; }
         }
+
+        const q = (base ? Q.FromEulerAngles(base.x, base.y, base.z) : this._aim(pos, key)).multiply(Q.FromEulerAngles(turn.x, turn.y, turn.z));
         this.hand.position.copyFrom(pos);
-        this.hand.rotation.copyFrom(rot);
+        this.hand.rotationQuaternion = q;
+        if (!hands) return;
+        const frame = this.hand.computeWorldMatrix(true);
+        hands.put('R', hold.right, frame);
+        hands.put('L', hold.left, frame);
+    }
+
+    // A gun turned so that its bore, from where it is held at `at`, runs to the point AIMED metres ahead of the eye.
+    _aim(at: BABYLON.Vector3, key: string) {
+        const tip = this._anchors.get(key)?.tip, bore = tip ? new V3(tip.x, tip.y, 0) : V3.Zero();
+        let q = Q.Identity();
+        for (let k = 0; k < 2; k++) {
+            const z = new V3(0, 0, AIMED).subtract(at.add(bore.applyRotationQuaternion(q))).normalize();
+            const y = V3.Up().subtract(z.scale(z.y)).normalize();
+            q = Q.RotationQuaternionFromAxis(V3.Cross(y, z), y, z);
+        }
+        return q;
+    }
+
+    // A reload, `u` of the way through (0 to 1), done by the hands: the gun tipped in toward the other hand, which takes
+    // the magazine out and down, comes back up with a full one and seats it, and works the slide or the charging handle;
+    // the bolt rifle's bolt opened, five rounds thumbed in and the bolt closed; the shotgun opened, shells out and in. The
+    // gun is then back where it was. Its parts move with the hand on them.
+    _reloading(key: string, u: number, pos: BABYLON.Vector3, turn: BABYLON.Vector3, hold: { right: Grip | null; left: Grip | null }, parts?: Record<string, Part>) {
+        const rest = HELD[key], tip = span(u, 0, 0.14) - span(u, 0.84, 1);
+        if (key === 'rifle') return this._bolt(u, pos, turn, hold, parts, true);
+        const shotgun = key === 'shotgun';
+        // Tipped in: the magazine well (or the open breech) turned toward the other hand, brought in and up a little.
+        pos.addInPlace(new V3(-0.05, shotgun ? 0.02 : 0.04, -0.05).scale(tip));
+        turn.z += (shotgun ? 0.25 : key === 'pistol' ? 0.45 : 0.55) * tip;
+        turn.x += (shotgun ? 0.45 : -0.15) * tip;
+        const mag = parts?.mag, below = [-0.06, -0.4, -0.12];
+        const well = mag ? [(mag.min.x + mag.max.x) / 2, mag.min.y + 0.03, (mag.min.z + mag.max.z) / 2]
+            : shotgun ? [0, 0.08, 0.03] : [0, -0.06, 0.1];
+        const onMag = (by: number[]): Grip => ({ hold: 'handle', at: well.map((v, i) => v + by[i]), along: [0, -0.3, -0.95], back: [0.35, -0.9, 0.2] });
+        const gone = (g: Grip): Grip => ({ ...g, at: g.at.map((v, i) => v + below[i]) });
+        const support = rest.left;
+        let out: number[] | null = null;    // where the magazine is from home, or null for not drawn
+        if (shotgun) {
+            // Broken open (the barrels and forend turn down about the hinge pin at the front of the action, the hand on
+            // the forend taking them down), the spent shells drawn out at the breech, two new ones fetched and pushed in,
+            // and closed by the hand on the forend, with a flick of the gun.
+            const barrels = parts?.barrels, pivot = new V3(0, barrels ? barrels.min.y + 0.01 : 0.04, barrels ? barrels.min.z : 0.15);
+            const open = 0.55 * (span(u, 0.12, 0.22) - span(u, 0.76, 0.84)), r = Q.RotationAxis(V3.Right(), open);
+            const turned = (g: Grip): Grip => ({ hold: g.hold, at: V3.FromArray(g.at).subtract(pivot).applyRotationQuaternion(r).add(pivot).asArray(),
+                along: V3.FromArray(g.along).applyRotationQuaternion(r).asArray(), back: V3.FromArray(g.back).applyRotationQuaternion(r).asArray() });
+            this._move(barrels, undefined, { axis: V3.Right(), pivot, angle: open });
+            const breech = turned({ hold: 'pinch', at: [0, pivot.y + 0.045, pivot.z + 0.01], along: [0, -0.4, -0.9], back: [0.9, 0, 0.4] });
+            hold.left = blend(blend(blend(blend(turned(support), breech, span(u, 0.22, 0.3)), gone(breech), span(u, 0.32, 0.46)), breech, span(u, 0.5, 0.64)),
+                turned(support), span(u, 0.66, 0.74));
+            turn.x -= 0.25 * (span(u, 0.8, 0.84) - span(u, 0.84, 0.92));
+            return;
+        }
+        // Out: drawn down and away by the hand (from a pistol it falls free), the hand gone below the picture for a full
+        // one, up and into the well, pushed home.
+        const drop = key === 'pistol', low = [0, -0.42, -0.1], drawn = [0, -0.12, 0.02];
+        const mix = (x: number[], y: number[], s: number) => x.map((v, i) => lerp(v, y[i], s));
+        const seat = mix(mix(low, [0, -0.06, 0], span(u, 0.42, 0.62)), [0, 0, 0], span(u, 0.62, 0.7));
+        const fell = Math.max(0, u - 0.1) * this.arm.gun.reload;
+        if (drop) out = u < 0.42 ? (fell < 0.25 ? [0, -4.9 * fell * fell, 0] : null) : seat;
+        else out = u < 0.26 ? drawn.map((v) => v * span(u, 0.12, 0.26)) : u < 0.42 ? mix(drawn, low, span(u, 0.26, 0.4)) : seat;
+        hold.left = drop ? (u < 0.42 ? blend(support, onMag(low), span(u, 0, 0.14)) : onMag(out))
+            : blend(support, onMag(out ?? low), span(u, 0, 0.12));
+        // Then the slide (pistol: over the top, from behind) or the charging handle (rifles) pulled back and let go.
+        const pull = span(u, 0.76, 0.82) - span(u, 0.82, 0.84);
+        if (key === 'pistol') {
+            const slide = parts?.slide, grab: Grip = { hold: 'wrap', at: [0, slide ? slide.max.y - 0.012 : 0.06, slide ? slide.min.z + 0.03 : -0.02], along: [1, 0, 0], back: [0.2, -0.3, 0.95] };
+            this._move(slide, new V3(0, 0, -0.024 * pull));
+            hold.left = blend(blend(hold.left, grab, span(u, 0.7, 0.76)), support, span(u, 0.86, 0.98));
+            hold.left = { ...hold.left, at: hold.left.at.map((v, i) => v - (i === 2 ? 0.024 * pull * span(u, 0.7, 0.76) : 0)) };
+        } else {
+            const handle = parts?.handle, at = handle ? [(handle.min.x + handle.max.x) / 2, handle.max.y, handle.max.z] : [0.03, 0.09, 0.08];
+            const grab: Grip = { hold: 'pinch', at: at.map((v, i) => v - (i === 2 ? 0.07 * pull : 0)), along: [0, -0.5, -0.85], back: [0.3, 0.2, 0.93] };
+            this._move(handle, new V3(0, 0, -0.07 * pull));
+            hold.left = blend(blend(hold.left, grab, span(u, 0.7, 0.76)), support, span(u, 0.86, 1));
+        }
+        this._move(mag, out ? V3.FromArray(out) : undefined, undefined, !!out);
+    }
+
+    // The bolt rifle's bolt worked by the right hand (a reload, `u` through it, with five rounds pushed in by the left
+    // between; or a round chambered after a shot, `cycle`).
+    _bolt(u: number, pos: BABYLON.Vector3, turn: BABYLON.Vector3, hold: { right: Grip | null; left: Grip | null }, parts: Record<string, Part> | undefined, reload: boolean) {
+        const rest = HELD.rifle, bolt = parts?.bolt, tip = this._anchors.get('rifle')?.tip;
+        // When each stroke is, as fractions of the whole: hand to the knob, lift, back, (rounds in), forward, down, hand back.
+        const at = reload ? [0, 0.1, 0.16, 0.26, 0.78, 0.86, 0.92, 1] : [0.13, 0.28, 0.36, 0.5, 0.55, 0.67, 0.74, 0.94];
+        const lift = span(u, at[1], at[2]) - span(u, at[5], at[6]), draw = span(u, at[2], at[3]) - span(u, at[4], at[5]);
+        const knob = bolt ? [bolt.max.x, (bolt.min.y + bolt.max.y) / 2, bolt.max.z - 0.01] : [0.06, 0.03, 0.05];
+        const angle = -1.1 * lift, axis = new V3(0, 0, 1), pivot = new V3(tip?.x ?? 0, tip?.y ?? 0.05, 0);
+        const moved = V3.FromArray(knob).subtract(pivot).applyRotationQuaternion(Q.RotationAxis(axis, angle)).add(pivot).add(new V3(0, 0, -0.085 * draw));
+        this._move(bolt, new V3(0, 0, -0.085 * draw), { axis, pivot, angle });
+        const onKnob: Grip = { hold: 'pinch', at: moved.asArray(), along: [0.2, -0.5, -0.85], back: [0.3, 0.9, 0.3] };
+        hold.right = blend(blend(rest.right, onKnob, span(u, at[0], at[1])), rest.right, span(u, at[6], at[7]));
+        const tipIn = span(u, at[0], at[1]) - span(u, at[6], at[7]);
+        turn.z += (reload ? 0.3 : 0.12) * tipIn;
+        pos.addInPlace(new V3(-0.02, 0.01, -0.02).scale(tipIn));
+        if (!reload) return;
+        // Five rounds pressed down into the magazine through the open action, one after another.
+        const port: Grip = { hold: 'pinch', at: [0, 0.07 - 0.015 * Math.max(0, Math.sin(Math.PI * 5 * span(u, 0.34, 0.72))), 0.02], along: [0, -0.3, -0.95], back: [0.95, 0.2, 0] };
+        hold.left = blend(blend(rest.left, port, span(u, 0.26, 0.34)), rest.left, span(u, 0.72, 0.82));
+    }
+
+    _cycle(t: number, pos: BABYLON.Vector3, turn: BABYLON.Vector3, hold: { right: Grip | null; left: Grip | null }, parts?: Record<string, Part>) {
+        this._bolt(t / 0.9, pos, turn, hold, parts, false);
+    }
+
+    // The grenade thrown, `t` seconds in (-1: not being thrown): the other hand pulls the pin by its ring, the throwing
+    // hand draws back beside the head and comes over and forward, letting go at 0.22 s (_lob), follows through and goes
+    // down for another, which comes back up with its pin in.
+    _lobbing(t: number, pos: BABYLON.Vector3, base: BABYLON.Vector3, hold: { right: Grip | null; left: Grip | null }, parts?: Record<string, Part>) {
+        const model = this.models.get('grenade'), pin = parts?.pin;
+        if (t < 0) { model?.getChildMeshes().forEach((m) => m.setEnabled(true)); this._move(pin); return; }
+        const ring = pin ? [pin.max.x, (pin.min.y + pin.max.y) / 2, (pin.min.z + pin.max.z) / 2] : [0.02, 0, 0.04];
+        const pulled = span(t, 0.06, 0.12);
+        this._move(pin, new V3(0.08 * pulled, 0, 0), undefined, t < 0.13);
+        const onRing: Grip = { hold: 'pinch', at: ring.map((v, i) => v + (i === 0 ? 0.08 * pulled : 0)), along: [0, 0, -1], back: [1, 0, 0] };
+        hold.left = t < 0.2 ? blend({ ...onRing, at: [ring[0] + 0.05, ring[1] - 0.3, ring[2] - 0.1] }, onRing, span(t, 0, 0.06) - span(t, 0.13, 0.2)) : null;
+        const held = HELD.grenade, cock = span(t, 0.1, 0.17), go = span(t, 0.17, 0.22), after = span(t, 0.22, 0.42), back = span(t, 0.72, 0.9);
+        const at = V3.FromArray(held.at), up = new V3(0.24, 0.02, 0.12), out = new V3(0.06, 0.08, 0.55), down = new V3(0.15, -0.55, 0.3);
+        pos.copyFrom(V3.Lerp(V3.Lerp(V3.Lerp(V3.Lerp(at, up, cock), out, go), down, after), at, back));
+        base.x += -0.9 * cock + 1.6 * go;
+        for (const m of model?.getChildMeshes() ?? []) m.setEnabled(t < 0.22 || t > 0.72);
+        if (t > 0.72) this._move(pin);
     }
 }
 
@@ -870,6 +1163,64 @@ function smoke(scene, at: BABYLON.Vector3) {
     ps.disposeOnStop = true;
     ps.targetStopDuration = 5;
     ps.start();
+}
+
+// The connected pieces of `mesh` (its triangles joined where their corners meet) that `keep` picks by their bounds in the
+// mesh's own frame, cut out into a mesh of their own called `name` beside it.
+function split(mesh: BABYLON.Mesh, keep: (lo: BABYLON.Vector3, hi: BABYLON.Vector3) => boolean, name: string) {
+    const P = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind), I = mesh.getIndices();
+    if (!P || !I) return null;
+    const id = new Map<string, number>(), weld = new Int32Array(P.length / 3);
+    for (let i = 0; i < weld.length; i++) {
+        const k = `${Math.round(P[i * 3] * 1e4)},${Math.round(P[i * 3 + 1] * 1e4)},${Math.round(P[i * 3 + 2] * 1e4)}`;
+        if (!id.has(k)) id.set(k, id.size);
+        weld[i] = id.get(k);
+    }
+    const up = Array.from({ length: id.size }, (_, i) => i);
+    const top = (x: number) => { while (up[x] !== x) x = up[x] = up[up[x]]; return x; };
+    for (let t = 0; t < I.length; t += 3) {
+        const a = top(weld[I[t]]);
+        up[top(weld[I[t + 1]])] = a;
+        up[top(weld[I[t + 2]])] = a;
+    }
+    const lo = new Map<number, BABYLON.Vector3>(), hi = new Map<number, BABYLON.Vector3>();
+    for (let i = 0; i < weld.length; i++) {
+        const r = top(weld[i]), v = V3.FromArray(P, i * 3);
+        if (!lo.has(r)) { lo.set(r, v.clone()); hi.set(r, v.clone()); }
+        lo.get(r).minimizeInPlace(v);
+        hi.get(r).maximizeInPlace(v);
+    }
+    const picked = new Set([...lo.keys()].filter((r) => keep(lo.get(r), hi.get(r))));
+    if (!picked.size) return null;
+    const mine: number[] = [], rest: number[] = [];
+    for (let t = 0; t < I.length; t += 3) (picked.has(top(weld[I[t]])) ? mine : rest).push(I[t], I[t + 1], I[t + 2]);
+    mesh.makeGeometryUnique();
+    const part = mesh.clone(name, mesh.parent) as BABYLON.Mesh;
+    part.makeGeometryUnique();
+    part.setIndices(mine);
+    mesh.setIndices(rest);
+    // (bounds from the corners the triangles use: a mesh's own are of every corner it has)
+    const bounds = (keepIt: boolean) => {
+        const a = new V3(Infinity, Infinity, Infinity), b = a.scale(-1);
+        for (const r of lo.keys()) if (picked.has(r) === keepIt) { a.minimizeInPlace(lo.get(r)); b.maximizeInPlace(hi.get(r)); }
+        return new BABYLON.BoundingInfo(a, b);
+    };
+    part.setBoundingInfo(bounds(true));
+    mesh.setBoundingInfo(bounds(false));
+    return part;
+}
+
+const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
+const smooth = (u: number) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+// 0 before `a`, 1 after `b`, smoothly between.
+const span = (u: number, a: number, b: number) => smooth((u - a) / (b - a));
+
+// A hand `s` of the way from grip `a` to grip `b` (closed as `a` until half way, then as `b`).
+function blend(a: Grip | null, b: Grip | null, s: number): Grip | null {
+    if (s <= 0 || !b) return s < 0.5 || !b ? a : b;
+    if (s >= 1 || !a) return s >= 0.5 || !a ? b : a;
+    const mix = (x: number[], y: number[]) => x.map((v, i) => lerp(v, y[i], s));
+    return { hold: s < 0.5 ? a.hold : b.hold, at: mix(a.at, b.at), along: mix(a.along, b.along), back: mix(a.back, b.back) };
 }
 
 function jitter(dir: BABYLON.Vector3, spread: number) {

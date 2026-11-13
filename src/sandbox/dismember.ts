@@ -262,6 +262,9 @@ export class Dismember {
         this._bleed(cut, how);
         this._hurt(cut);
         this.cuts.push(cut);
+        // (Added after the ragdoll's own, so it runs after it.)
+        this._placing ??= npc.world.scene.onAfterPhysicsObservable.add(() => this._place());
+        this._place();
         return true;
     }
 
@@ -519,13 +522,26 @@ export class Dismember {
 
     // --- every frame ----------------------------------------------------------------------------
 
-    // After the ragdoll has put the skeleton where the bodies are: each piece's first bone where its own body is (its
-    // parent bone is on the body now, not on it), and the bones a bend was spread over kept straight in it.
     update(dt: number) {
         if (!this.cuts.length) return;
-        const npc = this.npc, person = npc.person;
+        const npc = this.npc;
         if (this._death > 0 && (this._death -= dt) <= 0) npc.vitals.dead = true;
-        const world = person.mesh.getWorldMatrix();
+        for (const cut of this.cuts) {
+            // What was in the piece runs out of its cut end, less and less.
+            if (cut.drains > 1e-5) {
+                const end = npc.worldOf(cut.c, cut.tip, cut.n.scale(-1));
+                npc.world.blood.run(end.at.add(end.normal.scale(0.01)), cut.drains * 0.02, dt);
+                cut.drains *= Math.exp(-dt / 25);
+            }
+        }
+    }
+
+    // After every physics step, once the ragdoll has put the skeleton where the bodies are: each piece's first bone
+    // where its own body is (its parent bone is on the body now, not on it), and the bones a bend was spread over kept
+    // straight in it. (Done before the step, from where the body had been, the piece was drawn carried along by every
+    // move the stump made in the step: a severed arm on the floor shook with the living body it came from.)
+    _place() {
+        const person = this.npc.person, world = person.mesh.getWorldMatrix();
         world.invertToRef(_inv);
         world.decompose(undefined, _qw, undefined);
         Q.InverseToRef(_qw, _qw);
@@ -540,14 +556,9 @@ export class Dismember {
             bone.setRotationQuaternion(_q, BABYLON.Space.LOCAL);
             bone.setPosition(_p, BABYLON.Space.LOCAL);
             for (const b of cut.spread) b.setRotationQuaternion(Q.Identity(), BABYLON.Space.LOCAL);
-            // What was in the piece runs out of its cut end, less and less.
-            if (cut.drains > 1e-5) {
-                const end = npc.worldOf(cut.c, cut.tip, cut.n.scale(-1));
-                npc.world.blood.run(end.at.add(end.normal.scale(0.01)), cut.drains * 0.02, dt);
-                cut.drains *= Math.exp(-dt / 25);
-            }
         }
     }
+    declare _placing: BABYLON.Observer<BABYLON.Scene> | null;
 
     dispose() {
         // The pieces wear the person's own materials; the cut faces have one of their own, whose textures are in
@@ -558,6 +569,7 @@ export class Dismember {
             for (const m of cut.meshes) m.dispose();
         }
         for (const t of this._textures) t.dispose();
+        if (this._placing) this.npc.world.scene.onAfterPhysicsObservable.remove(this._placing);
     }
 }
 

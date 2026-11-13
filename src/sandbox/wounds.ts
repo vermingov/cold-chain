@@ -175,8 +175,8 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     // gunshot-blood.md sec. 2). A little follows the blade out or wets the lips of a hole (an estimate); the rest comes
     // as the wound bleeds (npc._bleed), welling over seconds.
     if (!m.slash) {
-        npc.welling(enter, 0.1);
-        npc.welling(exitHit, 0.3);
+        npc.welling(enter, 0.03);
+        npc.welling(exitHit, 0.1);
     }
     // What bleeds comes out of the wound: the way out if there is one, it being the bigger.
     for (const b of v.bleeds.slice(first)) b.source = { ...b.source, mark: b.source?.mark ?? exitHit ?? enter };

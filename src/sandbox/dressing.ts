@@ -234,12 +234,25 @@ class Dressing {
             const out = (q: BABYLON.Vector3) => q.subtract(a).subtract(axis.scale(along(q)));
             const p0 = cut ? -ROLL / 2 : along(mark.rest);
             let r0 = out(mark.rest).length();
+            // At a stump, only the skin the stump's own bones carry: within reach of the line down it lay the other
+            // thigh, the buttock or the side of the chest, which made the roll too wide and tore it between the two
+            // when they moved apart.
+            let stump = (v: number) => true;
             if (cut) {
+                const bones = npc.person.header.bones, leads = new Set(npc.ragdoll.segments.map((sg) => sg.bone)), mine = new Uint8Array(bones.length);
+                for (let i = 0; i < bones.length; i++) {
+                    let at = i;
+                    while (at >= 0 && !leads.has(bones[at].name)) at = bones[at].parent;
+                    mine[i] = +(at >= 0 && bones[at].name === cut.root.parent.bone);
+                }
+                const mi = npc.dismember._mi, mw = npc.dismember._mw;
+                stump = (v) => { let w = 0; for (let k = 0; k < 4; k++) if (mine[mi[v * 4 + k]]) w += mw[v * 4 + k]; return w > 0.5; };
                 // A stump's wound is on the cut face: how thick the limb is there is read off the skin just above it.
                 const ring = [];
                 for (const part of header.parts) {
                     if (part.kind !== 'skin') continue;
                     for (let v = part.vertexStart; v < part.vertexStart + part.vertexCount; v++) {
+                        if (!stump(v)) continue;
                         const p = along(P(v)), r = out(P(v)).length();
                         if (p < 0 && p > -0.025 && r < 0.2) ring.push(r);
                     }
@@ -254,7 +267,7 @@ class Dressing {
             this.covers = (r) => { const p = along(r); return p > low - 0.01 && p < high + (cut ? 0.05 : 0.01) && out(r).length() < far; };
             place = (v) => {
                 const q = P(v), p = along(q);
-                if (p < low - 0.012 || p > high + (cut ? 0 : 0.012)) return null;
+                if (p < low - 0.012 || p > high + (cut ? 0 : 0.012) || !stump(v)) return null;
                 const o = out(q), r = o.length();
                 if (r > far || r < r0 * 0.3) return null;
                 let nv = N(v);
@@ -365,11 +378,16 @@ class Dressing {
             }
             return { js, ws };
         };
+        const skin = new Set<number>();
         const near = (kinds: string[], test: (p: BABYLON.Vector3) => boolean) => {
             const list: number[] = [];
             for (const part of header.parts) {
                 if (!kinds.includes(part.kind)) continue;
-                for (let v = part.vertexStart; v < part.vertexStart + part.vertexCount; v++) if (test(P(v))) list.push(v);
+                for (let v = part.vertexStart; v < part.vertexStart + part.vertexCount; v++) {
+                    if (!test(P(v))) continue;
+                    list.push(v);
+                    if (part.kind === 'skin') skin.add(v);
+                }
             }
             return list;
         };
@@ -380,7 +398,8 @@ class Dressing {
             const normal = (i, j) => {
                 const a = at(Math.min(rows - 1, i + 1), j) ?? at(i, j), b = at(Math.max(0, i - 1), j) ?? at(i, j);
                 const c = at(i, Math.min(cols - 1, j + 1)) ?? at(i, j), d = at(i, Math.max(0, j - 1)) ?? at(i, j);
-                return V3.Cross(a.at.subtract(b.at), c.at.subtract(d.at)).normalize();
+                const n = V3.Cross(a.at.subtract(b.at), c.at.subtract(d.at));
+                return n.lengthSquared() > 1e-14 ? n.normalize() : at(i, j).out.clone();
             };
             const L = this.layout;
             for (let i = 0; i + 1 < rows; i++) {
@@ -413,7 +432,6 @@ class Dressing {
             // The skin (and the eyes in it) round the wound, in the pad's own terms: across, up, and how high off it.
             const pts = near(['skin', 'eyes'], (p) => { const d = p.subtract(c); return Math.abs(V3.Dot(d, ex)) < H + 0.03 && Math.abs(V3.Dot(d, ey)) < H + 0.03 && V3.Dot(d, n) > -0.06; })
                 .map((v) => { const d = P(v).subtract(c); return [V3.Dot(d, ex), V3.Dot(d, ey), V3.Dot(d, n), v]; });
-            const skin = new Set(near(['skin'], () => true).filter((v) => pts.some((p) => p[3] === v)));
             const grid = [];
             for (let i = 0; i <= G; i++) {
                 for (let j = 0; j <= G; j++) {

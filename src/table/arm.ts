@@ -71,6 +71,32 @@ export const HOLDS = {
         index: [86, 100, 66], middle: [90, 104, 70], ring: [92, 106, 72], little: [92, 106, 72], cup: 15,
         thumbIn: -30, thumbBase: 30, thumb: 60,
     },
+    // The rest close round a handle (hands.ts finds the handle's line from where the fingers lie). A gun's grip, about
+    // 3 by 5 cm: the last three fingers round it, the index along the frame to the trigger, the thumb down the far side.
+    grip: {
+        index: [22, 38, 16], middle: [62, 78, 50], ring: [66, 80, 52], little: [70, 82, 54], cup: 8,
+        thumbIn: 30, thumbBase: 10, thumb: 22,
+    },
+    // The other hand on a gun's grip, round the fingers of the one holding it: all four wrapped, opened wider.
+    support: {
+        index: [48, 58, 34], middle: [52, 62, 38], ring: [56, 64, 40], little: [60, 66, 42], cup: 6,
+        thumbIn: 10, thumbBase: 15, thumb: 8,
+    },
+    // A forend or handguard, 4 to 5 cm across, cradled from below: fingers round its far side, the thumb along this one.
+    wrap: {
+        index: [36, 50, 30], middle: [40, 54, 32], ring: [44, 56, 34], little: [48, 58, 36], cup: 5,
+        thumbIn: 10, thumbBase: 20, thumb: 8,
+    },
+    // A handle about 3 cm across (knife, sword, bat): a full grip, the index too, the thumb over the fingers.
+    handle: {
+        index: [64, 84, 54], middle: [68, 88, 58], ring: [72, 90, 60], little: [74, 92, 62], cup: 10,
+        thumbIn: 25, thumbBase: 20, thumb: 35,
+    },
+    // A ball 6 to 7 cm across (the grenade, the gauze roll): fingers spread round it, the thumb against them.
+    ball: {
+        index: [30, 40, 24], middle: [32, 42, 26], ring: [36, 44, 28], little: [40, 46, 30], cup: 8,
+        thumbIn: 30, thumbBase: 25, thumb: 15,
+    },
 };
 
 // A hold as a pose a person can be given.
@@ -148,6 +174,7 @@ export class Arm {
     declare fingers: {};
     declare grasp: { at: any; along: BABYLON.Vector3; rotation: BABYLON.Quaternion; };
     declare bent: any;
+    declare shift: BABYLON.Vector3;
 
     // `lib` is the People, `bodyName` whose arm it is, `side` 'L' or 'R',
     // and `camera` the eye it hangs beside. `clear(point)` says how far a
@@ -156,6 +183,7 @@ export class Arm {
     constructor(lib, bodyName, side, camera, { clear = null, hold = 'pen' } = {}) {
         this.side = side;
         this.camera = camera;
+        this.shift = V3.Zero();
         this.clear = clear;
         const person = this.person = lib.make(bodyName, { dressed: false, name: 'arm' + side });
         person.mesh.isVisible = false;
@@ -313,11 +341,12 @@ export class Arm {
         return this.bent;
     }
 
-    // Where the shoulder hangs in the world.
+    // Where the shoulder hangs in the world: `shift` from where it hangs square to the eye (m: out to its own side, up,
+    // forward), as a body turned to bring one shoulder forward has it.
     _shoulder() {
         const ahead = this.camera.getDirection(V3.Forward()), level = new V3(ahead.x, 0, ahead.z).normalize();
-        const right = new V3(level.z, 0, -level.x), out = this.side === 'R' ? SHOULDER.out : -SHOULDER.out;
-        return this.camera.globalPosition.add(right.scale(out)).add(level.scale(SHOULDER.forward)).add(new V3(0, -SHOULDER.down, 0));
+        const right = new V3(level.z, 0, -level.x), sign = this.side === 'R' ? 1 : -1, s = this.shift;
+        return this.camera.globalPosition.add(right.scale(sign * (SHOULDER.out + s.x))).add(level.scale(SHOULDER.forward + s.z)).add(new V3(0, s.y - SHOULDER.down, 0));
     }
 
     // A vector of the person's own frame, as it lies in the world.
