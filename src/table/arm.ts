@@ -61,6 +61,11 @@ export const HOLDS = {
         index: [42, 38, 16], middle: [50, 46, 20], ring: [72, 80, 40], little: [78, 86, 44],
         thumbIn: 40, thumbBase: 18, thumb: 20,
     },
+    // A fist: the fingers rolled tight into the palm, the thumb across the middle bones of the first two.
+    fist: {
+        index: [88, 100, 62], middle: [90, 102, 64], ring: [92, 104, 64], little: [94, 104, 64],
+        thumbIn: 48, thumbBase: 22, thumb: 34,
+    },
 };
 
 // A hold as a pose a person can be given.

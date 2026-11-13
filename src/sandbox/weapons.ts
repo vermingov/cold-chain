@@ -14,6 +14,7 @@ import { pierce, blow, type Missile } from './wounds.ts';
 import { rayToSegment } from './anatomy.ts';
 import { blast } from './dismember.ts';
 import * as viscera from './viscera.ts';
+import { Fist } from './fist.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const FRAGMENTS = 1000;      // an M67's body breaks into roughly this many that can wound
 
@@ -86,6 +87,7 @@ export class Weapons {
     declare arsenal: any;
     declare grenades: any[];
     declare flashAt: number;
+    declare fist: Fist | null;
 
     constructor(world) {
         this.world = world;
@@ -96,6 +98,7 @@ export class Weapons {
         this.current = 0;
         this.arsenal = null;
         this.grenades = [];
+        this.fist = null;
         const { scene, camera } = world;
         this.hand = new BABYLON.TransformNode('hand', scene);
         this.hand.parent = camera;
@@ -178,6 +181,8 @@ export class Weapons {
             const local = (a) => (a ? p(a).applyRotationQuaternion(turn).add(align.position) : null);
             this._anchors.set(key, { tip: local(j.tip), ejection: local(j.ejection), eject: j.ejectDir ? V3.FromArray(j.ejectDir) : V3.Right() });
         }));
+        // The arm a punch is thrown with: a working man's, in the sleeve of his jacket.
+        if (this.world.people) this.fist = new Fist(this.world.people, 'sexton', this.world.camera, (m) => this.world.shadows?.addShadowCaster(m));
         this.select(this.slot);
     }
 
@@ -185,6 +190,7 @@ export class Weapons {
     select(i) {
         if (i < 0 || i >= this.slots.length) return;
         this._letGo();
+        this.fist?.stop();
         this.slot = i;
         this.current = ARMS.findIndex((a) => a.key === (this.slots[i] ?? 'hands'));
         this.action = null;
@@ -462,22 +468,31 @@ export class Weapons {
         }
     }
 
-    // A punch: an untrained man's, 500 to 850 N, about 45 J behind a fist and forearm (dev/research/blunt-trauma.md).
+    // A punch: an untrained man's, 500 to 850 N, about 45 J behind a fist and forearm (dev/research/blunt-trauma.md). It
+    // lands when the fist gets there (fist.ts), on whatever is in front of the eye then.
     _punch() {
-        this.busy = 0.45;
-        const { camera } = this.world;
-        const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
-        this.world.sound?.shot('swing', { gain: 0.35, rate: 1.4 });
-        const person = this._person(eye, ahead, 0.85);
-        if (!person) return;
-        const hit = person.npc.surface(eye, ahead, 0.85).find((h) => h.kind === 'skin' || h.kind === 'cloth');
-        if (!hit) return;
-        setTimeout(() => {
+        this.busy = 0.42;
+        const { camera } = this.world, reach = 0.85;
+        const look = () => {
+            const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
+            const person = this._person(eye, ahead, reach + 0.08);
+            const hit = person?.npc.surface(eye, ahead, reach + 0.08).find((h) => h.kind === 'skin' || h.kind === 'cloth');
+            return hit ? { npc: person.npc, hit, ahead } : null;
+        };
+        const aim = look();
+        const land = () => {
+            const at = look();
+            if (!at) return false;
             // A fist and the arm behind it give: about 9 kN/m, which is what makes 1.8 kg at 7 m/s land with the 500 to
             // 850 N an untrained punch is measured at (dev/research/blunt-trauma.md), not with the force of a brick.
-            blow(person.npc, hit.point, ahead, 1.8, 7, 9000);
-            this.world.sound?.shot('blunt', { at: hit.point.asArray(), gain: 0.6 });
-        }, 110);
+            blow(at.npc, at.hit.point, at.ahead, 1.8, 7, 9000);
+            this.world.sound?.shot('blunt', { at: at.hit.point.asArray(), gain: 0.6 });
+            return true;
+        };
+        const driving = () => this.world.sound?.shot('swing', { gain: 0.35, rate: 1.4 });
+        if (this.fist) { this.fist.punch(aim && V3.Distance(camera.globalPosition, aim.hit.point) <= reach ? aim.hit.point : null, { driving, land }); return; }
+        driving();
+        if (aim) setTimeout(land, 110);
     }
 
     _hold(dt) {
@@ -678,6 +693,7 @@ export class Weapons {
             }
         }
         this._hold(dt);
+        this.fist?.update(dt);
         // The flash goes as fast as it came.
         // By the clock, not by frames: a frame held up by a limb coming off must not keep a flash on screen.
         if (this.flash.intensity > 0) {

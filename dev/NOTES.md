@@ -766,3 +766,18 @@ Rebuilt as physics (numbers in `src/sandbox/fluid.ts`: 1060 kg/m3, 3.5 mPa s,
 
 Left: a severed head that lands gets skull-fracture entries (bones.ts); splits look like incisions; the other hand
 stops 30-40 cm short of a wounded arm (meets the belly or runs out of shoulder reach).
+
+## Paused 2026-11-13 (checkpoint after 0.8.18, preview still 0.8.18)
+The user's report on 0.8.18, split into five jobs; all paused when the session moved to the cloud. Only the punch job
+had written code (src/sandbox/fist.ts, a `fist` hold in table/arm.ts, weapons.ts): typechecks, never seen working.
+- Organs: spill only through an opening big enough (wound ballistics), by physics alone (wall + mesentery holding,
+  gravity), never a scripted spill; every organ, not just the bowel; blood on hit or exposed organs; bowel stood up
+  stiff out of a pistol hole; shotgun belly flaps and cavity glitter like tinsel (should be a wet sheen, torn layers).
+- Standing people bob up and down; severed limbs still move as if alive (must be dead weight).
+- K (reset) after heavy damage crashed the preview build: `_cacheMatrix` in uniformBuffer (something drawn still
+  refers to a disposed node); also a soft dark grey-brown smudge over chin and front of the neck, cause unknown.
+- Punch: a first-person animation (in progress, fist.ts). Bruises went near black after a few punches to the mouth;
+  bruising and swelling must develop over time (redness in seconds, swelling over minutes, colour later).
+- New: a bandage (dress one wound, timed, soaks through, slows arterial/organ bleeding, stops venous/capillary) and a
+  medkit (dresses every wound in turn), hung on the arsenal.
+- Then: performance under heavy carnage across many people (blood, dismemberment, gore), measured on a quiet machine.
