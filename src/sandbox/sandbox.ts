@@ -15,6 +15,7 @@ import { Weapons } from './weapons.ts';
 import { buildArsenal } from './arsenal.ts';
 import { HALL, buildMap, ground, solids, land, covered, screened } from './map.ts';
 import { Thuds } from './thuds.ts';
+import { warm } from './warm.ts';
 const V3 = BABYLON.Vector3;
 
 const BODIES = ['oldman', 'sexton', 'buyer', 'hood'];
@@ -173,8 +174,26 @@ export async function openSandbox(engine, canvas, hud) {
         return best;
     };
 
-    return {
+    const sandbox = {
         scene, world, weapons, player,
+        // Before "Click to start": every shader compiled (warm.ts), then the room as it was.
+        warm: (say: (text: string) => void) => warm({
+            scene, world, weapons, player, say, step: (dt) => sandbox.update(dt),
+            xray: () => { seeing = !seeing; for (const npc of world.npcs) see(npc, seeing); },
+            reset: async () => {
+                weapons._letGo();
+                for (const npc of world.npcs) npc.dispose();
+                world.npcs.length = 0;
+                lastHurt = null;
+                blood.clear();
+                for (const c of weapons.casings) { c.body.dispose(); c.mesh.dispose(); }
+                weapons.casings.length = 0;
+                weapons.holeCount = weapons.holes.thinInstanceCount = 0;
+                weapons.holes.isVisible = false;
+                await lineUp();
+                player.spawn(0, -4, { toward: [0, 1.4, 2] });
+            },
+        }),
         update(dt) {
             world.frame++;
             world.dt = dt;
@@ -191,6 +210,7 @@ export async function openSandbox(engine, canvas, hud) {
             hud.update(weapons, shown, shown?.label);
         },
     };
+    return sandbox;
 }
 
 function see(npc, on) {

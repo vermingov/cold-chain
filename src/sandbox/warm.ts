@@ -31,6 +31,8 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
         player.update(0);
     };
     const press = (button = 0) => { weapons.busy = 0; weapons.reloading = 0; weapons._press(button); };
+    // What is carried, as it was: the rehearsal takes every weapon off the wall.
+    const carried = { slots: weapons.slots.slice(), bag: weapons.bag.slice(), slot: weapons.slot, ammo: new Map(weapons.ammo) };
     say('Preparing shaders: the hall.');
     await ready();
     const [a, b, c, d] = world.npcs;
@@ -69,6 +71,7 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
     xray(); await ready(); xray(); await ready();
     say('Preparing shaders: the people.');
     await reset();
-    weapons.take('pistol');
+    Object.assign(weapons, { slots: carried.slots, bag: carried.bag, ammo: carried.ammo });
+    weapons.select(carried.slot);
     await ready();
 }
