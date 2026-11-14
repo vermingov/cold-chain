@@ -1,7 +1,7 @@
 // Desert Eagle Mark XIX .50 AE (6 inch barrel): SirDraco65's CC0 model (OpenGameArt) from FBX to GLB, scaled to the real
 // gun's 273 mm (10.75 in) overall length; its 2K maps at 1K WebP (512 for the small parts), roughness and metalness
 // packed into one texture, the baked bevel maps as normal maps. The armature (an animation rig with bones named like the
-// meshes) is dropped, so the slide and magazine are found by name.
+// meshes) is dropped, so the slide and magazine are found by name, with the skinning and vertex colours.
 //   node tools/arms/deagle.mjs <the zip's Export dir>
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -15,6 +15,10 @@ const doc = await io().read(work + '/deagle.glb');
 const root = doc.getRoot();
 for (const n of root.listNodes()) if (n.getName() === 'Armature') { const gone = [n]; while (gone.length) { const x = gone.pop(); gone.push(...x.listChildren()); x.dispose(); } }
 for (const a of root.listAnimations()) a.dispose();
+// (The meshes were skinned to it and carry vertex colours nothing needs: both off, or the bones' absence reads as NaN.)
+for (const n of root.listNodes()) n.setSkin(null);
+for (const skin of root.listSkins()) skin.dispose();
+for (const mesh of root.listMeshes()) for (const prim of mesh.listPrimitives()) for (const name of ['JOINTS_0', 'WEIGHTS_0', 'COLOR_0']) prim.setAttribute(name, null);
 const top = root.listScenes()[0].listChildren()[0].setName('deagle');
 top.setScale([0.0593, 0.0593, 0.0593]);     // 4.602 model units muzzle to beavertail = 273 mm
 
