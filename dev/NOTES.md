@@ -859,3 +859,17 @@ finished a timed run on the software renderer.
 Left: feet still buzz about 1 rad/s; the other hand ends 28-49 cm from an arm wound; the K hang after heavy damage
 (the warm-up resets the same way: if loading hangs, this is why); marks.ts uploads whole 2048 textures per paint;
 casings not pooled; the chin/neck smudge; the material leak on K.
+
+## 0.8.22 (2026-11-14, cloud session)
+Since 0.8.21 (each also pushed live as a hotfix): dragging and dressing threw every frame (world.sound had no stream;
+the wrapper has one now); limbs kept out of the body by the reach solver, the curled pose opened, a hands-and-knees
+crawl (the army crawl still makes no progress); shoulder wounds held steadily (targets in the chest's frame, no hand
+for a place its own arm covers); the floor no longer counts as a wall in thuds.ts (people were breaking their own
+wrists and feet lying down); getting up completes; the F2 profiler (profiler.ts, own time per system, Shift+F2 copies).
+New in this version:
+- Desert Eagle .50 AE (OpenGameArt CC0, 1.9 kJ), a .22 LR rifle in the Ruger 10/22's measures (built in code, 170 J,
+  shallow-angle ricochets), shovel, sledgehammer and claw hammer (Poly Haven CC0): grips, swings (level and overhead,
+  the shovel's edge, the hammer's claw), reloads, flashes, casings, 12 ElevenLabs takes; the board in three rows with a
+  fill lamp on the tools. weapons.ts _move restores each moving part's own scale (the Deagle's FBX nodes are at 100).
+Not checked: the shovel and sledgehammer at rest in first person (they were not drawn in a low pose; back to the raised
+pose, unseen), the sledgehammer's left hand on its handle, the 10/22 sits low.
