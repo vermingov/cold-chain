@@ -171,20 +171,13 @@ export class Teeth {
         for (let k = 0; k < pieces; k++) this._fall(t, keep, dir, where, pieces > 1 ? 0.45 : 1);
         v.pain = Math.min(1, v.pain + (how === 'chipped' ? 0.08 : 0.18));
         v.injure(`${cap(t.name)} ${how === 'chipped' ? 'chipped' : how === 'broken' ? 'broken off at the gum' : 'knocked out'}`, how === 'chipped' ? 1 : 2);
-        // The pulp or the socket bleeds into the mouth, and out over the lips.
-        const lips = this._lips(where);
+        // The pulp or the socket bleeds into the mouth (throat.ts), which lets it out over the lips as the head lies.
         this.npc.world.blood?.spray(where.add(this._outward().scale(0.02)), this._outward().add(dir.scale(0.5)).normalize(), 1.2, how === 'out' ? 1.5 : 0.6, 0.5);
-        v.bleed({ name: `${t.name} socket`, rate: how === 'out' ? 0.0002 : 0.00006, clots: 0.01, source: lips ? { mark: lips } : undefined });
+        v.bleed({ name: `${t.name} socket`, rate: how === 'out' ? 0.0002 : 0.00006, clots: 0.01, internal: true, into: 'mouth' });
     }
 
     // Which way the mouth faces, in the world.
     _outward() { return this.npc.ragdoll.byName.get('head').node.getDirection(V3.Forward()); }
-
-    // The skin of the lips in front of a point in the mouth: where blood from it comes out.
-    _lips(at: BABYLON.Vector3) {
-        const out = this._outward();
-        return this.npc.surface(at.add(out.scale(0.06)), out.scale(-1), 0.08).find((h) => h.kind === 'skin') ?? null;
-    }
 
     // Along a tooth from its root (0) to its biting edge (1), at rest: upper teeth point down, lower ones up.
     _along(t: Tooth) {

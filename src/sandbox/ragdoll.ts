@@ -155,6 +155,10 @@ const AXIS_SHARE = [1, 0.6, 0.8];   // hinge, twist, side: the muscle across eac
 // A broken shaft's two ends grating on each other in the flesh, N m per kg the far half weighs: it hangs and swings at
 // the break, catching a little, whatever the muscles above are doing (the tone is the joints', not the break's).
 const GRATE = 1.2;
+// The shoulder's capsule (shoulders): N m per radian past its cone, and N m s per radian of damping, as stiff and damped as
+// a push given for a whole 1/120 s step can be on the arm's 0.3 kg m2 swing about the shoulder (about 30 rad/s, half of
+// critical). (At 300 N m per radian a shoulder's own muscle force took the arm 30 degrees past it.)
+const CAPSULE = [900, 15];
 
 // A turn `q` (in a joint's parent's frame) as the joint's three angles. Havok's 6DoF joint reads a turn as about its
 // first axis, then its second, then its third, each about the axis as already turned (measured: a motor target of
@@ -169,7 +173,7 @@ export function jointAngles(q: BABYLON.Quaternion, frame: BABYLON.Vector3[], out
     return out;
 }
 
-const _v = new V3(), _q = new Q(), _q2 = new Q(), _I = Q.Identity();
+const _v = new V3(), _q = new Q(), _q2 = new Q(), _I = Q.Identity(), _c = new V3(), _w = new V3(), _w2 = new V3();
 const _p = new V3(), _qp = new Q();
 
 export class Ragdoll {
@@ -551,6 +555,35 @@ export class Ragdoll {
         for (let i = 0; i < 3; i++) {
             const t = Math.max(seg.lo[i] + 0.02, Math.min(seg.hi[i] - 0.02, target[i]));
             if (!(Math.abs(t - m.t[i]) < 0.002)) { each((id, axis, j) => j === i && hp.HP_Constraint_SetAxisMotorPositionTarget(id, axis, t)); m.t[i] = t; }
+        }
+    }
+
+    // The shoulder's range as a cone, which three separate limits cannot make (each lets the arm go as far as it goes
+    // alone, so out to the side and back at once went round behind the body): how far behind the plane of the body the arm
+    // can be taken depends on how high it is, 60 degrees hanging (extension), 45 out level (horizontal extension), 20
+    // overhead (Norkin and White). Past it, the capsule pulls it back like a stiff damped spring, given every physics step,
+    // pushing on the chest the other way. (A spring of no stiffness at the edge, so a resting arm is not caught and let go.)
+    shoulders(dt: number) {
+        for (const side of ['L', 'R']) {
+            const arm = this.byName.get('upperarm' + side), chest = arm.parent;
+            if (arm.broken || this.cutOff(arm)) continue;
+            arm.end.normalizeToRef(_v).applyRotationQuaternionInPlace(arm.node.rotationQuaternion);
+            Q.InverseToRef(chest.node.rotationQuaternion, _q);
+            const d = _v.applyRotationQuaternionToRef(_q, _c), up = Math.acos(Math.max(-1, Math.min(1, -d.y)));
+            const most = (up < Math.PI / 2 ? 60 - 15 * up / (Math.PI / 2) : 45 - 25 * (up - Math.PI / 2) / (Math.PI / 2)) * RAD;
+            const past = Math.asin(Math.max(-1, Math.min(1, -d.z))) - most;
+            if (past <= 0) continue;
+            // About the axis that brings the arm forward again, in the world.
+            const ahead = _w.set(0, 0, 1).applyRotationQuaternionInPlace(chest.node.rotationQuaternion);
+            const axis = V3.CrossToRef(_v, ahead, _w2);
+            if (axis.lengthSquared() < 1e-8) continue;
+            axis.normalize();
+            arm.body.getAngularVelocityToRef(_c);
+            chest.body.getAngularVelocityToRef(_w);
+            const closing = V3.Dot(_c.subtractInPlace(_w), axis);
+            const torque = Math.max(0, CAPSULE[0] * past - CAPSULE[1] * closing) * dt;
+            arm.body.applyAngularImpulse(axis.scale(torque));
+            chest.body.applyAngularImpulse(axis.scale(-torque));
         }
     }
 

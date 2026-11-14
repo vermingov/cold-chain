@@ -15,7 +15,8 @@ const BRAIN_DEATH = 300;        // seconds of no blood to the brain before it is
 const COLLAPSE = 75;            // seconds a punctured lung takes to collapse
 
 export type Bleed = { name: string; rate: number; arterial: boolean; internal: boolean; clots: number; lost: number; spurts?: boolean; source?: any; flow?: number; jet?: number;
-    dressed?: number; dressing?: any };     // what a dressing over it leaves of its flow, and the dressing (dressing.ts)
+    dressed?: number; dressing?: any;       // what a dressing over it leaves of its flow, and the dressing (dressing.ts)
+    into?: 'mouth' | 'airway' | 'stomach' | 'nose'; side?: 'L' | 'R' };     // where inside it runs to (throat.ts), and which lung
 
 export class Vitals {
     declare full: number;
@@ -29,6 +30,9 @@ export class Vitals {
     declare rr: number;
     declare lungs: { L: number; R: number; leakL: boolean; leakR: boolean };
     declare airway: number;
+    // How much of each lung's airspace is full of blood, and of the throat blocked by blood pooled in it, 0 to 1 (throat.ts).
+    declare flooded: { L: number; R: number };
+    declare choked: number;
     declare breathing: boolean;
     declare reserve: number;
     declare brainDamage: number;
@@ -59,6 +63,8 @@ export class Vitals {
         this.rr = NORMAL.rr;
         this.lungs = { L: 1, R: 1, leakL: false, leakR: false };
         this.airway = 1;
+        this.flooded = { L: 0, R: 0 };
+        this.choked = 0;
         this.breathing = true;
         this.reserve = 1;
         this.brainDamage = 0;
@@ -181,7 +187,8 @@ export class Vitals {
         for (const side of ['L', 'R'] as const) {
             if (this.lungs[`leak${side}`]) this.lungs[side] = Math.max(0.05, this.lungs[side] - dt / COLLAPSE);
         }
-        const air = this.breathing ? ((this.lungs.L + this.lungs.R) / 2) * this.airway : 0;
+        // (Blood breathed into a lung fills the airspaces that would have taken up the oxygen: throat.ts.)
+        const air = this.breathing ? ((this.lungs.L * (1 - this.flooded.L) + this.lungs.R * (1 - this.flooded.R)) / 2) * this.airway * (1 - this.choked) : 0;
         this.rr = this.breathing && this.beating ? NORMAL.rr + 16 * Math.min(1, (1 - f) / 0.35) + 10 * (1 - air) : 0;
         const spo2 = air > 0 && this.beating ? 70 + 28 * Math.sqrt(air) : 20;
         this.spo2 += (spo2 - this.spo2) * Math.min(1, dt / (spo2 < this.spo2 ? 25 : 6));

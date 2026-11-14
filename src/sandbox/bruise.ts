@@ -550,7 +550,8 @@ export class Bruise {
         if (v.bleeds.some((b) => b.name === 'nosebleed' && b.rate > 2e-5)) return;
         const nostril = this.npc.runs.nearest(tip.add(new V3(0, -0.013, -0.007)), 0.02);
         if (nostril?.kind !== 'skin') return;
-        v.bleed({ name: 'nosebleed', rate: 0.00008 + 0.0002 * clamp(peak, 0, 1.5), clots: 0.008, source: { mark: nostril } });
+        // (Out of the nostrils, and down the back of the nose into the throat as the head lies: throat.ts.)
+        v.bleed({ name: 'nosebleed', rate: 0.00008 + 0.0002 * clamp(peak, 0, 1.5), clots: 0.008, source: { mark: nostril }, into: 'nose' });
         this.npc.welling(nostril, 0.5);
     }
 

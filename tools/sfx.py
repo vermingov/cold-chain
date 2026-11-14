@@ -134,6 +134,16 @@ TAKES = {
     'hit-sledge-2': ('0cdGGm5pVDTItmfzThzJ/trW1k4rL5VT4SmzcYehW', 'Sledgehammer smashing into a human body, very heavy deep crushing thud with a bone crunch, indoor concrete hall'),
     'hit-hammer-1': ('jza407yZCis5bPrfheWS/WNlBmykhURafvLHpaL6Q', 'Claw hammer striking a human head, short hard dull knock with a crack, close-mic'),
     'hit-hammer-2': ('kBphPfn0S9jBqNBwVEZa/ZbXKS7FTlgKgskusaHyM', 'Claw hammer striking a human head, short hard dull knock with a crack, close-mic'),
+    # Blood in the mouth and airways (src/sandbox/throat.ts), 2026-11-14.
+    'cough-wet-1': ('K1HzTjmZgWFhJv9Zl1rM/lRrET1A2UAPgfrnzn3bP', 'A wounded man coughing up blood: two or three harsh wet coughs with liquid rattling in his throat, a choking splutter, close-mic, indoor concrete hall, no music'),
+    'cough-wet-2': ('BxpM4qrr4dnO7BxohRHa/WHqGx3O4eJxjTut01QSr', 'A wounded man coughing up blood: two or three harsh wet coughs with liquid rattling in his throat, a choking splutter, close-mic, indoor concrete hall, no music'),
+    'gurgle-1': ('pzgZdYfDN4Gr1isj5Q96/RCHGnlVmtc5nqb1e65Hb', 'Slow laboured breathing of an unconscious man lying on his back with blood in his throat, wet gurgling bubbling on each breath in and out, close-mic, quiet room, no voice, no music'),
+    'gurgle-2': ('bHRUL0yNWjRFwCihQkfy/BuyGRMMwPHrpE4HfM65R', 'Slow laboured breathing of an unconscious man lying on his back with blood in his throat, wet gurgling bubbling on each breath in and out, close-mic, quiet room, no voice, no music'),
+    'retch-1': ('mTy3YpHubvjGToXFyKvM/54y0hr0q415IZde1l8L3', 'A man dry heaving: two strained retches from deep in the throat, gagging, nothing coming up, close-mic, indoor concrete hall, no music'),
+    'retch-2': ('68nbZuLxy9mOKKVeckum/zJk8NLz09vE2qyL6CBgO', 'A man dry heaving: two strained retches from deep in the throat, gagging, nothing coming up, close-mic, indoor concrete hall, no music'),
+    'vomit-1': ('xhJ0whzcdFRrtBOwf7gI/geDyTOTO8xJuIntjHFDK', 'A man violently vomiting a large mouthful of liquid that splashes onto a concrete floor, one heave and a gush, wet splatter, indoor concrete hall, no music'),
+    'vomit-2': ('VSvNxOaJfTEj2VoZAIqa/iLgbrsUx17JoNLbFeQEk', 'A man violently vomiting a large mouthful of liquid that splashes onto a concrete floor, one heave and a gush, wet splatter, indoor concrete hall, no music'),
+    'spit-1': ('uZ8feBYGxw9OHRxhSbm8/S88x7G55PKdaBWgEgMXf', 'A man spitting out a mouthful of blood onto a concrete floor, one short wet spit and splat, close-mic, no music'),
 }
 
 # Names the game asks for that are heard as another's recordings: a blade sounds the same in skin, fat, flesh and

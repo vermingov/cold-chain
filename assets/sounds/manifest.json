@@ -253,5 +253,24 @@
  "hit-hammer": [
   "hit-hammer-1.ogg",
   "hit-hammer-2.ogg"
+ ],
+ "cough-wet": [
+  "cough-wet-1.ogg",
+  "cough-wet-2.ogg"
+ ],
+ "gurgle": [
+  "gurgle-1.ogg",
+  "gurgle-2.ogg"
+ ],
+ "retch": [
+  "retch-1.ogg",
+  "retch-2.ogg"
+ ],
+ "vomit": [
+  "vomit-1.ogg",
+  "vomit-2.ogg"
+ ],
+ "spit": [
+  "spit-1.ogg"
  ]
 }

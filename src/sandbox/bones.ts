@@ -652,7 +652,7 @@ export class Bones {
             case 'larynx':
                 // The voice box crushed swells shut over the next minutes; the hyoid less so.
                 v.airway = Math.max(0.1, v.airway - (br.key === 'larynx' ? 0.45 : 0.2));
-                v.bleed({ name: br.part, rate: 0.0003, internal: true, clots: 0.01 });
+                v.bleed({ name: br.part, rate: 0.0003, internal: true, clots: 0.01, into: 'airway' });
                 return;
             case 'jaw':
                 return this._jawBroken(br);
@@ -719,10 +719,10 @@ export class Bones {
         const v = this.npc.vitals;
         v.concussion = Math.min(1, v.concussion + 0.1 + (br.type === 'lefort3' ? 0.4 : 0));
         if (br.type === 'nasal' || br.type === 'lefort2' || br.type === 'lefort3') {
-            v.bleed({ name: 'nose', rate: br.type === 'nasal' ? 0.0004 : 0.0012, clots: 0.006, source: { mark: this._skinOver(br) } });
+            v.bleed({ name: 'nose', rate: br.type === 'nasal' ? 0.0004 : 0.0012, clots: 0.006, source: { mark: this._skinOver(br) }, into: 'nose' });
         }
         if (br.type.startsWith('lefort')) this.teeth.loosen(true);
-        if (br.type === 'lefort1' || br.type === 'lefort2') v.bleed({ name: 'mouth', rate: 0.0006, clots: 0.006, source: { mark: this._skinOver(br) } });
+        if (br.type === 'lefort1' || br.type === 'lefort2') v.bleed({ name: 'mouth', rate: 0.0006, clots: 0.006, internal: true, into: 'mouth' });
         if (br.type === 'lefort2') v.airway = Math.max(0.2, v.airway - 0.15);
         if (br.type === 'lefort3') {
             v.airway = Math.max(0.2, v.airway - 0.35);
@@ -738,7 +738,7 @@ export class Bones {
         this.jawHangs = Math.max(this.jawHangs, both ? 18 : 10);
         if (both) { v.airway = Math.max(0.2, v.airway - 0.2); v.injure('The broken jaw lets the tongue fall back', 6); }
         if (br.type === 'body' || br.type === 'chin') this.teeth.loosen(false);
-        if (br.type === 'body' || br.type === 'chin') v.bleed({ name: 'mouth', rate: 0.0004, clots: 0.008, source: { mark: this._skinOver(br) } });
+        if (br.type === 'body' || br.type === 'chin') v.bleed({ name: 'mouth', rate: 0.0004, clots: 0.008, internal: true, into: 'mouth' });
     }
 
     // A jaw knocked out of its joints with the mouth open: it locks open and cannot be closed.

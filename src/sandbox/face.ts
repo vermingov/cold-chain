@@ -96,6 +96,10 @@ const CRIES: Record<string, { face: Record<string, number>; jaw: number }> = {
     gasp: { face: { AU1: 0.6, AU2: 0.5, AU5: 0.3, AU16: 0.3, AU20: 0.2 }, jaw: 24 },
     cough: { face: { AU4: 0.6, AU6: 0.6, AU7: 0.7, AU43: 0.7 }, jaw: 20 },
     dying: { face: {}, jaw: 18 },
+    // Retching: the gag's face, nose wrinkled and upper lip drawn up, eyes screwed shut, the mouth pulled wide; vomiting,
+    // the jaw thrown open (throat.ts holds it open with the heave as well).
+    retch: { face: { AU4: 0.7, AU6: 0.6, AU7: 0.8, AU9: 0.8, AU10: 0.8, AU20: 0.6, AU43: 0.7 }, jaw: 22 },
+    vomit: { face: { AU4: 0.6, AU7: 0.6, AU9: 0.6, AU10: 0.9, AU16: 0.6, AU20: 0.5, AU27: 0.8, AU43: 0.6 }, jaw: 32 },
 };
 // How a pain face is made, by how much it hurts (0 to 1, PSPI's units scaled): brow lowering and orbital tightening
 // first, the levator (nose wrinkle, upper lip) as it gets worse, the eyes shut at its worst, and only while the hurt is

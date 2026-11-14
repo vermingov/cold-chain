@@ -56,6 +56,7 @@ const THROUGH = { heart: 0.1, lung: 0.16, liver: 0.15, spleen: 0.09, kidney: 0.0
 const ORGAN_BLEED = { heart: 0.07, liver: 0.012, spleen: 0.01, kidney: 0.007, lung: 0.004, brain: 0.002, pancreas: 0.003, stomach: 0.002, bowel: 0.0015,
     colon: 0.0015, gallbladder: 0.001, bladder: 0.0008, adrenal: 0.001, muscle: 0.001, airway: 0.001, oesophagus: 0.001, brainstem: 0.001 };
 
+const AIRWAYS = 0.15;       // share of a torn lung's bleeding that goes into its own airways rather than the chest
 const FAT = 0.012;          // metres of fat under the skin, about
 const SKIN = 0.002;
 
@@ -169,6 +170,12 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         if (h === viaEye && viaEye.t < enter.t) lid = out;
     }
     v.bleed({ name: 'wound', rate: 0.00025 * (m.channel / 0.006) * Math.min(1, deep / 0.05 + 0.3), clots: 0.02, source: { mark: enter } });
+    // Through the mouth: the tongue, palate and cheeks are full of vessels (the lingual and facial arteries' branches)
+    // and bleed into it (throat.ts).
+    if (npc.throat?.crossed(origin, dir, enter.t, Math.min(stopAt, far))) {
+        v.bleed({ name: 'mouth', rate: 0.0009 * Math.min(2, m.channel / 0.006), internal: true, clots: 0.005, into: 'mouth' });
+        v.injure('Wound through the mouth', 4);
+    }
     v.pain = Math.min(1, v.pain + 0.25 + (bones ? 0.25 : 0));
     const region = regionOf(npc, enter);
     v.injure(woundText(m, region, deep, stopAt === Infinity), 1 + Math.min(3, deep * 20));
@@ -245,18 +252,23 @@ function organ(npc, part, length, m, fragments, at: BABYLON.Vector3) {
             v.lungs[`leak${side}`] = true;
             v.lungs[side] = Math.max(0.05, v.lungs[side] - wreck * 0.4);
             v.bleed({ name: part.name, rate: ORGAN_BLEED.lung * (0.5 + wreck), internal: true, clots: 0.003 });
-            npc.coughsBlood = true;
+            // Most of a torn lung bleeds into the chest round it; some into its own airways, and is coughed up
+            // (dev/research/airway-blood.md sec. 1: the share is an estimate).
+            v.bleed({ name: `${part.name} into its airways`, rate: ORGAN_BLEED.lung * AIRWAYS * (0.5 + wreck), internal: true, clots: 0.003, into: 'airway', side });
             v.injure(`${name} punctured, collapsing`, 7);
             return;
         }
         case 'airway':
             v.airway = Math.max(0.1, v.airway - 0.5);
-            npc.coughsBlood = true;
+            // A holed windpipe bleeds into itself, down into the lungs.
+            v.bleed({ name: part.name, rate: ORGAN_BLEED.airway * (0.3 + wreck), internal: true, clots: 0.006, into: 'airway' });
             v.injure('Windpipe holed', 7);
-            break;
+            return;
     }
     const rate = (ORGAN_BLEED[kind] ?? 0.001) * (0.3 + wreck);
     v.bleed({ name: part.name, rate, internal: true, clots: kind === 'liver' || kind === 'spleen' ? 0.002 : 0.006 });
+    // A holed stomach or gullet bleeds into itself as well as round it: from its lining into the stomach.
+    if (kind === 'stomach' || kind === 'oesophagus') v.bleed({ name: `${part.name}, into it`, rate: rate * 0.6, internal: true, clots: 0.006, into: 'stomach' });
     v.injure(`${name} ${wreck > 0.5 ? 'torn apart' : 'lacerated'}`, 3 + rate * 300);
 }
 

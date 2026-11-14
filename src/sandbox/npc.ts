@@ -24,6 +24,7 @@ import { Soak } from './soak.ts';
 import { RHO } from './fluid.ts';
 import { Dismember, swung } from './dismember.ts';
 import { Viscera, slashed } from './viscera.ts';
+import { Throat } from './throat.ts';
 const V3 = BABYLON.Vector3;
 const BACK = 45;            // mmHg: what the tissue round an open artery holds back of the pressure behind it
 
@@ -49,12 +50,10 @@ export class Npc {
     declare clock: number;
     declare flinch: Record<string, number>;
     declare legGone: boolean;
-    declare coughsBlood: boolean;
     declare _skinned: Float32Array | null;
     declare _skinnedAt: number;
     declare _boxed: Float32Array | null;
     declare _boxedAt: number;
-    declare _cough: number;
     declare _restPos: Float32Array;
     declare _uv: Float32Array;
     declare down: boolean;
@@ -77,6 +76,7 @@ export class Npc {
     declare dismember: Dismember;
     declare viscera: Viscera;
     declare dressings: { dispose(): void }[];
+    declare throat: Throat;
 
     // `world` is the sandbox: { scene, blood, sound, frame, camera, shadows }.
     static async make(world, people, body, { at, yaw = 0, bit = 4, mass = 75, name = body } = {} as any) {
@@ -111,14 +111,12 @@ export class Npc {
         this.clock = Math.random() * 10;
         this.flinch = {};
         this.legGone = false;
-        this.coughsBlood = false;
         this.down = false;
         this.grabbed = false;
         this._skinned = null;
         this._skinnedAt = -1;
         this._boxed = null;
         this._boxedAt = -1;
-        this._cough = 2;
         person.apply(P.stand(this.clock));
         this.ragdoll = new Ragdoll(person, { mass, bit });
         this.behaviour = new Behaviour(this);
@@ -144,6 +142,8 @@ export class Npc {
         this._aims = new WeakMap();
         this.dismember = new Dismember(this);
         this.viscera = new Viscera(this);
+        // Blood in the mouth, the airways and the stomach (throat.ts), after the teeth, which say where the mouth is.
+        this.throat = new Throat(this);
         for (const m of [person.mesh, this.clothes]) world.shadows?.addShadowCaster(m);
     }
 
@@ -374,7 +374,8 @@ export class Npc {
         this.behaviour.update(dt);
         this.ragdoll.drive();
         this.dismember.update(dt);
-        this.face.update(dt, this.vitals, this._crying, (this as any).bones?.jawHangs ?? 0);
+        this.throat.update(dt);
+        this.face.update(dt, this.vitals, this._crying, Math.max((this as any).bones?.jawHangs ?? 0, this.throat.gape));
         this.bruise.update(dt);
         this._bleed(dt);
         this._speak(dt);
@@ -391,15 +392,17 @@ export class Npc {
         // leaks from wounds on the lowest side (dev/research/gunshot-blood.md sec. 2, stab-wounds.md sec. 1, DiMaio 1999
         // ch. 9). At most the twelfth it always let out. How much has to gather first is an estimate: half a litre.
         let inside = 0;
-        for (const b of v.bleeds) if (b.internal) inside += b.lost;
+        for (const b of v.bleeds) if (b.internal && !b.into) inside += b.lost;
         const filled = Math.min(1, inside / 0.5), facing = new Map();
         for (const b of v.bleeds) {
+            // Into the mouth, the airways or the stomach (throat.ts); only the front of a nosebleed comes out of the nose.
+            let share = b.into ? this.throat.take(b, (b.flow ?? 0) * dt * 1000) : 1;
+            if (!share) continue;
             const mark = b.source?.mark;
             if (!mark) continue;
-            let share = 1;
             if (b.internal) {
                 if (!facing.has(mark)) facing.set(mark, filled > 0 ? Math.max(0, -this.worldOf(mark.rest, mark.owner, mark.restNormal).normal.y) : 0);
-                share = 0.08 * filled * (0.15 + 0.85 * facing.get(mark));
+                share *= 0.08 * filled * (0.15 + 0.85 * facing.get(mark));
             }
             const flow = (b.flow ?? 0) * share;
             if (flow < 1e-6) continue;
@@ -430,13 +433,6 @@ export class Npc {
             // the skin, where it runs (runs.ts).
             if (mark.cloth) this.soak.add(mark.cloth.rest, ml);
             else this.runs.start(mark, ml, b);
-        }
-        if (this.coughsBlood && v.breathing && v.beating && (this._cough -= dt) < 0) {
-            this._cough = 2 + Math.random() * 4;
-            this.say('cough', 0.9, true);
-            const head = this.person.joint('head', 'head');
-            const fwd = this.ragdoll.byName.get('head').node.getDirection(new V3(0, 0, 1));
-            blood.spray(head.add(fwd.scale(0.1)).add(new V3(0, 0.02, 0)), fwd.add(new V3(0, -0.2, 0)).normalize(), 1.6, 4, 0.3);
         }
         this.film.update(dt);
         this.soak.update(dt);
@@ -549,7 +545,7 @@ export class Npc {
         if (hurt > 0.12 && v.breathing) { this.say(hurt > 0.35 ? 'scream' : 'yell', Math.min(1, 0.6 + hurt), true); said.next = 2 + Math.random() * 3; return; }
         if ((said.next -= dt) > 0) return;
         said.next = 3.5 + Math.random() * 5;
-        const short = !v.breathing || v.spo2 < 88 || (v.lungs.L + v.lungs.R) / 2 < 0.6 || v.airway < 0.6;
+        const short = !v.breathing || v.spo2 < 88 || (v.lungs.L + v.lungs.R) / 2 < 0.6 || v.airway < 0.6 || v.flooded.L + v.flooded.R > 0.6 || v.choked > 0.3;
         if (short) this.say('gasp', 0.8);
         else if (v.lost > 0.18 && Math.random() < 0.6) this.say('cry', 0.75);
         else if (v.pain > 0.25) this.say('groan', 0.6 + v.pain * 0.3);

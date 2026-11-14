@@ -258,6 +258,33 @@ def sheet(corners, faces):
             {'position': corners.astype(np.float32).ravel(), 'index': faces.astype(np.uint32).ravel()})
 
 
+def envelope(points, along, over, cell=0.008, reach=(1, 3)):
+    """The outermost of `points` either way along axis `along`, over a grid of the other two (`over`): a function from
+    (n, 3) points to (highest, lowest) there, NaN where there are none. Each cell takes the most of its neighbours
+    `reach` cells either way along each axis of the grid: a rib cage's front is its ribs, and between two ribs a line
+    straight in meets the back of the cage, not its front."""
+    a, b = over
+    lo = points[:, [a, b]].min(axis=0)
+    ij = ((points[:, [a, b]] - lo) / cell).astype(int)
+    shape = ij.max(axis=0) + 1
+    hi_g, lo_g = np.full(shape, -np.inf), np.full(shape, np.inf)
+    np.maximum.at(hi_g, (ij[:, 0], ij[:, 1]), points[:, along])
+    np.minimum.at(lo_g, (ij[:, 0], ij[:, 1]), points[:, along])
+    for g, pick, worst in ((hi_g, np.maximum, -np.inf), (lo_g, np.minimum, np.inf)):
+        pad = np.pad(g, [(reach[0],) * 2, (reach[1],) * 2], constant_values=worst)
+        g[:] = pick.reduce([pad[reach[0] + di:reach[0] + di + shape[0], reach[1] + dj:reach[1] + dj + shape[1]]
+                            for di in range(-reach[0], reach[0] + 1) for dj in range(-reach[1], reach[1] + 1)])
+    hi_g[~np.isfinite(hi_g)] = np.nan
+    lo_g[~np.isfinite(lo_g)] = np.nan
+
+    def at(q):
+        k = ((q[:, [a, b]] - lo) / cell).astype(int)
+        inside = (k >= 0).all(axis=1) & (k < shape).all(axis=1)
+        k = np.clip(k, 0, shape - 1)
+        return np.where(inside, hi_g[k[:, 0], k[:, 1]], np.nan), np.where(inside, lo_g[k[:, 0], k[:, 1]], np.nan)
+    return at
+
+
 THORAX = (-0.24, -0.36)     # m below the top of the breastbone: the chest's own depth down to the first, none past the second
 SQUEEZE = 0.6               # the least share of the source's depth a column of the chest is given
 ACROSS = 0.16               # m either side of the midline the trunk's front and back are read over (past it, as at its edge)
@@ -408,11 +435,9 @@ def main():
         add(name, kind, trunk_bone(corners[:, 1].mean()), corners, faces)
         if name.endswith(' rib') or name == 'sternum':
             cage.append((corners, faces))
-    # The rib cage's outside, front and back and either side, for the lungs to fill (organs.walls fills the gaps
-    # between the ribs from their neighbours).
-    cage_faces = np.concatenate([f + sum(len(c) for c, _ in cage[:i]) for i, (_, f) in enumerate(cage)])
+    # The rib cage's outside, front and back and either side, for the lungs to fill.
     cage = np.concatenate([c for c, _ in cage])
-    cage_at, cage_side = walls(*sheet(cage, cage_faces)), walls(*sheet(cage, cage_faces), along=0, over=(2, 1))
+    cage_at, cage_side = envelope(cage, 2, (0, 1)), envelope(cage, 0, (2, 1))
 
     for name, patterns in LUNGS:
         raw = read_named(source, names, patterns)[0]
@@ -436,7 +461,8 @@ def main():
         corners[behind, 2] = np.maximum(back[behind] + RIBS, np.minimum(corners[behind, 2], front[behind] - RIBS))
         outer, inner = cage_side(corners)
         side = outer if middle[0] > 0 else inner
-        lateral = (d[:, 0] * np.sign(middle[0]) > 0) & np.isfinite(side)
+        # (Only a side of the cage on the lung's own side: across the top, one side's ribs alone can be in a cell.)
+        lateral = (d[:, 0] * np.sign(middle[0]) > 0) & np.isfinite(side) & (side * np.sign(middle[0]) > 0)
         corners[lateral, 0] = side[lateral] - RIBS * np.sign(middle[0])
         press(corners)
         # The hull's triangles face any way: turn each to face out of the middle, in the source's handedness.

@@ -107,6 +107,7 @@ export class Behaviour {
     declare will: number;
     declare react: any;
     declare fence: number;
+    declare retch: number;          // 0 to 1: how far a retch is folding them over now (throat.ts)
     declare fenceArms: string;
     declare wasOut: boolean;
     declare settle: number;
@@ -151,6 +152,7 @@ export class Behaviour {
         this.will = 1;
         this.react = null;
         this.fence = 0;
+        this.retch = 0;
         this.fenceArms = '';
         this.wasOut = false;
         this.settle = 0;
@@ -273,7 +275,10 @@ export class Behaviour {
     // frame left the balance unminded for a tenth of a second.
     act(push: (dt: number) => void) { this.pushes.push(push); }
 
-    beforeStep(dt: number) { for (const push of this.pushes) push(dt); }
+    beforeStep(dt: number) {
+        for (const push of this.pushes) push(dt);
+        this.rd.shoulders(dt);
+    }
 
     update(dt: number) {
         const npc = this.npc, v = npc.vitals, rd = this.rd;
@@ -305,6 +310,8 @@ export class Behaviour {
         if (this.state === 'stand') pose = this._stand(dt);
         if (this.state === 'fall') pose = this._fall(dt);
         if (this.state === 'down') pose = this._down(dt);
+        // A retch (throat.ts) folds the trunk over the belly's squeeze and drops the head, on whatever else they are doing.
+        if (this.retch > 0.02) pose = add(pose, { spineFlex: 24 * this.retch, neckFlex: 18 * this.retch, headFlex: 8 * this.retch });
         if (this.fence > 0) {
             this.fence -= dt;
             pose = { ...pose };
