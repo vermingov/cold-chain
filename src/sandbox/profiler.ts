@@ -99,6 +99,9 @@ export function profiler(layer: HTMLElement, sandbox) {
         time(Bruise.prototype, 'update', 'person: bruise');
         time(Npc.prototype, '_bleed', 'person: bleed');
         time(Film.prototype, 'update', 'person: film (blood on skin)');
+        time(Film.prototype, '_draw', 'person: film, drawing streaks');
+        time(Film.prototype, '_dry', 'person: film, drying');
+        time(Film.prototype, '_send', 'person: film, to GPU');
         time(Soak.prototype, 'update', 'person: soak (blood in clothes)');
         time(Npc.prototype, '_speak', 'person: voice');
         time(Runs.prototype, 'update', 'person: runs (blood down skin)');
