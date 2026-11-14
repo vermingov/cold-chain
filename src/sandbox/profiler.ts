@@ -220,6 +220,7 @@ export function profiler(layer: HTMLElement, sandbox) {
         const bodies = physics.getBodies().length, loops = world.npcs.reduce((n, npc) => n + (npc.viscera?.loops?.length ?? 0), 0);
         const counts = [
             `${(1000 / gap).toFixed(0)} fps   ${gap.toFixed(1)} ms a frame   GPU ${gpu}`,
+            `${world.quality ? `render ${Math.round(100 / world.quality.level)}% of the screen a side   quality ${world.quality.preset} (F3)` : ''}`,
             `draw calls ${sceneInst.drawCallsCounter.current}   active meshes ${scene.getActiveMeshes().length}   triangles ${Math.round(scene.getActiveIndices() / 3)}`,
             `materials ${scene.materials.length}   textures ${scene.textures.length}   shader compiles last second ${compiles}`,
             `people ${world.npcs.length}   organ loops ${loops}   drops ${world.blood.n}   streams ${world.blood.streams.size}   bodies ${bodies}`

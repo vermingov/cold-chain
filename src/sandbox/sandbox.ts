@@ -72,6 +72,7 @@ export async function openSandbox(engine, canvas, hud) {
     const models = new Models(scene, { cast: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) });
 
     const world: any = {
+        quality,
         scene, camera, canvas, player, blood, models, people, npcs: [] as Npc[], frame: 0, dt: 1 / 60, bodyOf: new WeakMap(),
         ground,     // the height of what is under (x, z), no higher than `below` (map.ts)
         shadows: { addShadowCaster: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) },

@@ -83,7 +83,9 @@ export function sendPart(texture: BABYLON.BaseTexture, data: Uint8Array, size: n
 
 // A part of a canvas sent to the texture it backs, `box` [x0, y0, x1, y1] in pixels, not turned upside down (WebGL 2;
 // elsewhere the whole canvas, also the right way up).
-export function sendCanvasPart(texture: BABYLON.DynamicTexture, canvas: HTMLCanvasElement, box: number[]) {
+// `flip` for a texture sent upside down (DynamicTexture.update's default): the box lands mirrored, its rows reversed.
+// A texture with mipmaps has them made again from what was sent (on the card: far less than sending all of it).
+export function sendCanvasPart(texture: BABYLON.DynamicTexture, canvas: HTMLCanvasElement, box: number[], flip = false) {
     const engine = texture.getScene().getEngine() as any, gl = engine._gl as WebGL2RenderingContext | undefined;
     const internal = texture.getInternalTexture();
     if (!gl || !internal || engine.webGLVersion < 2) { texture.update(false); return; }
@@ -92,9 +94,11 @@ export function sendCanvasPart(texture: BABYLON.DynamicTexture, canvas: HTMLCanv
     if (w <= 0 || h <= 0) return;
     const part = canvas.getContext('2d').getImageData(box[0], box[1], w, h).data;
     engine._bindTextureDirectly(gl.TEXTURE_2D, internal, true);
-    engine._unpackFlipY(false);
+    engine._unpackFlipY(flip);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], box[1], w, h, gl.RGBA, gl.UNSIGNED_BYTE, part);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], flip ? canvas.height - box[3] : box[1], w, h, gl.RGBA, gl.UNSIGNED_BYTE, part);
+    if (internal.generateMipMaps) gl.generateMipmap(gl.TEXTURE_2D);
+    engine._unpackFlipY(false);
     engine._bindTextureDirectly(gl.TEXTURE_2D, null);
 }
 
