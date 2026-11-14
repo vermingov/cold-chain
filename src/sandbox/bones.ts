@@ -106,8 +106,9 @@ const PLACES = { temple: 3900, forehead: 6300, side: 6100, back: 8000, base: 610
 const VAULT: [RegExp, string][] = [[/^frontal/, 'forehead'], [/temporal/, 'temple'], [/parietal/, 'side'], [/^occipital/, 'back'], [/sphenoid|ethmoid/, 'base']];
 // What hits: how stiff it is (N/m) and the patch it lands on (cm2). A fist and the arm behind it give (an untrained
 // punch is 0.5-0.85 kN, a boxer's 3.4 kN at 9 m/s: Walilko 2005); a bat is a 6.5 cm cylinder; halving the patch about
-// doubles the chance of a fracture (Yoganandan), so thresholds measured with 6.5 cm2 scale with the patch.
-const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 } };
+// doubles the chance of a fracture (Yoganandan), so thresholds measured with 6.5 cm2 scale with the patch. A claw hammer's
+// face is about an inch across (5 cm2: Goots18's hammer impactor).
+const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 }, hammer: { k: 5e6, area: 5 } };
 // Ribs break by how far the chest is pushed in, not how fast: past a fifth of its depth they break, past two fifths a
 // panel of them breaks in two places (Kroell); the chest is about 23 cm deep and about 40 N/mm stiff to a broad load.
 const CHEST_DEPTH = 0.23, CHEST_STIFF = 40e3;

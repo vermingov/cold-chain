@@ -5,10 +5,12 @@ import * as BABYLON from '@babylonjs/core';
 import { HALL } from './map.ts';
 const V3 = BABYLON.Vector3;
 
-// What hangs where: two rows, long guns over the rest, laid out along the wall from the south end.
+// What hangs where: three rows, long guns over the rest and the tools at the bottom, laid out along the wall from the
+// south end.
 const ROWS = [
-    { y: 1.78, keys: ['rifle', 'shotgun', 'ak', 'm4'] },
-    { y: 1.12, keys: ['pistol', 'knife', 'sword', 'bat', 'grenade', 'throw', 'bandage', 'medkit'] },
+    { y: 1.95, keys: ['rifle', 'shotgun', 'ak', 'm4', 'r22'] },
+    { y: 1.38, keys: ['pistol', 'deagle', 'knife', 'sword', 'bat', 'grenade', 'throw', 'bandage', 'medkit'] },
+    { y: 0.82, keys: ['shovel', 'sledge', 'hammer'] },
 ];
 const WALL = { x: -HALL.x, z: -1.2, width: 7.2, height: 1.7, y: 1.45 };
 const GAP = 0.28;

@@ -24,6 +24,11 @@ const LOOKS: Record<string, Look> = {
     ak: { long: 0.24, high: 0.12, face: 0.13, back: 0.005, core: 0.02, knot: 0.075, haze: 0.05, light: 35, puffs: 4, sparks: 5 },
     rifle: { long: 0.26, high: 0.11, face: 0.12, back: 0.005, core: 0.022, knot: 0.1, haze: 0.03, light: 45, puffs: 4, sparks: 3 },
     shotgun: { long: 0.34, high: 0.24, face: 0.26, back: 0.005, core: 0.05, knot: 0, haze: 0.11, light: 60, puffs: 6, sparks: 24, ball: true },
+    // .50 AE from a 6 inch barrel: a big charge of slow pistol powder still burning at the muzzle, a ball of flame and
+    // afterburn bigger than a rifle's from the side, sparks of unburnt powder. A .22 LR from an 18.5 inch barrel has burnt
+    // nearly all its few grains: a pinprick, hardly any light or smoke (estimates from photographs, as above).
+    deagle: { long: 0.24, high: 0.17, face: 0.19, back: 0.005, core: 0.03, knot: 0.08, haze: 0.07, light: 55, puffs: 5, sparks: 10 },
+    r22: { long: 0.03, high: 0.018, face: 0.018, back: 0.003, core: 0.0035, knot: 0, haze: 0, light: 1.5, puffs: 1, sparks: 0 },
 };
 const VARIANTS = 4, ROW = 128, ATLAS = 512;   // four takes a gun, each a row of the atlas: the end-on view, then the side
 const shotDice = seeded(20261113);

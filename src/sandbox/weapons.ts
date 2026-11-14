@@ -28,7 +28,10 @@ const FRAGMENTS = 1000;      // an M67's body breaks into roughly this many that
 const FILM = 0.00003, SMEAR = 0.00001;
 const DRIES = 300;          // seconds for blood on the blade to go from wet red to dull brown (a thin film: an estimate)
 
-type Gun = Missile & { rounds: number; every: number; pellets: number; spread: number; kick: number; sound: string; reload: number; speed: number; auto?: boolean };
+type Gun = Missile & { rounds: number; every: number; pellets: number; spread: number; kick: number; sound: string; reload: number; speed: number; auto?: boolean;
+    skips?: number };
+// The handguns' slides, and how far each runs back (m): a 9 mm service pistol's about 24 mm, the Desert Eagle's about 32.
+const SLIDE: Record<string, number> = { pistol: 0.024, deagle: 0.032 };
 
 // How each thing is held, in the eye's own frame (x right, y up, z ahead). `at` is where its grip is at rest: low and to
 // the right, a long gun's stock back in the shoulder. A blade or the bat is turned `turn` (x pitch, y yaw, z roll); a
@@ -69,6 +72,26 @@ export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip;
     bandage: { at: [0.1, -0.13, 0.4], turn: [0.3, 0, 0],
         right: { hold: 'ball', at: [0, 0, 0], along: [-1, 0, 0], back: [0, 1, 0] },
         left: { hold: 'pinch', at: [-0.03, -0.065, -0.025], along: [0, 1, 0], back: [1, 0, 0] } },
+    // A .50 AE Desert Eagle weighs 2 kg and has about four times a 9 mm service pistol's free recoil (some 25 J against 6):
+    // it drives back and flips up far more, held out the same way in two hands.
+    deagle: { at: [0.07, -0.12, 0.5], kick: [0.06, 0.45],
+        right: { hold: 'grip', at: [0, -0.005, -0.005], along: [0, -0.95, -0.31], back: [0, -0.31, 0.95] },
+        left: { hold: 'support', at: [-0.024, -0.022, 0.008], along: [0.1, -0.95, -0.3], back: [0.45, -0.25, 0.85] } },
+    // A 10/22: a straight wrist (no pistol grip), the other hand under the forend. Its .22 LR recoils by a fraction of a
+    // joule in a 2.3 kg rifle: hardly a nudge.
+    r22: { at: [0.15, -0.165, 0.33], kick: [0.006, 0.012],
+        right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
+        left: { hold: 'wrap', at: [0, -0.02, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
+    // The tools in both hands (the hammer in one), carried as the bat is: the shovel's blade forward and low, the
+    // sledgehammer's head up by the shoulder.
+    shovel: { at: [0.17, -0.2, 0.36], turn: [0.35, -0.3, 0.2],
+        right: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] },
+        left: { hold: 'handle', at: [0, 0, 0.32], along: [0, 0, -1], back: [0, -1, 0] } },
+    sledge: { at: [0.2, -0.26, 0.4], turn: [-1.0, -0.35, 0.3],
+        right: { hold: 'handle', at: [0, 0, 0.12], along: [0, 0, -1], back: [0, -1, 0] },
+        left: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] } },
+    hammer: { at: [0.17, -0.19, 0.42], turn: [-1.05, -0.2, -0.1],
+        right: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] } },
     medkit: { at: [0, -0.2, 0.5], turn: [0.35, 0.1, 0],
         right: { hold: 'wrap', at: [0.12, 0, 0], along: [0, -1, 0], back: [0, 0, 1] },
         left: { hold: 'wrap', at: [-0.12, 0, 0], along: [0, -1, 0], back: [0, 0, 1] } },
@@ -78,6 +101,7 @@ export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip;
 // is driven home by 0.09 s (when _swing's stab lands: a quarter of the way) and held there until it comes out at three
 // quarters; a cut or a blow comes in from the right and sweeps across to the left over the middle of its time, as the
 // lines that find what it meets do (_sweep), the edge leading.
+const DOWN = [[0.3, 0.1, 0.12, 0.2, -2.1, -0.15, 0.1], [0.5, 0.04, -0.12, 0.5, 0.35, -0.05, 0.05], [0.72, 0.04, -0.16, 0.48, 0.45, -0.05, 0.05]];
 export const SWINGS: Record<string, Record<string, number[][]>> = {
     knife: {
         stab: [[0.08, 0.21, -0.21, 0.33, -0.3, -0.15, -0.1], [0.26, 0.06, -0.1, 0.6, -0.08, -0.1, -0.1], [0.72, 0.06, -0.1, 0.62, -0.08, -0.1, -0.1]],
@@ -90,12 +114,27 @@ export const SWINGS: Record<string, Record<string, number[][]>> = {
     bat: {
         blow: [[0.2, 0.32, -0.12, 0.16, -1.5, 0.5, 0.9], [0.47, 0.06, -0.18, 0.4, -0.15, 0, -1.4], [0.75, -0.24, -0.22, 0.3, 0.1, -1.1, -1.5]],
     },
+    // The tools also come down from overhead (`down`): raised up and back, brought down onto what is ahead, landing at
+    // half way (_sweep), and held there a moment.
+    shovel: {
+        blow: [[0.2, 0.32, -0.1, 0.18, -1.2, 0.6, 0.6], [0.47, 0.06, -0.16, 0.42, -0.1, 0, -1.4], [0.75, -0.24, -0.2, 0.3, 0.1, -1.1, -1.5]],
+        down: DOWN,
+    },
+    sledge: {
+        blow: [[0.22, 0.32, -0.08, 0.14, -1.6, 0.5, 0.9], [0.47, 0.06, -0.18, 0.4, -0.15, 0, -1.4], [0.75, -0.24, -0.24, 0.3, 0.1, -1.1, -1.5]],
+        down: DOWN,
+    },
+    hammer: {
+        blow: [[0.2, 0.3, -0.1, 0.2, -1.6, 0.5, 0.6], [0.47, 0.05, -0.15, 0.45, -0.15, 0, -1.4], [0.75, -0.2, -0.2, 0.32, 0.1, -1.0, -1.5]],
+        down: DOWN,
+    },
 };
 
 // Parts of a model that move in the hands, by their glTF node names: a pistol's slide and magazine, the M4's magazine
 // and charging handle, the bolt rifle's bolt, the grenade's pin.
 const PARTS: Record<string, Record<string, RegExp>> = { pistol: { slide: /slide/, mag: /magazine/ }, m4: { mag: /^Magazine$/, handle: /^Charging_Handle$/ }, rifle: { bolt: /bolt_[ab]$/ },
-    grenade: { pin: /^pin$/ }, ak: { mag: /^mag$/ }, shotgun: { barrels: /^barrels$/ } };
+    grenade: { pin: /^pin$/ }, ak: { mag: /^mag$/ }, shotgun: { barrels: /^barrels$/ },
+    deagle: { slide: /^(Slide|Bolt|Ironsights Back|Safety|Safety Screw)$/, mag: /^(Magazine|Bullets)$/ }, r22: { mag: /^mag$/, handle: /^handle$/ } };
 // Parts that two models have only as loose pieces of one mesh, picked out by their bounds in the model's own (glTF)
 // frame: the AK's magazine (the one piece that hangs 10 cm below the bore line) and the shotgun's barrels with their
 // forend (everything ahead of the hinge), which break open.
@@ -121,6 +160,37 @@ export const ARMS = [
     // 5.56x45 M855 from a 14.5 inch barrel: 4 g at 900 m/s, about 1.6 kJ, 800 a minute. Fast enough to break up inside.
     { key: 'm4', name: 'M4A1', kind: 'gun', gun: { energy: 1620, mass: 0.004, speed: 900, calibre: 0.0057, channel: 0.013, soft: 22, hard: 130, rounds: 30, every: 0.075,
         pellets: 1, spread: 0.0025, kick: 0.016, sound: 'shot-m4', reload: 2.3, auto: true } as Gun },
+    // .50 AE from the Desert Eagle's 6 inch barrel: a 300 grain (19.4 g) hollow point at about 1,450 ft/s (442 m/s), about
+    // 1.9 kJ, seven in the magazine. A half-inch bullet that opens to near an inch: the widest handgun wound channel there
+    // is, but a handgun's (no temporary cavity worth the name below 600 m/s, dev/research/wounds.md), and it goes some
+    // 40 cm into soft tissue. Fired as fast as the recoil lets the sights come back down, about 0.3 s.
+    { key: 'deagle', name: 'Desert Eagle .50', kind: 'gun', gun: { energy: 1900, mass: 0.0194, speed: 442, calibre: 0.0127, channel: 0.012, soft: 42, hard: 220,
+        rounds: 7, every: 0.3, pellets: 1, spread: 0.004, kick: 0.09, sound: 'shot-deagle', reload: 2.0 } as Gun },
+    // .22 LR from an 18.5 inch rifle barrel: a 40 grain (2.6 g) round-nose lead bullet at about 1,200 ft/s (366 m/s),
+    // about 170 J; ten in the rotary magazine. 5.7 mm across, a small hole (dev/research/wounds.md: ~5 mm entries, taken
+    // for ice-pick wounds), a narrow track, 30-40 cm of soft tissue; often stopped in the skull. Soft lead at a glancing
+    // angle skips off concrete (`skips`, _shot).
+    { key: 'r22', name: '.22 rifle (10/22)', kind: 'gun', gun: { energy: 170, mass: 0.0026, speed: 366, calibre: 0.0057, channel: 0.003, soft: 5, hard: 90,
+        rounds: 10, every: 0.12, pellets: 1, spread: 0.0015, kick: 0.004, sound: 'shot-r22', reload: 2.4, skips: 0.26 } as Gun },
+    // The tools. A man's full two-handed swing puts about 110 J into a bat (0.79 kg at 15.5 m/s, Guo26 in
+    // dev/research/blunt-trauma.md sec. 9); taken as about the same work into anything he can swing as fast as his body
+    // allows, a heavier head comes round slower: v = sqrt(2E/m). Brought down from overhead (`down`) it also falls, its
+    // head dropping about 1.2 m (m g h more), and is swung harder.
+    // Shovel: about 2 kg, some 1.5 kg of it at the blade end: 12 m/s, 110 J, the flat of the blade (a broad stiff face,
+    // 'flat') or, from overhead, its edge ('edge': 2 cm2, the bone under it fractured and the skin split as a chop wound).
+    { key: 'shovel', name: 'Shovel', kind: 'blunt', reach: 1.5, swing: 0.62, mass: 1.5, speed: 12, tool: 'flat',
+        down: { tool: 'edge', speed: 13, cut: 0.02 }, sound: 'hit-shovel' },
+    // Sledgehammer, a 10 lb (4.5 kg) head on a 90 cm handle: about 5 kg at the head with the handle's share, so 6.6 m/s
+    // and 110 J swung level; from overhead 9 m/s, about 200 J (110 + 5 kg x 9.8 x 1.2 m = 170 J, and harder). Slow: a
+    // swing takes most of a second. Its flat face crushes what it lands on: skull fracture takes 14-68 J (Yoganandan 1995).
+    { key: 'sledge', name: 'Sledgehammer', kind: 'blunt', reach: 1.45, swing: 0.95, mass: 5, speed: 6.6, tool: 'flat',
+        down: { speed: 9 }, sound: 'hit-sledge', whoosh: 'swing-heavy' },
+    // Claw hammer, a 20 oz (0.57 kg) head: about 0.65 kg at 11 m/s in one hand, 39 J on a 1 inch face ('hammer'): the
+    // round depressed skull fracture with a bone plug that hammer faces leave (Goots18, 9 of 12 impacts). Its claw, from
+    // overhead, goes in 3-4 cm as two tines a couple of centimetres apart (a puncture, pierce).
+    { key: 'hammer', name: 'Claw hammer', kind: 'blunt', reach: 0.95, swing: 0.4, mass: 0.65, speed: 11, tool: 'hammer',
+        down: { claw: { energy: 39, mass: 0.65, calibre: 0.016, channel: 0.004, soft: 3, hard: 60, reach: 0.04, blade: true, edges: 2, taper: 0.03 } as Missile },
+        sound: 'hit-hammer' },
     { key: 'grenade', name: 'M67 grenade', kind: 'grenade' },
     { key: 'hands', name: 'Hands', kind: 'grab' },
     { key: 'throw', name: 'Throw things', kind: 'throw' },
@@ -134,7 +204,7 @@ export const ARMS = [
 // thumbed in (where each press is deepest), the bolt closed.
 const MAGAZINE = (charge: string): [number, string][] => [[0.13, 'mag-out'], [0.68, 'mag-in'], [0.77, charge]];
 const RELOADS: Record<string, [number, string][]> = {
-    pistol: MAGAZINE('rack'), ak: MAGAZINE('charge'), m4: MAGAZINE('charge'),
+    pistol: MAGAZINE('rack'), deagle: MAGAZINE('rack'), ak: MAGAZINE('charge'), m4: MAGAZINE('charge'), r22: MAGAZINE('charge'),
     shotgun: [[0.13, 'break-open'], [0.55, 'shell-in'], [0.62, 'shell-in'], [0.78, 'break-close']],
     rifle: [[0.1, 'bolt-open'], ...[0, 1, 2, 3, 4].map((k): [number, string] => [0.34 + 0.38 * (k + 0.5) / 5, 'round-in']), [0.78, 'bolt-close']],
 };
@@ -410,6 +480,7 @@ export class Weapons {
         if (arm.kind === 'gun' && button === 0) this._fire();
         else if (arm.kind === 'blade') this._swing(button === 0 ? 'stab' : 'cut');
         else if (arm.kind === 'blunt' && button === 0) this._swing('blow');
+        else if (arm.kind === 'blunt' && button === 2 && arm.down) this._swing('down');
         else if (arm.kind === 'grab' && button === 0) this._take();
         else if (arm.kind === 'grab' && button === 2) this._punch();
         else if (arm.kind === 'throw') button === 0 ? this._throw() : (this.throwKind = (this.throwKind + 1) % THROWN.length);
@@ -493,8 +564,17 @@ export class Weapons {
             const wall = this._wall(origin, dir);
             const person = this._person(origin, dir, wall ? wall.distance : 200);
             if (!person) {
-                if (wall) this._hole(wall.point, wall.normal, m.calibre);
-                return;
+                if (!wall) return;
+                this._hole(wall.point, wall.normal, m.calibre);
+                // Soft lead meeting concrete at a glancing angle skips off it, leaving lower than it came and slower
+                // (Haag, Shooting Incident Reconstruction: ricochet angles are smaller than incidence angles). Below
+                // `skips` (radians) it goes on; the angle and the 40% of its energy it keeps are estimates.
+                const into = -V3.Dot(dir, wall.normal);
+                if (!m.skips || into <= 0 || Math.asin(Math.min(1, into)) > m.skips) return;
+                dir = dir.add(wall.normal.scale(into * 1.5)).normalize();
+                origin = wall.point.add(wall.normal.scale(0.005));
+                energy *= 0.4;
+                continue;
             }
             const res = pierce(person.npc, origin, dir, { ...m, energy }, Math.min(3, (wall?.distance ?? 200) - person.t + 2) + person.t);
             if (!res.hit) { origin = origin.add(dir.scale(person.t + 0.3)); continue; }
@@ -540,7 +620,8 @@ export class Weapons {
     _eject(anchors, key) {
         const { scene, sound } = this.world;
         const at = V3.TransformCoordinates(anchors.ejection, this.hand.getWorldMatrix());
-        const long = { rifle: [0.051, 0.012], ak: [0.039, 0.0113], m4: [0.045, 0.0096] }[key] ?? [0.019, 0.0098];
+        // (.50 AE: 32.6 mm long, 13.9 mm across its base; .22 LR: 15.6 mm by 5.7 mm)
+        const long = { rifle: [0.051, 0.012], ak: [0.039, 0.0113], m4: [0.045, 0.0096], deagle: [0.0326, 0.0139], r22: [0.0156, 0.0057] }[key] ?? [0.019, 0.0098];
         const brass = BABYLON.MeshBuilder.CreateCylinder('casing', { height: long[0], diameter: long[1], tessellation: 10 }, scene);
         brass.material = scene.getMaterialByName('brass') ?? Object.assign(new BABYLON.PBRMaterial('brass', scene), { albedoColor: new BABYLON.Color3(0.78, 0.56, 0.24), metallic: 1, roughness: 0.3 });
         brass.position.copyFrom(at);
@@ -565,7 +646,7 @@ export class Weapons {
         const arm = this.arm;
         this.busy = how === 'stab' ? 0.35 : arm.swing;
         this.action = { how, t: 0, length: this.busy, hits: new Map(), landed: false };
-        this.world.sound?.shot('swing', { gain: how === 'stab' ? 0.5 : 0.9, rate: arm.key === 'knife' ? 1.25 : 1 });
+        this.world.sound?.shot(arm.whoosh ?? 'swing', { gain: how === 'stab' ? 0.5 : 0.9, rate: arm.key === 'knife' ? 1.25 : arm.key === 'hammer' ? 1.2 : 1 });
         if (how === 'stab') {
             const { camera } = this.world;
             const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
@@ -590,22 +671,38 @@ export class Weapons {
         a.t += dt;
         const p = a.t / a.length;
         if (p < 0.2 || p > 0.75 || a.how === 'stab') return;
+        // From overhead it lands only as it comes down onto the line of sight, half way through.
+        if (a.how === 'down' && (p < 0.45 || p > 0.6)) return;
         const { camera } = this.world;
         const eye = camera.globalPosition.clone();
         const turn = 0.75 - ((p - 0.2) / 0.55) * 1.5;
-        const dir = V3.TransformNormal(new V3(Math.sin(turn), -0.12 + (p - 0.2) * 0.35, Math.cos(turn)).normalize(), camera.getWorldMatrix());
+        const dir = a.how === 'down' ? camera.getDirection(V3.Forward())
+            : V3.TransformNormal(new V3(Math.sin(turn), -0.12 + (p - 0.2) * 0.35, Math.cos(turn)).normalize(), camera.getWorldMatrix());
         const person = this._person(eye, dir, arm.reach);
         if (!person) return;
         const npc = person.npc;
-        if (a.how === 'blow') {
+        if (a.how === 'blow' || a.how === 'down') {
             if (a.landed) return;
             const skin = npc.surface(eye, dir, arm.reach).find((h) => h.kind === 'skin' || h.kind === 'cloth');
             if (!skin) return;
             a.landed = true;
-            // The bat moves across the eye's line, and on into them.
-            const across = V3.TransformNormal(new V3(-1, 0, 0.35).normalize(), camera.getWorldMatrix());
-            blow(npc, skin.point, across, arm.mass, arm.speed);
-            this.world.sound?.shot('blunt', { at: skin.point.asArray() });
+            // The bat moves across the eye's line, and on into them; a blow from overhead comes down and forward.
+            const across = V3.TransformNormal(new V3(a.how === 'down' ? 0 : -1, a.how === 'down' ? -0.8 : 0, a.how === 'down' ? 0.6 : 0.35).normalize(), camera.getWorldMatrix());
+            const down = a.how === 'down' ? arm.down : null;
+            if (down?.claw) {
+                // The claw's tines driven in (a puncture), along the way it comes down.
+                const res = pierce(npc, skin.point.subtract(across.scale(0.05)), across, { ...down.claw, across: camera.getDirection(V3.Right()) }, 0.05 + down.claw.reach);
+                if (res.hit) this.world.sound?.shot('stab', { at: skin.point.asArray() });
+            } else {
+                blow(npc, skin.point, across, arm.mass, down?.speed ?? arm.speed, down?.tool ?? arm.tool);
+                this.world.sound?.shot(arm.sound ?? 'blunt', { at: skin.point.asArray() });
+                // The shovel's edge also splits the skin over what it broke: a chop, drawn as a short cut across it.
+                if (down?.cut) {
+                    const res = pierce(npc, skin.point.subtract(across.scale(0.05)), across, { energy: 60, mass: 0.3, calibre: 0.004, channel: down.cut * 0.5, soft: 0.8, hard: 60,
+                        reach: down.cut, blade: true, slash: true }, 0.05 + down.cut);
+                    if (res.hit && res.enter) a.hits.set(npc, [res.enter]);
+                }
+            }
             this.action.t = Math.max(this.action.t, this.action.length * 0.75);
             return;
         }
@@ -882,7 +979,7 @@ export class Weapons {
             this._sweep(dt);
             if (this.action.t >= this.action.length) {
                 const sweep = this.world.camera.getDirection(V3.Left());
-                for (const [npc, hits] of this.action.hits) npc.slash(hits, this.arm.cut ?? 0.02, sweep);
+                for (const [npc, hits] of this.action.hits) npc.slash(hits, this.arm.cut ?? this.arm.down?.cut ?? 0.02, sweep);
                 this.action = null;
             }
         }
@@ -1005,7 +1102,7 @@ export class Weapons {
         pos.y += this.recoil * back * 0.3;
         turn.x -= this.recoil * rise;
         const parts = this.parts.get(key);
-        if (key === 'pistol') this._move(parts?.slide, new V3(0, 0, -0.024 * Math.max(0, this.recoil * 2 - 1)));
+        if (SLIDE[key]) this._move(parts?.slide, new V3(0, 0, -SLIDE[key] * Math.max(0, this.recoil * 2 - 1)));
         if (this.arm.gun && this.reloading > 0) this._reloading(key, 1 - this.reloading / this.arm.gun.reload, pos, turn, hold, parts);
         else if (key === 'rifle' && this.since < 0.9) this._cycle(this.since, pos, turn, hold, parts);
         if (key === 'grenade') this._lobbing(this.busy > 0 ? 0.9 - this.busy : -1, pos, base, hold, parts);
@@ -1054,7 +1151,7 @@ export class Weapons {
         // (Turned about the grip: a long gun pitched down there would bring its stock up into the face. The shotgun's
         // barrels drop; the gun itself only comes in and down a little.)
         pos.addInPlace(new V3(-0.05, shotgun ? -0.03 : 0.04, -0.05).scale(tip));
-        turn.z += (shotgun ? 0.2 : key === 'pistol' ? 0.45 : 0.5) * tip;
+        turn.z += (shotgun ? 0.2 : SLIDE[key] ? 0.45 : 0.5) * tip;
         turn.x += (shotgun ? 0.1 : -0.15) * tip;
         const mag = parts?.mag, below = [-0.06, -0.4, -0.12];
         const well = mag ? [(mag.min.x + mag.max.x) / 2, mag.min.y + 0.03, (mag.min.z + mag.max.z) / 2]
@@ -1080,7 +1177,7 @@ export class Weapons {
         }
         // Out: drawn down and away by the hand (from a pistol it falls free), the hand gone below the picture for a full
         // one, up and into the well, pushed home.
-        const drop = key === 'pistol', low = [0, -0.42, -0.1], drawn = [0, -0.12, 0.02];
+        const drop = !!SLIDE[key], low = [0, -0.42, -0.1], drawn = [0, -0.12, 0.02];
         const mix = (x: number[], y: number[], s: number) => x.map((v, i) => lerp(v, y[i], s));
         const seat = mix(mix(low, [0, -0.06, 0], span(u, 0.42, 0.62)), [0, 0, 0], span(u, 0.62, 0.7));
         const fell = Math.max(0, u - 0.1) * this.arm.gun.reload;
@@ -1090,15 +1187,16 @@ export class Weapons {
             : blend(support, onMag(out ?? low), span(u, 0, 0.12));
         // Then the slide (pistol: over the top, from behind) or the charging handle (rifles) pulled back and let go.
         const pull = span(u, 0.76, 0.82) - span(u, 0.82, 0.84);
-        if (key === 'pistol') {
+        if (SLIDE[key]) {
             const slide = parts?.slide, grab: Grip = { hold: 'wrap', at: [0, slide ? slide.max.y - 0.012 : 0.06, slide ? slide.min.z + 0.03 : -0.02], along: [0, 0, 1], back: [1, -0.3, 0] };
-            this._move(slide, new V3(0, 0, -0.024 * pull));
+            this._move(slide, new V3(0, 0, -SLIDE[key] * pull));
             hold.left = blend(blend(hold.left, grab, span(u, 0.7, 0.76)), support, span(u, 0.86, 0.98));
-            hold.left = { ...hold.left, at: hold.left.at.map((v, i) => v - (i === 2 ? 0.024 * pull * span(u, 0.7, 0.76) : 0)) };
+            hold.left = { ...hold.left, at: hold.left.at.map((v, i) => v - (i === 2 ? SLIDE[key] * pull * span(u, 0.7, 0.76) : 0)) };
         } else {
             const handle = parts?.handle, at = handle ? [(handle.min.x + handle.max.x) / 2, handle.max.y, handle.max.z] : [0.03, 0.09, 0.08];
-            const grab: Grip = { hold: 'pinch', at: at.map((v, i) => v - (i === 2 ? 0.07 * pull : 0)), along: [0, -0.5, -0.85], back: [0.3, 0.2, 0.93] };
-            this._move(handle, new V3(0, 0, -0.07 * pull));
+            const travel = key === 'r22' ? 0.038 : 0.07;    // a 10/22's bolt comes back about 1.5 in
+            const grab: Grip = { hold: 'pinch', at: at.map((v, i) => v - (i === 2 ? travel * pull : 0)), along: [0, -0.5, -0.85], back: [0.3, 0.2, 0.93] };
+            this._move(handle, new V3(0, 0, -travel * pull));
             hold.left = blend(blend(hold.left, grab, span(u, 0.7, 0.76)), support, span(u, 0.86, 1));
         }
         this._move(mag, out ? V3.FromArray(out) : undefined, undefined, !!out);
