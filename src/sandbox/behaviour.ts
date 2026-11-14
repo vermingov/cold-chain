@@ -1092,7 +1092,19 @@ export class Behaviour {
             this.t = 0;
             return pose;
         }
-        if (this.t > time) return this._fail();
+        if (this.t > time) {
+            // Nearly up off the front foot, both feet down, they stand and let the balance have it (it steps or it goes
+            // over): failed there, the muscles let go all at once and a body all but standing dropped to the floor in a
+            // second, and got up and dropped again, up and down.
+            const feet = ['footL', 'footR'].map((k) => rd.byName.get(k));
+            if (this.mode === 'rise' && pelvis.node.position.y - this.floor > (h.kneel.pelvis + h.stand.pelvis) / 2 && feet.every((foot) => rd.lowest(foot) < this.floor + TOUCH)) {
+                this.tries = 0;
+                this._go('stand');
+                this.settle = 2.5;
+                return this._stand(dt);
+            }
+            return this._fail();
+        }
         // The trunk lifted toward the stage's height and turned toward its lean, pushing down through the limbs.
         const want = yaw.multiply(Q.RotationAxis(BABYLON.Axis.X, pitch * RAD));
         const weight = rd.mass * G;
