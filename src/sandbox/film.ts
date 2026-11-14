@@ -15,6 +15,9 @@ import { GLSL_BLOOD, sendCanvasPart } from './fluid.ts';
 const SIZE = 2048;
 const MOST_MM = 0.6;            // the thickest film the sheet holds
 const DRIES = 420;              // seconds for a film's wetness to fall to a third
+// The sheet in tiles, each sent or dried on its own: streaks on an arm and a leg are far apart on the sheet, and the one
+// box round both was most of it, megabytes read back and sent (14 ms a frame, the F2 profiler showed).
+const TILE = 128, TILES = SIZE / TILE;
 const SENDS = 0.12;             // seconds at least between sending the sheet to the card
 
 // The sheet is painted the way up the card reads it (row 0 is v = 0), so that a part of it can be sent as it is.
@@ -26,8 +29,10 @@ export class Film {
     declare dried: number;
     declare painted: number;
     declare lines: Map<string, number[]>;
-    declare dirty: number[] | null;
-    declare used: number[] | null;
+    declare dirty: Uint8Array;           // tiles painted since last sent
+    declare ever: Uint8Array;            // tiles ever painted (what dries)
+    declare anyDirty: boolean;
+    declare anyEver: boolean;
 
     constructor(scene: BABYLON.Scene, name: string) {
         // Kept in memory rather than on the card: what changed is read back off it to be sent (sendCanvasPart), and a canvas
@@ -47,18 +52,18 @@ export class Film {
         this.dried = 0;
         this.painted = -Infinity;
         this.lines = new Map();
-        this.dirty = null;
-        this.used = null;
+        this.dirty = new Uint8Array(TILES * TILES);
+        this.ever = new Uint8Array(TILES * TILES);
+        this.anyDirty = this.anyEver = false;
     }
 
     // The part of the sheet painted since it was last sent, and all of it ever painted (which is what dries).
     _touch(x0: number, y0: number, x1: number, y1: number) {
         x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0)); x1 = Math.min(SIZE, Math.ceil(x1)); y1 = Math.min(SIZE, Math.ceil(y1));
         if (x1 <= x0 || y1 <= y0) return;
-        for (const k of ['dirty', 'used']) {
-            const r = this[k];
-            this[k] = r ? [Math.min(r[0], x0), Math.min(r[1], y0), Math.max(r[2], x1), Math.max(r[3], y1)] : [x0, y0, x1, y1];
-        }
+        for (let ty = Math.floor(y0 / TILE); ty <= Math.floor((y1 - 1) / TILE); ty++)
+            for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x1 - 1) / TILE); tx++) this.dirty[ty * TILES + tx] = this.ever[ty * TILES + tx] = 1;
+        this.anyDirty = this.anyEver = true;
         this.painted = this.clock;
     }
 
@@ -123,19 +128,29 @@ export class Film {
             g.globalCompositeOperation = 'source-over';
             this.lines.clear();
         }
-        if (this.used && this.clock - this.dried > 8 && this.clock - this.painted < DRIES * 3) {
+        if (this.anyEver && this.clock - this.dried > 8 && this.clock - this.painted < DRIES * 3) {
             const k = Math.round(255 * Math.exp(-(this.clock - this.dried) / DRIES));
             this.dried = this.clock;
-            const [x0, y0, x1, y1] = this.used;
             this.g.globalCompositeOperation = 'multiply';
             this.g.fillStyle = `rgb(255,${k},255)`;
-            this.g.fillRect(x0, y0, x1 - x0, y1 - y0);
+            for (let t = 0; t < this.ever.length; t++) if (this.ever[t]) {
+                this.g.fillRect((t % TILES) * TILE, Math.floor(t / TILES) * TILE, TILE, TILE);
+                this.dirty[t] = 1;
+            }
             this.g.globalCompositeOperation = 'source-over';
-            this.dirty = this.dirty ? [Math.min(this.dirty[0], x0), Math.min(this.dirty[1], y0), Math.max(this.dirty[2], x1), Math.max(this.dirty[3], y1)] : [...this.used];
+            this.anyDirty = true;
         }
-        if (this.dirty && this.clock - this.sent > SENDS) {
-            sendCanvasPart(this.texture, this.g.canvas as HTMLCanvasElement, this.dirty);
-            this.dirty = null;
+        if (this.anyDirty && this.clock - this.sent > SENDS) {
+            // Each row's runs of changed tiles, one send a run.
+            const canvas = this.g.canvas as HTMLCanvasElement, d = this.dirty;
+            for (let ty = 0; ty < TILES; ty++) for (let tx = 0; tx < TILES;) {
+                if (!d[ty * TILES + tx]) { tx++; continue; }
+                let end = tx;
+                while (end < TILES && d[ty * TILES + end]) d[ty * TILES + end++] = 0;
+                sendCanvasPart(this.texture, canvas, [tx * TILE, ty * TILE, end * TILE, (ty + 1) * TILE]);
+                tx = end;
+            }
+            this.anyDirty = false;
             this.sent = this.clock;
         }
     }
