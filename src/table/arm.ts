@@ -240,7 +240,9 @@ export class Arm {
     // it looks, their shoulder where a shoulder would be.
     _stand() {
         const person = this.person, ahead = this.camera.getDirection(V3.Forward());
-        person.apply(this.fingers, { ground: null });
+        // Posed again only when the fingers change: the whole skeleton goes through apply(), and reach() sets every bone
+        // it moves (the arm's four) outright, so from one frame to the next nothing else would differ.
+        if (person.pose !== this.fingers) person.apply(this.fingers, { ground: null });
         person.root.rotation.y = Math.atan2(ahead.x, ahead.z);
         person.root.position.copyFrom(this._shoulder().subtract(this._out(this.bones.upper.head)));
     }

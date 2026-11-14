@@ -88,6 +88,12 @@ function along(pos, v, a, b) {
 // written down here: a sign typed by hand once let every knee bend forward. `neutral` is where a joint's range is
 // measured from when that is not the rest pose: the shoulder's from the arm hanging, not held out as the model stands.
 
+// The ranges are the active ranges of a young adult (AAOS 1965; Norkin and White, Measurement of Joint Motion): elbow 0-145
+// and a few degrees past straight, the forearm turning 80 either way (45 of it given to the elbow's joint and 35 to the
+// wrist's, so neither runs near the 90 degrees at which a joint's middle angle stops meaning anything), knee 0-140 and
+// 5 past straight with almost no give sideways, hip 120 forward and 20 back, 45 out and 30 in, ankle 20 up and 50 down,
+// the neck 50 forward and 60 back, the lower back 45 forward, 15 back, 15 to the side and 10 round, the upper back 35, 15,
+// 20 and 30.
 const J = (parent, hinge, bend, side, twist, muscle, neutral = []) => ({ parent, hinge, bend, side, twist, muscle, neutral });
 const LOCK = (parent, hinge) => ({ parent, hinge, lock: true });
 
@@ -97,20 +103,20 @@ const SEGMENTS = (s) => [
     [`upperarm${s}`, `upperarm01.${s}`, 0.014, 'capsule', J('chest', 'x', [`shoulderFlex${s}`, -60, 175], [`shoulderAbduct${s}`, -50, 165], 85, 110,
         [[`shoulderAbduct${s}`, -36], [`shoulderFlex${s}`, -26]])],
     [`upperarm2${s}`, midOf('upperarm01', s), 0.013, 'capsule', LOCK(`upperarm${s}`, 'x')],
-    [`forearm${s}`, `lowerarm01.${s}`, 0.009, 'capsule', J(`upperarm2${s}`, 'elbow', [`elbow${s}`, -6, 150], [null, -5, 5], 15, 80)],
+    [`forearm${s}`, `lowerarm01.${s}`, 0.009, 'capsule', J(`upperarm2${s}`, 'elbow', [`elbow${s}`, -5, 145], [null, -3, 3], 45, 80)],
     [`forearm2${s}`, midOf('lowerarm01', s), 0.008, 'capsule', LOCK(`forearm${s}`, 'elbow')],
-    [`hand${s}`, `wrist.${s}`, 0.006, 'box', J(`forearm2${s}`, 'elbow', [`wrist${s}`, -75, 75], [null, -25, 25], 70, 25)],
-    [`thigh${s}`, `upperleg01.${s}`, 0.06, 'capsule', J('pelvis', 'x', [`hipFlex${s}`, -30, 125], [`hipAbduct${s}`, -30, 50], 40, 320)],
+    [`hand${s}`, `wrist.${s}`, 0.006, 'box', J(`forearm2${s}`, 'elbow', [`wrist${s}`, -75, 75], [null, -25, 25], 35, 25)],
+    [`thigh${s}`, `upperleg01.${s}`, 0.06, 'capsule', J('pelvis', 'x', [`hipFlex${s}`, -20, 120], [`hipAbduct${s}`, -30, 45], 40, 320)],
     [`thigh2${s}`, midOf('upperleg01', s), 0.05, 'capsule', LOCK(`thigh${s}`, 'x')],
-    [`shin${s}`, `lowerleg01.${s}`, 0.023, 'capsule', J(`thigh2${s}`, 'x', [`knee${s}`, -6, 150], [null, -4, 4], 8, 280)],
+    [`shin${s}`, `lowerleg01.${s}`, 0.023, 'capsule', J(`thigh2${s}`, 'x', [`knee${s}`, -5, 140], [null, -3, 3], 8, 280)],
     [`shin2${s}`, midOf('lowerleg01', s), 0.02, 'capsule', LOCK(`shin${s}`, 'x')],
-    [`foot${s}`, `foot.${s}`, 0.014, 'box', J(`shin2${s}`, 'x', [`ankle${s}`, -50, 25], [null, -10, 10], 22, 200)],
+    [`foot${s}`, `foot.${s}`, 0.014, 'box', J(`shin2${s}`, 'x', [`ankle${s}`, -50, 20], [null, -10, 10], 15, 200)],
 ];
 const TRUNK_SEGMENTS = [
     ['pelvis', 'root', 0.14, 'box', null],
-    ['belly', 'spine03', 0.12, 'box', J('pelvis', 'x', ['spineFlex', -25, 45], ['spineSide', -25, 25], 20, 300)],
-    ['chest', 'spine01', 0.22, 'box', J('belly', 'x', ['spineFlex', -20, 40], ['spineSide', -25, 25], 30, 260)],
-    ['head', 'neck01', 0.08, 'sphere', J('chest', 'x', ['neckFlex', -55, 70], ['headTilt', -40, 40], 75, 60)],
+    ['belly', 'spine03', 0.12, 'box', J('pelvis', 'x', ['spineFlex', -15, 45], ['spineSide', -15, 15], 10, 300)],
+    ['chest', 'spine01', 0.22, 'box', J('belly', 'x', ['spineFlex', -15, 35], ['spineSide', -20, 20], 30, 260)],
+    ['head', 'neck01', 0.08, 'sphere', J('chest', 'x', ['neckFlex', -60, 50], ['headTilt', -40, 40], 75, 60)],
 ];
 const ALL: any[] = [...TRUNK_SEGMENTS, ...SEGMENTS('L'), ...SEGMENTS('R')];
 const TRUNK_NAMES = new Set(TRUNK_SEGMENTS.map(([name]) => name));

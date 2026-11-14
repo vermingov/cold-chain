@@ -280,10 +280,12 @@ float wallGloss = 0.0;
     }
     vec3 wall = toLinearSpace(c);
     // Blood: a film over all of it, thick in the muscle and pooling toward the bottom, thin on the fat in patches.
-    float patch = mix(0.5, wallNoise(p * 110.0 + 3.0), wallFade(110.0));
-    float mm = 0.03 + 0.25 * oozes * (0.4 + patch) + 0.45 * smoothstep(0.55, 1.0, vWallD / max(deep, 1.0)) * patch + (1.0 - smoothstep(0.25, 0.42, lob)) * 0.12 * step(vWallA.x, d) * step(d, vWallA.y);
+    float blotch = mix(0.5, wallNoise(p * 110.0 + 3.0), wallFade(110.0));
+    // (Millimetres of blood: a tenth of one is already nearly opaque red (fluid.ts), so the film is thin where the layers
+    // must still read, and thick only where it collects at the bottom.)
+    float mm = 0.006 + 0.035 * oozes * (0.3 + blotch) + 0.3 * smoothstep(0.75, 1.0, vWallD / max(deep, 1.0)) * blotch + (1.0 - smoothstep(0.25, 0.42, lob)) * 0.05 * step(vWallA.x, d) * step(d, vWallA.y);
     surfaceAlbedo = bloodOver(wall, mm, 1.0);
-    wallGloss = mix(gloss, 0.75, clamp(mm * 2.0, 0.0, 1.0));
+    wallGloss = mix(gloss, 0.75, clamp(mm * 10.0, 0.0, 1.0));
     // The lobules and fascicles stand out of the face a little (in metres): the light catches them.
     float h = lift + (oozes > 0.5 ? 0.0004 * mix(0.5, wallNoise(p * 650.0), wallFade(650.0)) : 0.0);
     vec3 dpx = dFdx(vPositionW), dpy = dFdy(vPositionW);

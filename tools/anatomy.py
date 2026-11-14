@@ -119,8 +119,14 @@ def limb_parts(s):
 
 
 # A finger's bones go with the finger's own bone (the person's finger bones curl it), not with the hand: the rig's
-# finger1 is the thumb (its metacarpal, then two phalanges), finger2 to finger5 the index to the little finger.
+# finger1 is the thumb (its metacarpal, then two phalanges), finger2 to finger5 the index to the little finger; the
+# other four metacarpals are the rig's metacarpal1 (index) to metacarpal4 (little finger) since the hands were rebuilt
+# (tools/people.py, 0.8.19). Carpals stay on the wrist (None).
 def finger_bone(name, side):
+    if name.endswith('metacarpal bone') and not name.endswith('first metacarpal bone'):
+        return f'metacarpal{ORDINALS.index(name.split()[1])}.{side}'
+    if not (('phalanx' in name and 'toe' not in name) or name.endswith('first metacarpal bone')):
+        return None
     digit = next(i for i, d in enumerate(FINGERS) if name.endswith(d) or (d == 'thumb' and name.endswith('first metacarpal bone'))) + 1
     if digit == 1:
         k = 1 if 'metacarpal' in name else 2 if name.startswith('proximal') else 3
@@ -249,6 +255,7 @@ def main():
     names = index_of(source)
     header, arrays = read_person(person)
     bones = {b['name']: np.array(b['head']) for b in header['bones']}
+    tails = {b['name']: np.array(b['tail']) for b in header['bones']}
     carry_mm = fit(source, names, header, arrays)
     a, b = theirs(source, names), ours(header, arrays)
     wall_at = walls(header, arrays)
@@ -276,6 +283,23 @@ def main():
         if y < bones['spine01'][1]:
             return 'spine03'
         return 'spine01' if y < bones['neck01'][1] else 'neck01'
+
+    def onto(corners, own, wrist):
+        """A bone of the hand, carried with the hand from wrist to knuckles, then laid along its own bone of the rig:
+        the hand's one stretch put the fingers where the source man's were (straight, together), not where this person's
+        are (spread, curled a little), so they stood out of the skin. A phalanx runs joint to joint, the rig's bone's
+        head to its tail; a metacarpal of the rig starts at the wrist, so the bone keeps its length and ends at the
+        knuckle. Its ends are the extremes along its long axis, the nearer the wrist the base."""
+        middle = corners.mean(axis=0)
+        axis = np.linalg.svd(corners - middle, full_matrices=False)[2][0]
+        t = (corners - middle) @ axis
+        e0, e1 = corners[t < t.min() + 0.0015].mean(axis=0), corners[t > t.max() - 0.0015].mean(axis=0)
+        if np.linalg.norm(e1 - wrist) < np.linalg.norm(e0 - wrist):
+            e0, e1 = e1, e0
+        q0, q1 = bones[own], tails[own]
+        if own.startswith('metacarpal'):
+            q0 = q1 - (q1 - q0) / np.linalg.norm(q1 - q0) * np.linalg.norm(e1 - e0)
+        return segment(e0, e1, q0, q1, give=0.2)(corners)
 
     def press(corners, wall=WALL):
         """A part nearer the skin than `wall`, front, back or side, is pressed back in: the old man's ribs are a thin
@@ -335,7 +359,8 @@ def main():
     for name, kind, patterns, cell in HEAD:
         corners, faces = read_named(source, names, patterns)
         corners, faces = thin(turned(corners), faces, cell / 1000)
-        add(name, kind, 'neck01', head_fit(corners), faces)
+        # (The mandible goes with the jaw the face opens, tools/people.py's face rig; the rest with the neck and head.)
+        add(name, kind, 'jaw' if name == 'mandible' and 'jaw' in bones else 'neck01', head_fit(corners), faces)
 
     for s, k in SIDES:
         for seg, listed in limb_parts(s).items():
@@ -344,9 +369,12 @@ def main():
                 corners, faces = read_named(source, names, patterns)
                 corners, faces = thin(turned(corners), faces, cell / 1000)
                 corners = carry(corners)
-                # (A finger's bones and the thumb's metacarpal ride on the finger's own bone; the rest of the hand on the wrist.)
-                own = finger_bone(name, k) if ('phalanx' in name and 'toe' not in name) or name.endswith('first metacarpal bone') else bone
-                add(name, kind, own, corners, faces)
+                # (A finger's bones and the thumb's metacarpal ride on the finger's own bone, the other metacarpals on the
+                # rig's; the rest of the hand on the wrist.)
+                own = finger_bone(name, k) if seg == 'hand' else None
+                if own:
+                    corners = onto(corners, own, bones[f'wrist.{k}'])
+                add(name, kind, own or bone, corners, faces)
 
     # The paths. A point on a limb belongs to whichever segment of it the point lies along.
     def place(points, where):

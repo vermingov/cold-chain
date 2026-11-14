@@ -8,6 +8,8 @@
 // average: a spike), and the share of the whole frame, the wait for the GPU and the screen included. Babylon's own
 // counters for the drawing (SceneInstrumentation, and the GPU's time from EngineInstrumentation where the browser
 // gives a timer query) are under it: they overlap each other and the rows above, so they are not in the ranking.
+// Last, the draw calls a frame by what made them (each mesh or particle system by name, in the main picture and in the
+// shadow maps apart): a jump in draw calls names its cause.
 
 import * as BABYLON from '@babylonjs/core';
 import { Player } from '../player.ts';
@@ -43,7 +45,7 @@ export function profiler(layer: HTMLElement, sandbox) {
     el.className = 'profiler gone';
     layer.appendChild(el);
 
-    const rows = new Map<string, Row>(), counters = new Map<string, Row>();
+    const rows = new Map<string, Row>(), counters = new Map<string, Row>(), draws = new Map<string, Row>(), seen = new Set<string>();
     const rowOf = (map: Map<string, Row>, name: string) => {
         if (!map.has(name)) map.set(name, { name, self: 0, all: 0, calls: 0, avg: 0, allAvg: 0, per: 0, worst: [0, 0, 0, 0, 0] });
         return map.get(name);
@@ -135,6 +137,29 @@ export function profiler(layer: HTMLElement, sandbox) {
         time(scene, 'render', 'render: Babylon CPU (cull, shadows, draws)');
         time(scene.onBeforeRenderObservable, 'notifyObservers', 'render: before-render observers (culling)');
         late();
+        // Draw calls by source: each one the engine reports is put to the mesh or particle system drawing just then, and
+        // to the pass it is in (a shadow map, another render target, else the main picture). Names have their numbers
+        // taken out, so four people's insides are one row.
+        let source = 'other (post-processes, layers)', pass = 'main';
+        const swap = (o, k: string, make: (was) => any) => {
+            const was = o[k], own = Object.hasOwn(o, k), put = make(was);
+            o[k] = put;
+            undo.push(() => { if (o[k] === put) { if (own) o[k] = was; else delete o[k]; } });
+        };
+        const as = (o, k: string, set: (self) => void) => swap(o, k, (was) => function (...args) {
+            const s = source, p = pass;
+            set(this);
+            try { return was.apply(this, args); } finally { source = s; pass = p; }
+        });
+        as(BABYLON.Mesh.prototype, '_processRendering', (m) => { source = m.name; });
+        as(BABYLON.ParticleSystem.prototype, 'render', (p) => { source = 'particles ' + p.name; });
+        as(BABYLON.RenderTargetTexture.prototype, 'render', (t) => { pass = t.name.endsWith('_shadowMap') ? 'shadow' : t.name; });
+        swap(engine, '_reportDrawCall', (was) => function (n = 1) {
+            was.call(this, n);
+            const key = `${pass}: ${source}`, row = rowOf(draws, `${pass}: ${source.replace(/\d+/g, '#')}`);
+            row.self += n;
+            if (!seen.has(key)) { seen.add(key); row.calls++; }      // how many meshes of that name drew
+        });
     };
 
     let sceneInst: BABYLON.SceneInstrumentation | null = null, engineInst: BABYLON.EngineInstrumentation | null = null;
@@ -161,6 +186,7 @@ export function profiler(layer: HTMLElement, sandbox) {
         undo.length = 0;
         rows.clear();
         counters.clear();
+        draws.clear();
         shown = '';
         el.innerHTML = '';
         el.classList.add('gone');
@@ -174,7 +200,7 @@ export function profiler(layer: HTMLElement, sandbox) {
         const s = Math.floor(now / 1000) % 5;
         if (s !== slot) {
             slot = s;
-            for (const r of [...rows.values(), ...counters.values()]) r.worst[s] = 0;
+            for (const r of [...rows.values(), ...counters.values(), ...draws.values()]) r.worst[s] = 0;
             const count = engineInst.shaderCompilationTimeCounter.count;
             compiles = count - compiled;
             compiled = count;
@@ -189,7 +215,8 @@ export function profiler(layer: HTMLElement, sandbox) {
         count('main draw (renderTime)', sceneInst.renderTimeCounter.current);
         count('camera render', sceneInst.cameraRenderTimeCounter.current);
         count('physics (Babylon count)', sceneInst.physicsTimeCounter.current);
-        for (const r of [...rows.values(), ...counters.values()]) {
+        seen.clear();
+        for (const r of [...rows.values(), ...counters.values(), ...draws.values()]) {
             r.avg += (r.self - r.avg) * k;
             r.allAvg += (r.all - r.allAvg) * k;
             r.per += (r.calls - r.per) * k;
@@ -220,6 +247,7 @@ export function profiler(layer: HTMLElement, sandbox) {
         const bodies = physics.getBodies().length, loops = world.npcs.reduce((n, npc) => n + (npc.viscera?.loops?.length ?? 0), 0);
         const counts = [
             `${(1000 / gap).toFixed(0)} fps   ${gap.toFixed(1)} ms a frame   GPU ${gpu}`,
+            `${world.quality ? `render ${Math.round(100 / world.quality.level)}% of the screen a side   quality ${world.quality.preset} (F3)` : ''}`,
             `draw calls ${sceneInst.drawCallsCounter.current}   active meshes ${scene.getActiveMeshes().length}   triangles ${Math.round(scene.getActiveIndices() / 3)}`,
             `materials ${scene.materials.length}   textures ${scene.textures.length}   shader compiles last second ${compiles}`,
             `people ${world.npcs.length}   organ loops ${loops}   drops ${world.blood.n}   streams ${world.blood.streams.size}   bodies ${bodies}`
@@ -227,9 +255,16 @@ export function profiler(layer: HTMLElement, sandbox) {
         ];
         const head = `${'own time, worst first'.padEnd(42)} ${'ms'.padStart(6)} ${'max 5s'.padStart(6)}  frame`;
         const babylon = [...counters.values()].filter((r) => r.name !== 'GPU frame' || engine.getCaps().timerQuery);
-        text = [`Cold Chain ${__VERSION__} profile`, ...counts, '', head, ...ranked.map(plain), '', 'Babylon counters (overlap)', ...babylon.map(plain)].join('\n');
+        const passes = new Map<string, number>();
+        for (const r of draws.values()) { const p = r.name.slice(0, r.name.indexOf(':')); passes.set(p, (passes.get(p) ?? 0) + r.avg); }
+        const drawHead = `draw calls by source (${[...passes].map(([p, n]) => `${p} ${Math.round(n)}`).join(', ')})`;
+        const drawing = [...draws.values()].filter((r) => r.avg >= 0.5).sort((a, b) => b.avg - a.avg).slice(0, 16)
+            .map((r) => `${r.name.padEnd(42).slice(0, 42)} ${r.avg.toFixed(0).padStart(6)} ${worst(r).toFixed(0).padStart(6)}  ${Math.round(r.per)} drew`);
+        text = [`Cold Chain ${__VERSION__} profile`, ...counts, '', head, ...ranked.map(plain), '', 'Babylon counters (overlap)', ...babylon.map(plain),
+            '', drawHead, ...drawing].join('\n');
         const html = `<h3>Profiler <em>F2 close, Shift+F2 copy${said}</em></h3>${counts.map((c) => `<div>${c}</div>`).join('')}`
-            + `<h4>${head}</h4>${ranked.map((r, i) => line(r, i, true)).join('')}<h4>Babylon counters (overlap)</h4>${babylon.map((r, i) => line(r, i, false)).join('')}`;
+            + `<h4>${head}</h4>${ranked.map((r, i) => line(r, i, true)).join('')}<h4>Babylon counters (overlap)</h4>${babylon.map((r, i) => line(r, i, false)).join('')}`
+            + `<h4>${drawHead}</h4>${drawing.map((d) => `<div>${d}</div>`).join('')}`;
         // (Written only when it changes, as the HUD's are.)
         if (html !== shown) { el.innerHTML = html; shown = html; }
     };

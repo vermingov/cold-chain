@@ -623,16 +623,36 @@ export class Weapons {
         const at = V3.TransformCoordinates(anchors.ejection, this.hand.getWorldMatrix());
         // (.50 AE: 32.6 mm long, 13.9 mm across its base; .22 LR: 15.6 mm by 5.7 mm)
         const long = { rifle: [0.051, 0.012], ak: [0.039, 0.0113], m4: [0.045, 0.0096], deagle: [0.0326, 0.0139], r22: [0.0156, 0.0057] }[key] ?? [0.019, 0.0098];
-        const brass = BABYLON.MeshBuilder.CreateCylinder('casing', { height: long[0], diameter: long[1], tessellation: 10 }, scene);
-        brass.material = scene.getMaterialByName('brass') ?? Object.assign(new BABYLON.PBRMaterial('brass', scene), { albedoColor: new BABYLON.Color3(0.78, 0.56, 0.24), metallic: 1, roughness: 0.3 });
-        brass.position.copyFrom(at);
-        const body = new BABYLON.PhysicsAggregate(brass, BABYLON.PhysicsShapeType.CYLINDER, { mass: 0.01, restitution: 0.4, friction: 0.6 }, scene);
+        // One mesh a cartridge, a thin instance and a Havok body for each spent case (one draw for all of them, nothing made
+        // per shot once there are 40): past 40 the oldest case is the one thrown out again.
+        let pool = this.casings.find((c) => c.key === key);
+        const slot = pool ? pool.n % 40 : 0;
+        if (!pool) {
+            const brass = BABYLON.MeshBuilder.CreateCylinder('casing_' + key, { height: long[0], diameter: long[1], tessellation: 10 }, scene);
+            brass.material = scene.getMaterialByName('brass') ?? Object.assign(new BABYLON.PBRMaterial('brass', scene), { albedoColor: new BABYLON.Color3(0.78, 0.56, 0.24), metallic: 1, roughness: 0.3 });
+            brass.isPickable = false;
+            brass.alwaysSelectAsActiveMesh = true;      // (its bounds are one case's, where it was made)
+            brass.thinInstanceSetBuffer('matrix', new Float32Array(40 * 16), 16, false);
+            brass.thinInstanceCount = 1;
+            brass.thinInstanceSetMatrixAt(0, BABYLON.Matrix.Translation(at.x, at.y, at.z), true);
+            const body = new BABYLON.PhysicsAggregate(brass, BABYLON.PhysicsShapeType.CYLINDER, { mass: 0.01, restitution: 0.4, friction: 0.6,
+                pointA: new V3(0, -long[0] / 2, 0), pointB: new V3(0, long[0] / 2, 0), radius: long[1] / 2 }, scene);
+            pool = { key, mesh: brass, body, n: 0 };
+            this.casings.push(pool);
+        } else {
+            const { mesh, body } = pool;
+            if (pool.n < 40) mesh.thinInstanceCount = pool.n + 1;
+            mesh.thinInstanceSetMatrixAt(slot, BABYLON.Matrix.Translation(at.x, at.y, at.z), true);
+            if (pool.n < 40) body.body.updateBodyInstances();
+            // (A case already in the world moved: HavokPlugin has no public call for one instance's place. 9.27.1's own.)
+            else (scene.getPhysicsEngine().getPhysicsPlugin() as any)._createOrUpdateBodyInstances(body.body, body.body.getMotionType(slot), mesh._thinInstanceDataStorage.matrixData, slot, slot + 1, true);
+        }
+        pool.n++;
         const right = this.world.camera.getDirection(V3.Right()), up = this.world.camera.getDirection(V3.Up());
-        body.body.setLinearVelocity(right.scale(2 + Math.random()).add(up.scale(1.5 + Math.random())));
-        body.body.setAngularVelocity(new V3(Math.random() * 20, Math.random() * 20, 0));
-        this.casings.push({ mesh: brass, body });
-        if (this.casings.length > 40) { const old = this.casings.shift(); old.body.dispose(); old.mesh.dispose(); }
-        setTimeout(() => sound?.shot('casing', { at: brass.position.asArray(), gain: 0.5 }), 500 + Math.random() * 200);
+        pool.body.body.setLinearVelocity(right.scale(2 + Math.random()).add(up.scale(1.5 + Math.random())), slot);
+        pool.body.body.setAngularVelocity(new V3(Math.random() * 20, Math.random() * 20, 0), slot);
+        const { mesh, body } = pool;
+        setTimeout(() => sound?.shot('casing', { at: (mesh.isDisposed() ? at : body.body.getObjectCenterWorld(slot)).asArray(), gain: 0.5 }), 500 + Math.random() * 200);
     }
 
     _reload() {

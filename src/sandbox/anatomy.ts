@@ -57,6 +57,9 @@ export class Insides {
     declare mesh: BABYLON.Mesh;
     declare hurtMaterial: Record<string, number>;
     declare drawn: Uint32Array;
+    declare looks: number[];
+    declare grouped: Uint32Array;
+    declare stale: boolean;
 
     constructor(person, data) {
         this.person = person;
@@ -203,11 +206,13 @@ export class Insides {
         // This person's own copy of the triangles (the file's is shared): round a break they are taken out and drawn
         // again, broken (shards.ts).
         this.drawn = index.slice();
-        vd.indices = this.drawn;
+        // What is sent to the card is those triangles grouped by look (_regroup).
+        this.grouped = new Uint32Array(index.length);
+        vd.indices = this.grouped;
         vd.matricesIndices = bones;
         vd.matricesWeights = weights;
         vd.applyToMesh(mesh, false);
-        mesh.setIndices(this.drawn, null, true);
+        mesh.setIndices(this.grouped, null, true);
         mesh.parent = person.mesh.parent;
         mesh.position.copyFrom(person.mesh.position);
         mesh.skeleton = person.skeleton;
@@ -227,21 +232,45 @@ export class Insides {
         };
         multi.subMaterials = [...kinds.map((k) => look(k, false)), ...kinds.map((k) => look(k, true))];
         mesh.material = multi;
-        mesh.subMeshes = [];
-        for (const p of header.parts) {
-            const sub = new BABYLON.SubMesh(Math.max(0, kinds.indexOf(p.kind)), p.vertexStart, p.vertexCount, p.indexStart, p.indexCount, mesh);
-            p.sub = sub;
-        }
+        // Each part's look (its index into the submaterials), this person's own: the header is shared by everyone of that body.
+        this.looks = header.parts.map((p) => Math.max(0, kinds.indexOf(p.kind)));
         this.hurtMaterial = Object.fromEntries(kinds.map((k, i) => [k, i + kinds.length]));
-        mesh.setEnabled(false);
         this.mesh = mesh;
+        this._regroup();
+        // Regrouped when next seen, if hurt or broken while hidden.
+        mesh.onEnabledStateChangedObservable.add((on) => { if (on && this.stale) this._regroup(); });
+        mesh.setEnabled(false);
         return mesh;
+    }
+
+    // One submesh (one draw) for all the parts that look alike, their triangles side by side in the index: a submesh a
+    // part was about 224 draws a person in the x-ray. Done again when a part's look changes or triangles are taken out.
+    _regroup() {
+        const { mesh, looks, drawn, grouped } = this, parts = this.data.header.parts;
+        this.stale = !mesh.isEnabled(false);
+        if (this.stale) return;
+        const order = parts.map((_, i) => i).sort((a, b) => looks[a] - looks[b]);
+        const total = mesh.getTotalVertices();
+        let at = 0;
+        mesh.releaseSubMeshes();
+        for (let k = 0; k < order.length;) {
+            const look = looks[order[k]], start = at;
+            for (; k < order.length && looks[order[k]] === look; k++) {
+                const p = parts[order[k]];
+                grouped.set(drawn.subarray(p.indexStart, p.indexStart + p.indexCount), at);
+                at += p.indexCount;
+            }
+            new BABYLON.SubMesh(look, 0, total, start, at - start, mesh);
+        }
+        mesh.updateIndices(grouped, 0, true);
     }
 
     // Shown hurt in the x-ray.
     hurt(name) {
-        const p = this.data.header.parts.find((x) => x.name === name);
-        if (p?.sub && this.hurtMaterial) p.sub.materialIndex = this.hurtMaterial[p.kind];
+        const i = this.data.header.parts.findIndex((x) => x.name === name);
+        if (i < 0 || !this.hurtMaterial) return;
+        const look = this.hurtMaterial[this.data.header.parts[i].kind];
+        if (look !== undefined && this.looks[i] !== look) { this.looks[i] = look; this._regroup(); }
     }
 
     // The x-ray's look for a kind of thing, whole or hurt.
@@ -253,7 +282,7 @@ export class Insides {
     // Triangles (offsets into the index) no longer drawn in the x-ray: a broken bone drawn in pieces of its own instead.
     hide(tris: number[]) {
         for (const i of tris) this.drawn[i + 1] = this.drawn[i + 2] = this.drawn[i];
-        this.mesh.updateIndices(this.drawn, 0, true);
+        this._regroup();
     }
 
     dispose() { this.mesh?.dispose(false, true); }
