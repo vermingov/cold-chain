@@ -108,7 +108,9 @@ const VAULT: [RegExp, string][] = [[/^frontal/, 'forehead'], [/temporal/, 'templ
 // punch is 0.5-0.85 kN, a boxer's 3.4 kN at 9 m/s: Walilko 2005); a bat is a 6.5 cm cylinder; halving the patch about
 // doubles the chance of a fracture (Yoganandan), so thresholds measured with 6.5 cm2 scale with the patch. A claw hammer's
 // face is about an inch across (5 cm2: Goots18's hammer impactor).
-const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 }, hammer: { k: 5e6, area: 5 } };
+// A wall met by a body part (thuds.ts) is flat and wider than any part: it meets it along its whole length.
+const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 }, hammer: { k: 5e6, area: 5 },
+    wall: { k: 5e6, area: 2500 } };
 // Ribs break by how far the chest is pushed in, not how fast: past a fifth of its depth they break, past two fifths a
 // panel of them breaks in two places (Kroell); the chest is about 23 cm deep and about 40 N/mm stiff to a broad load.
 const CHEST_DEPTH = 0.23, CHEST_STIFF = 40e3;
@@ -282,8 +284,13 @@ export class Bones {
         if (!b || !this.npc.insides.parts.some((p) => p.name === name)) return null;
         const rest = this._rest(name, at, dir, end);
         // A shaft struck across is bent between the limb's two ends; the limb is not held at them, so the lever is an
-        // eighth of its length rather than the quarter of a bone on two supports.
-        if (b.long && rest.end < 0 && !moment) moment = (force * this._axis(name).length) / 8;
+        // eighth of its length rather than the quarter of a bone on two supports. That is for a narrow blow; one spread over
+        // `c` of the limb's length bends it F (L - c) / 8 (the load over c against the limb's own inertia over L), so a wall
+        // or the floor met flat along the whole of it bends it not at all and only crushes the flesh over it.
+        if (b.long && rest.end < 0 && !moment) {
+            const length = this._axis(name).length;
+            moment = (force * Math.max(0, length - Math.sqrt(area) / 100)) / 8;
+        }
         const spread = clamp((area / 6.5) ** 0.3, 0.6, 1.8);
         const across = b.long && rest.end < 0 ? moment / this.strength(name, 'moment')
             : force / (this.strength(name, end >= 0 ? 'ends' : 'bend', PLACES[rest.place]) * spread);

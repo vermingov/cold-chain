@@ -28,6 +28,7 @@ import struct
 import sys
 
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial import ConvexHull
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -65,6 +66,7 @@ TRUNK = [(n, k, p, c) for n, k, p, c in ORGANS if n not in ('spine', 'pelvis', '
 LUNGS = [(f'{s.lower()} lung', [rf'^{s} .*bronchial tree$', rf'^{s} main bronchus'] + ([r'lingular bronchial tree$'] if s == 'Left' else []))
          for s, _ in SIDES]
 SWELL = 1.14
+RIBS = 0.012        # m from the outside of the rib cage to the pleura: a rib's depth and the intercostals' (body-wall.md 1.3)
 
 # The skull's bones as one, only to fit the head (head_fit); each is then a part of its own.
 SKULL_FIT = [r'^Frontal bone$', r'^(Left|Right) parietal bone$', r'^(Left|Right) temporal bone$', r'^Occipital bone$', r'^Sphenoid bone$',
@@ -248,6 +250,71 @@ CHAIN = {
 }
 
 
+# --- the chest's own depth -----------------------------------------------------
+
+def sheet(corners, faces):
+    """Any surface as organs.walls reads a person's skin."""
+    return ({'parts': [{'kind': 'skin', 'indexStart': 0, 'indexCount': faces.size}]},
+            {'position': corners.astype(np.float32).ravel(), 'index': faces.astype(np.uint32).ravel()})
+
+
+THORAX = (-0.24, -0.36)     # m below the top of the breastbone: the chest's own depth down to the first, none past the second
+SQUEEZE = 0.6               # the least share of the source's depth a column of the chest is given
+ACROSS = 0.16               # m either side of the midline the trunk's front and back are read over (past it, as at its edge)
+
+
+def chest_depth(carry, source, names, header, arrays):
+    """organs.py's fit scales the source's depth by the belly's (capped at STOUT) and sets it against the back's mean.
+    A chest is not a belly: in three of the four people that put the source man's rib cage, 1.12 times as deep, into a
+    chest some 70 mm thinner front to back than that, the breastbone out through the skin and the ribs 0-14 mm under it
+    at the mid-clavicular line (a real chest wall there is 41-45 mm on CT: dev/research/body-wall.md 1.2); in the fourth
+    it came out through the back. So, height by height through the chest, the source's trunk (its own skin, carried the
+    same way) is laid between the person's own back and front, column by column across it: what lies at a share of the way from the source's back
+    skin to its front skin lies at that share of the person's, so the source man's own skin-to-rib depths (37-41 mm in
+    front, ~50 behind) come over in proportion. It is never made deeper than the fit already made it: a stouter chest's
+    surplus stays in front, as fat. Below the chest it fades out over THORAX, and the belly keeps the fit it had. Every
+    part of the trunk goes through it, so the organs keep their places against the ribs."""
+    bones = {b['name']: np.array(b['head']) for b in header['bones']}
+    notch = ((bones['clavicle.L'] + bones['clavicle.R']) / 2)[1]
+    skin, skin_faces = read_named(source, names, [r'^Skin$'])
+    levels = np.arange(notch + THORAX[1] - 0.02, notch + 0.01, 0.01)
+    across = np.arange(-ACROSS, ACROSS + 1e-6, 0.01)
+    X, Y = np.meshgrid(across, levels)
+    grid = np.stack([X.ravel(), Y.ravel(), np.zeros(X.size)], axis=1)
+    # Front and back read off each skin's triangles (organs.walls), the person's and the source's carried the same way:
+    # corners alone are a centimetre or two apart on the person, and a slab through them can miss the back altogether.
+    o = np.stack([g.reshape(X.shape) for g in walls(header, arrays)(grid)])
+    t = np.stack([g.reshape(X.shape) for g in walls(*sheet(carry(skin), skin_faces))(grid)])
+    # (Holes filled from the row, then smoothed over three centimetres each way: a skin's ridges are not the chest's depth.)
+    for g in (o, t):
+        for k in (0, 1):
+            for i in range(len(levels)):
+                ok = np.isfinite(g[k, i])
+                g[k, i] = np.interp(across, across[ok], g[k, i, ok]) if ok.any() else np.nan
+            pad = np.pad(g[k], 1, mode='edge')
+            g[k] = sum(pad[1 + di:1 + di + len(levels), 1 + dj:1 + dj + len(across)] for di in (-1, 0, 1) for dj in (-1, 0, 1)) / 9
+    # (Never squeezed past SQUEEZE: at the sides, where the trunk rounds off, the two skins' depths are both small and their
+    # ratio says little; what still pokes out there is pressed in as before.)
+    ratio = np.clip((o[0] - o[1]) / (t[0] - t[1]), SQUEEZE, 1.0)
+    mid = len(across) // 2
+    for i in range(0, len(levels), 4):
+        print(f'chest at {(levels[i] - notch) * 1000:5.0f} mm: ours {(o[0, i, mid] - o[1, i, mid]) * 1000:4.0f} deep at the middle, the source '
+              f'{(t[0, i, mid] - t[1, i, mid]) * 1000:4.0f}; x {ratio[i].min():.2f}-{ratio[i].max():.2f} across, back moved '
+              f'{(o[1, i, mid] - t[1, i, mid]) * 1000:+4.0f} mm')
+    at = lambda g, points: RegularGridInterpolator((levels, across), g, bounds_error=False, fill_value=None)(
+        np.stack([np.clip(points[:, 1], levels[0], levels[-1]), np.clip(points[:, 0], across[0], across[-1])], axis=1))
+
+    def carried(points):
+        out = carry(points)
+        y = out[:, 1]
+        w = np.clip((y - (notch + THORAX[1])) / (THORAX[0] - THORAX[1]), 0, 1)
+        w = w * w * (3 - 2 * w)
+        moved = at(o[1], out) + (out[:, 2] - at(t[1], out)) * at(ratio, out)
+        out[:, 2] += w * (moved - out[:, 2])
+        return out
+    return carried
+
+
 # --- main ----------------------------------------------------------------------
 
 def main():
@@ -256,7 +323,7 @@ def main():
     header, arrays = read_person(person)
     bones = {b['name']: np.array(b['head']) for b in header['bones']}
     tails = {b['name']: np.array(b['tail']) for b in header['bones']}
-    carry_mm = fit(source, names, header, arrays)
+    carry_mm = chest_depth(fit(source, names, header, arrays), source, names, header, arrays)
     a, b = theirs(source, names), ours(header, arrays)
     wall_at = walls(header, arrays)
     side_at = walls(header, arrays, along=0, over=(2, 1))
@@ -333,11 +400,19 @@ def main():
         base['i'] += faces.size
 
     print(f'{"part":22} {"kind":10} {"bone":14} {"corners":>6} {"tris":>7}')
+    cage = []
     for name, kind, patterns, cell in TRUNK:
         corners, faces = thin(*read_named(source, names, patterns), cell)
         corners = carry_mm(corners)
         press(corners, COVER if kind == 'bone' else WALL)
         add(name, kind, trunk_bone(corners[:, 1].mean()), corners, faces)
+        if name.endswith(' rib') or name == 'sternum':
+            cage.append((corners, faces))
+    # The rib cage's outside, front and back and either side, for the lungs to fill (organs.walls fills the gaps
+    # between the ribs from their neighbours).
+    cage_faces = np.concatenate([f + sum(len(c) for c, _ in cage[:i]) for i, (_, f) in enumerate(cage)])
+    cage = np.concatenate([c for c, _ in cage])
+    cage_at, cage_side = walls(*sheet(cage, cage_faces)), walls(*sheet(cage, cage_faces), along=0, over=(2, 1))
 
     for name, patterns in LUNGS:
         raw = read_named(source, names, patterns)[0]
@@ -347,7 +422,22 @@ def main():
         remap = {v: i for i, v in enumerate(hull.vertices)}
         faces = np.array([[remap[v] for v in tri] for tri in hull.simplices])
         middle = corners.mean(axis=0)
+        # A living lung fills its side of the chest to the pleura, which lines the ribs: the hull of its airways stops
+        # short of that by centimetres in front and at the side (once the chest was fitted to the person's own depth,
+        # chest_depth, nothing pressed it out there any more, and it lay 5 cm behind the ribs). So each corner of its
+        # front half is set a rib's depth behind the front of the cage, each of its outer half a rib's depth inside the
+        # cage's side, and the back half likewise against the back (wherever the cage is: above its top and below its
+        # bottom the hull stays as it was). Toward the middle it is left alone, against the heart.
         corners = middle + (corners - middle) * SWELL
+        d = corners - middle
+        front, back = cage_at(corners)
+        ahead, behind = (d[:, 2] > 0) & np.isfinite(front), (d[:, 2] < 0) & np.isfinite(back)
+        corners[ahead, 2] = front[ahead] - RIBS
+        corners[behind, 2] = np.maximum(back[behind] + RIBS, np.minimum(corners[behind, 2], front[behind] - RIBS))
+        outer, inner = cage_side(corners)
+        side = outer if middle[0] > 0 else inner
+        lateral = (d[:, 0] * np.sign(middle[0]) > 0) & np.isfinite(side)
+        corners[lateral, 0] = side[lateral] - RIBS * np.sign(middle[0])
         press(corners)
         # The hull's triangles face any way: turn each to face out of the middle, in the source's handedness.
         tri = corners[faces]

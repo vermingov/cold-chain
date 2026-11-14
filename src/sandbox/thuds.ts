@@ -15,13 +15,20 @@ export class Thuds {
     declare world: any;
     declare started: number;
     declare last: WeakMap<any, number>;
+    declare before: WeakMap<any, BABYLON.Vector3>;
     declare dragging: any;
 
     constructor(world, physics: BABYLON.HavokPlugin) {
         this.world = world;
         this.started = (physics as any)._hknp.EventType.COLLISION_STARTED.value;
         this.last = new WeakMap();
+        this.before = new WeakMap();
         physics.onCollisionObservable.add((e) => this._met(e));
+        // Each segment's velocity before the frame's steps: the speed it met something at (Havok reports a contact after
+        // solving it, when the part has already stopped).
+        world.scene.onBeforePhysicsObservable.add(() => {
+            for (const npc of world.npcs) for (const seg of npc.ragdoll.segments) seg.body?.getLinearVelocityToRef(this.before.get(seg) ?? this.before.set(seg, new V3()).get(seg));
+        });
         world.scene.onBeforeRenderObservable.add(() => this._drag());
         this._mask = (body) => (physics as any)._hknp.HP_Body_SetEventMask(body._pluginData.hpBodyId, this.started);
     }
@@ -59,9 +66,14 @@ export class Thuds {
             const take = base === 'head' ? (other ? 'blunt' : 'head-hit') : trunk ? (side ? 'body-slam' : 'body-fall')
                 : speed > 3.5 ? 'blunt' : speed < 2.5 && Math.random() < 0.4 ? 'lay' : 'limb-slap';
             sound?.shot(take, { at: e.point.asArray(), gain: trunk ? loud : loud * 0.8 });
-            // Into something standing, hard: the wall gives nothing and the part takes it as a blow. (From below is a
-            // landing: bones.ts counts those.)
-            if (side && speed > HURTS) blow(npc, e.point, into.normalize(), seg.mass, speed);
+            // Into something standing, hard: the wall gives nothing and the part takes it as a blow, at the speed it was
+            // going toward the wall before the step, broad and flat over the whole part ('wall'). (From below is a landing:
+            // bones.ts counts those.) Not at the contact's impulse over the part's own mass: a forearm pinned between the
+            // trunk and the wall takes an impulse that would stop the trunk too, and read as its own speed it was 12 to 25
+            // m/s from a body thrown at 3 to 8, which broke every ulna and arm against the wall like a bat.
+            const n = into.normalize(), was = this.before.get(seg);
+            const toward = was ? -V3.Dot(was, n) : 0;
+            if (side && toward > HURTS) blow(npc, e.point, n, seg.mass, toward, 'wall');
         }
     }
 
