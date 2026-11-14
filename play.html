@@ -43,6 +43,18 @@ canvas { width: 100%; height: 100%; display: block; outline: none; }
 .help p { margin: 0; }
 .help.gone { display: none; }
 .fault { left: 1rem; top: 2.2rem; max-width: 50vw; font-family: Georgia, serif; font-size: 0.8rem; color: #b07a6a; }
+/* F2 (profiler.ts): left of the monitor, which keeps the top right. */
+.profiler { right: 21.5rem; top: 1rem; padding: 0.4rem 0.6rem; background: rgba(6, 6, 7, 0.78); color: #c9c3b4; text-shadow: none;
+    font: 11px/1.3 ui-monospace, Menlo, Consolas, monospace; white-space: pre; }
+.profiler.gone { display: none; }
+.profiler h3, .profiler h4 { margin: 0.35rem 0 0.1rem; font: inherit; color: #8f897c; }
+.profiler h3 { margin-top: 0; color: #ddd7c8; }
+.profiler em { font-style: normal; color: #8f897c; margin-left: 1rem; }
+.profiler span { display: inline-block; width: 70px; height: 7px; background: #26241f; vertical-align: middle; }
+.profiler i { display: block; height: 100%; background: #8f897c; }
+.profiler .top { color: #f1c7a0; }
+.profiler .top i { background: #e08a74; }
+.profiler b { font-weight: normal; color: #ff6a50; }
 .start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000;
     font-family: 'Fell', Georgia, serif; color: #ddd7c8; cursor: pointer; }
 .start h1 { font-size: 4rem; font-weight: normal; margin: 0 0 1rem; }
@@ -60,6 +72,7 @@ canvas { width: 100%; height: 100%; display: block; outline: none; }
 import { makeEngine } from './src/engine.ts';
 import { Hud } from './src/sandbox/hud.ts';
 import { openSandbox } from './src/sandbox/sandbox.ts';
+import { profiler } from './src/sandbox/profiler.ts';
 
 const canvas = document.getElementById('view');
 const engine = await makeEngine(canvas);
@@ -72,6 +85,7 @@ const loading = document.getElementById('loading');
 // (?nowarm: the rig's measurements, which never draw what the warm-up compiles; on the software renderer it takes many minutes.)
 if (!new URLSearchParams(location.search).has('nowarm')) await sandbox.warm((text) => { loading.textContent = text; });
 window.__sandbox = sandbox;
+window.__profiler = profiler(document.getElementById('over'), sandbox);
 engine.runRenderLoop(() => {
     try {
         sandbox.update(Math.min(0.05, engine.getDeltaTime() / 1000));
