@@ -50,6 +50,20 @@ vec3 bloodOver(vec3 under, float mm, float wet) {
 }
 `;
 
+// The box copied out tight before it goes up. Handed the whole buffer with skip and row length set, Firefox (its WebGL
+// runs in another process) copied all of it, megabytes, for every box: soak and the floor's blood were 55 ms a frame.
+let packed = new Uint8Array(0);
+function pack(data: Uint8Array, size: number[], box: number[], channels: number) {
+    const [nx, ny] = size, w = (box[3] - box[0]) * channels, need = w * (box[4] - box[1]) * (box[5] - box[2]);
+    if (packed.length < need) packed = new Uint8Array(need);
+    let o = 0;
+    for (let z = box[2]; z < box[5]; z++) for (let y = box[1]; y < box[4]; y++, o += w) {
+        const at = ((z * ny + y) * nx + box[0]) * channels;
+        packed.set(data.subarray(at, at + w), o);
+    }
+    return packed.subarray(0, need);
+}
+
 // A part of a texture sent to the card again, from a buffer holding the whole of it (WebGL 2; elsewhere the whole
 // texture). `box` is [x0, y0, z0, x1, y1, z1] in texels, ends not included; 2D textures take z 0 to 1.
 export function sendPart(texture: BABYLON.BaseTexture, data: Uint8Array, size: number[], box: number[], channels = 2) {
@@ -61,19 +75,9 @@ export function sendPart(texture: BABYLON.BaseTexture, data: Uint8Array, size: n
     engine._bindTextureDirectly(target, internal, true);
     engine._unpackFlipY(false);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, size[0]);
-    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, box[0]);
-    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, box[1]);
-    if (three) {
-        gl.pixelStorei(gl.UNPACK_IMAGE_HEIGHT, size[1]);
-        gl.pixelStorei(gl.UNPACK_SKIP_IMAGES, box[2]);
-        gl.texSubImage3D(target, 0, box[0], box[1], box[2], box[3] - box[0], box[4] - box[1], box[5] - box[2], format, gl.UNSIGNED_BYTE, data);
-        gl.pixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
-        gl.pixelStorei(gl.UNPACK_SKIP_IMAGES, 0);
-    } else gl.texSubImage2D(target, 0, box[0], box[1], box[3] - box[0], box[4] - box[1], format, gl.UNSIGNED_BYTE, data);
-    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
-    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
-    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    const part = pack(data, size, box, channels);
+    if (three) gl.texSubImage3D(target, 0, box[0], box[1], box[2], box[3] - box[0], box[4] - box[1], box[5] - box[2], format, gl.UNSIGNED_BYTE, part);
+    else gl.texSubImage2D(target, 0, box[0], box[1], box[3] - box[0], box[4] - box[1], format, gl.UNSIGNED_BYTE, part);
     engine._bindTextureDirectly(target, null);
 }
 
@@ -83,13 +87,14 @@ export function sendCanvasPart(texture: BABYLON.DynamicTexture, canvas: HTMLCanv
     const engine = texture.getScene().getEngine() as any, gl = engine._gl as WebGL2RenderingContext | undefined;
     const internal = texture.getInternalTexture();
     if (!gl || !internal || engine.webGLVersion < 2) { texture.update(false); return; }
+    // Only the box read off the canvas: handed the canvas itself, the browser takes all of it every time.
+    const w = box[2] - box[0], h = box[3] - box[1];
+    if (w <= 0 || h <= 0) return;
+    const part = canvas.getContext('2d').getImageData(box[0], box[1], w, h).data;
     engine._bindTextureDirectly(gl.TEXTURE_2D, internal, true);
     engine._unpackFlipY(false);
-    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, box[0]);
-    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, box[1]);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], box[1], box[2] - box[0], box[3] - box[1], gl.RGBA, gl.UNSIGNED_BYTE, canvas);
-    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
-    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], box[1], w, h, gl.RGBA, gl.UNSIGNED_BYTE, part);
     engine._bindTextureDirectly(gl.TEXTURE_2D, null);
 }
 
