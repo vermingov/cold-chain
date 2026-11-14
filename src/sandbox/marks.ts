@@ -6,15 +6,30 @@
 // using how many texture units a metre of skin takes up where it landed.
 
 import * as BABYLON from '@babylonjs/core';
+import { sendCanvasPart } from './fluid.ts';
 const V3 = BABYLON.Vector3;
 
 const SIZE = 2048;
+// The sheets sent to the card by the 128 px tiles painted, not whole: each 2048 sheet sent whole, mipmaps and all, every
+// shot was 75 ms a frame on the user's laptop (the F2 profiler). A paint says the box it painted in.
+const TILE = 128, TILES = SIZE / TILE;
+// How far from its hit a paint reaches: an exit's splits (to 1.5 of its radius), or a stab's or cut's stretch, which is
+// never drawn longer than 0.04 of the sheet; and the blur round them.
+const REACH = 0.06, FAR = 0.045 * SIZE + 8;
+// A canvas kept in memory, not on the card: the tiles are read back off it to be sent, which stalls a canvas on the card.
+function sheetCanvas() {
+    const c = document.createElement('canvas');
+    c.width = c.height = SIZE;
+    c.getContext('2d', { willReadFrequently: true });
+    return c;
+}
 
 export class Marks {
     declare skin: BABYLON.DynamicTexture;
     declare cloth: BABYLON.DynamicTexture;
     declare depth: BABYLON.DynamicTexture;
     declare _dirty: Set<BABYLON.DynamicTexture>;
+    declare _tiles: Map<BABYLON.DynamicTexture, Uint8Array | null>;   // tiles painted since sent; null: all of it
     declare _soaked: Map<any, number>;
     declare _old: boolean;
     declare npc: any;
@@ -26,12 +41,13 @@ export class Marks {
     constructor(scene, npc) {
         this.scene = scene;
         this._dirty = new Set();
+        this._tiles = new Map();
         this._soaked = new Map();
         this._frames = 0;
         this.npc = npc;
         this.stains = [];
         const sheet = (name, mesh) => {
-            const t = new BABYLON.DynamicTexture(name, { width: SIZE, height: SIZE }, scene, true);
+            const t = new BABYLON.DynamicTexture(name, sheetCanvas(), scene, true);
             t.hasAlpha = true;
             t.getContext().clearRect(0, 0, SIZE, SIZE);
             t.update();
@@ -47,7 +63,7 @@ export class Marks {
         this.skin = sheet(npc.person.mesh.name + '_wounds', npc.person.mesh);
         // How deep the flesh is open at each place of the skin (red, to 4 cm), and how much blood lies in it (green):
         // what Gore draws as wounds.
-        this.depth = new BABYLON.DynamicTexture(npc.person.mesh.name + '_depth', { width: SIZE, height: SIZE }, scene, false);
+        this.depth = new BABYLON.DynamicTexture(npc.person.mesh.name + '_depth', sheetCanvas(), scene, false);
         this.depth.hasAlpha = false;
         this.depth.wrapU = this.depth.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
         const dg = this.depth.getContext() as CanvasRenderingContext2D;
@@ -58,8 +74,20 @@ export class Marks {
         // Painted marks go up to the card once a frame, however many were painted.
         this._flush = scene.onBeforeRenderObservable.add(() => {
             if (++this._frames % 600 === 0) this.age();
-            for (const t of this._dirty) t.update();
+            for (const t of this._dirty) {
+                const tiles = this._tiles.get(t);
+                if (!tiles) { t.update(); continue; }
+                const canvas = t.getContext().canvas as HTMLCanvasElement;
+                for (let ty = 0; ty < TILES; ty++) for (let tx = 0; tx < TILES;) {
+                    if (!tiles[ty * TILES + tx]) { tx++; continue; }
+                    let end = tx;
+                    while (end < TILES && tiles[ty * TILES + end]) tiles[ty * TILES + end++] = 0;
+                    sendCanvasPart(t, canvas, [tx * TILE, ty * TILE, end * TILE, (ty + 1) * TILE], true);
+                    tx = end;
+                }
+            }
             this._dirty.clear();
+            this._tiles.clear();
         });
     }
 
@@ -71,7 +99,7 @@ export class Marks {
         g.save();
         draw(g, x, y, px);
         g.restore();
-        this._dirty.add(t);
+        this._mark(t, x, y, Math.max(px(REACH), FAR));
     }
 
     // Where something went through: `size` across in metres, `out` for the way out (torn, bigger, everted).
@@ -101,7 +129,7 @@ export class Marks {
         g.globalCompositeOperation = 'lighten';
         draw(g, x, y, px);
         g.restore();
-        this._dirty.add(this.depth);
+        this._mark(this.depth, x, y, Math.max(px(REACH), FAR));
     }
 
     // A bullet's way into skin: a round hole as wide as the skin let it be (a little under the bullet), its walls
@@ -220,7 +248,7 @@ export class Marks {
             }
         }
         g.restore();
-        this._dirty.add(this.depth);
+        this._around(points, px(wide * 3) + 4);
     }
 
     // The lips of an opening right through the body's wall (viscera.ts) or torn open by a bullet's way out (wounds.ts):
@@ -260,7 +288,7 @@ export class Marks {
             }
         }
         g.restore();
-        this._dirty.add(this.depth);
+        this._around(edge, px(Math.max(...wide) * 2) + 4);
     }
 
     // A bruise where a blow landed.
@@ -298,7 +326,24 @@ export class Marks {
             g.fillRect(0, 0, SIZE, SIZE);
             g.restore();
             this._dirty.add(t);
+            this._tiles.set(t, null);
         }
+    }
+
+    // The tiles of `t` in the box `r` round (x, y), canvas pixels, to be sent.
+    _mark(t: BABYLON.DynamicTexture, x: number, y: number, r: number) {
+        this._dirty.add(t);
+        if (this._tiles.has(t) && !this._tiles.get(t)) return;
+        let tiles = this._tiles.get(t);
+        if (!tiles) this._tiles.set(t, tiles = new Uint8Array(TILES * TILES));
+        const x0 = Math.max(0, Math.floor((x - r) / TILE)), x1 = Math.min(TILES - 1, Math.floor((x + r) / TILE));
+        const y0 = Math.max(0, Math.floor((y - r) / TILE)), y1 = Math.min(TILES - 1, Math.floor((y + r) / TILE));
+        for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) tiles[ty * TILES + tx] = 1;
+    }
+
+    // The depth sheet's tiles round a loop of points (each with its `uv`), `r` pixels out from them.
+    _around(points: { uv: number[] }[], r: number) {
+        for (const p of points) this._mark(this.depth, p.uv[0] * SIZE, (1 - p.uv[1]) * SIZE, r);
     }
 
     dispose() {

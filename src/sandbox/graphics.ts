@@ -60,5 +60,6 @@ export function graphics(engine: BABYLON.AbstractEngine, pipeline: BABYLON.Defau
             if (level !== was) engine.setHardwareScalingLevel(level);
         },
         get level() { return level; },
+        get preset() { return PRESETS[preset]; },
     };
 }
