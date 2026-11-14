@@ -229,5 +229,29 @@
  "drag": [
   "drag-1.ogg",
   "drag-2.ogg"
+ ],
+ "shot-deagle": [
+  "shot-deagle-1.ogg",
+  "shot-deagle-2.ogg"
+ ],
+ "shot-r22": [
+  "shot-r22-1.ogg",
+  "shot-r22-2.ogg"
+ ],
+ "swing-heavy": [
+  "swing-heavy-1.ogg",
+  "swing-heavy-2.ogg"
+ ],
+ "hit-shovel": [
+  "hit-shovel-1.ogg",
+  "hit-shovel-2.ogg"
+ ],
+ "hit-sledge": [
+  "hit-sledge-1.ogg",
+  "hit-sledge-2.ogg"
+ ],
+ "hit-hammer": [
+  "hit-hammer-1.ogg",
+  "hit-hammer-2.ogg"
  ]
 }

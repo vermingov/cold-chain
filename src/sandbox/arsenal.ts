@@ -5,10 +5,12 @@ import * as BABYLON from '@babylonjs/core';
 import { HALL } from './map.ts';
 const V3 = BABYLON.Vector3;
 
-// What hangs where: two rows, long guns over the rest, laid out along the wall from the south end.
+// What hangs where: three rows, long guns over the rest and the tools at the bottom, laid out along the wall from the
+// south end.
 const ROWS = [
-    { y: 1.78, keys: ['rifle', 'shotgun', 'ak', 'm4'] },
-    { y: 1.12, keys: ['pistol', 'knife', 'sword', 'bat', 'grenade', 'throw', 'bandage', 'medkit'] },
+    { y: 1.95, keys: ['rifle', 'shotgun', 'ak', 'm4', 'r22'] },
+    { y: 1.38, keys: ['pistol', 'deagle', 'knife', 'sword', 'bat', 'grenade', 'throw', 'bandage', 'medkit'] },
+    { y: 0.82, keys: ['shovel', 'sledge', 'hammer'] },
 ];
 const WALL = { x: -HALL.x, z: -1.2, width: 7.2, height: 1.7, y: 1.45 };
 const GAP = 0.28;
@@ -73,6 +75,14 @@ export async function buildArsenal(world, weapons) {
     }
     // Light lies still on the board once it is hung.
     for (const mesh of scene.meshes) if (mesh.metadata?.arsenal) mesh.freezeWorldMatrix();
+    // The lamp overhead is three metres from the bottom row (a ninth of its light at the top row's distance): a small
+    // lamp low on the board's frame lights only the tools hung there, and casts no shadow.
+    const low = new Set(ROWS[ROWS.length - 1].keys);
+    const fill = new BABYLON.SpotLight('arsenalFill', new V3(WALL.x + 1.3, 1.45, WALL.z), new V3(-0.85, -0.5, 0).normalize(), 2.2, 1.2, scene);
+    fill.falloffType = BABYLON.Light.FALLOFF_GLTF;
+    fill.intensity = 18;
+    fill.diffuse = lamp.diffuse;
+    fill.includedOnlyMeshes = scene.meshes.filter((m) => low.has(m.metadata?.arsenal));
 
     return {
         hung,

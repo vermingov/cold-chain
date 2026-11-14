@@ -69,7 +69,7 @@ const MET = 0.012;              // m: a layer standing further off the skin than
 const SQUEEZE = 0.3;            // of the swelling a tight dressing presses back (a compression bandage's job)
 
 // What hits (bones.ts's TOOLS): how stiff it is (N/m) and the patch it lands on (cm2).
-const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 } };
+const TOOLS = { fist: { k: 9e3, area: 40 }, bat: { k: 2e6, area: 8 }, flat: { k: 5e6, area: 25 }, edge: { k: 5e6, area: 2 }, hammer: { k: 5e6, area: 5 } };
 const toolOf = (mass: number, speed: number, tool?: number | string) => typeof tool === 'string' ? TOOLS[tool] ?? TOOLS.flat
     : tool !== undefined ? { k: tool, area: tool < 2e4 ? 40 : tool < 1e5 ? 30 : 25 } : mass < 1.2 && speed > 10 ? TOOLS.bat : TOOLS.flat;
 

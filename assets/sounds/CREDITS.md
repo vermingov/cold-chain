@@ -100,3 +100,15 @@ one channel, set to a level (tools/sfx.py). Voices are in assets/cries (Fish Aud
 - `limb-slap-2.ogg`: "Limp human arm slapping down onto a concrete floor, short fleshy slap, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Mp0AmAvNajzAvNq58vkj.
 - `drag-1.ogg`: "Limp human body dragged across a concrete floor, clothes scraping and sliding, steady, indoor concrete hall (4 s)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation dobayZR5YU2xlpYzs6xE.
 - `drag-2.ogg`: "Limp human body dragged across a concrete floor, clothes scraping and sliding, steady, indoor concrete hall (4 s)". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation lZ7oB39XUNggWBZKqNDv.
+- `shot-deagle-1.ogg`: "Single .50 AE Desert Eagle pistol gunshot fired indoors, very loud deep heavy boom with a sharp crack, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation cZ1F1umcWpsaqTOO5X2m.
+- `shot-deagle-2.ogg`: "Single .50 AE Desert Eagle pistol gunshot fired indoors, very loud deep heavy boom with a sharp crack, concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation NRSxKd9FfY4MMWP0xH0i.
+- `shot-r22-1.ogg`: "Single .22 LR rimfire rifle shot fired indoors, small sharp dry crack, light pop, short concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation Q0aLtLoIy6FbstlRugqb.
+- `shot-r22-2.ogg`: "Single .22 LR rimfire rifle shot fired indoors, small sharp dry crack, light pop, short concrete room echo". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation jWHjk4CplB4n4bbIyo7B.
+- `swing-heavy-1.ogg`: "Slow heavy whoosh of a sledgehammer swung hard through the air, deep low air rush, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation ssf3vnI7m8jx64jrBDTN.
+- `swing-heavy-2.ogg`: "Slow heavy whoosh of a sledgehammer swung hard through the air, deep low air rush, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation pkaRWgrugFl6seFwHUUL.
+- `hit-shovel-1.ogg`: "Flat steel shovel blade smacking hard into a human body, dull metallic clang over a meaty thud, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation JhmnQzI6nGHD1DOjGuuc.
+- `hit-shovel-2.ogg`: "Flat steel shovel blade smacking hard into a human body, dull metallic clang over a meaty thud, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation 9o4CBpH0wZmxoRZ7SKtR.
+- `hit-sledge-1.ogg`: "Sledgehammer smashing into a human body, very heavy deep crushing thud with a bone crunch, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation EccEzrCgyW4upu2tUliL.
+- `hit-sledge-2.ogg`: "Sledgehammer smashing into a human body, very heavy deep crushing thud with a bone crunch, indoor concrete hall". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation trW1k4rL5VT4SmzcYehW.
+- `hit-hammer-1.ogg`: "Claw hammer striking a human head, short hard dull knock with a crack, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation WNlBmykhURafvLHpaL6Q.
+- `hit-hammer-2.ogg`: "Claw hammer striking a human head, short hard dull knock with a crack, close-mic". ElevenLabs flow HEHeLd5i0sx6558QT4Yo, generation ZbXKS7FTlgKgskusaHyM.

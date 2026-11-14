@@ -122,11 +122,25 @@ TAKES = {
     'limb-slap-2': ('J0eyf8bXgmzukjOIda4n/Mp0AmAvNajzAvNq58vkj', 'Limp human arm slapping down onto a concrete floor, short fleshy slap, indoor concrete hall'),
     'drag-1': ('M6O2IRcEGSYk6E4Kinrq/dobayZR5YU2xlpYzs6xE', 'Limp human body dragged across a concrete floor, clothes scraping and sliding, steady, indoor concrete hall (4 s)'),
     'drag-2': ('NmKh6d7uNEGSC44QFC9G/lZ7oB39XUNggWBZKqNDv', 'Limp human body dragged across a concrete floor, clothes scraping and sliding, steady, indoor concrete hall (4 s)'),
+    'shot-deagle-1': ('TIomDKZSD2UQly8DHBeB/cZ1F1umcWpsaqTOO5X2m', 'Single .50 AE Desert Eagle pistol gunshot fired indoors, very loud deep heavy boom with a sharp crack, concrete room echo'),
+    'shot-deagle-2': ('lXQMTk3V9qoqWP9YWdVB/NRSxKd9FfY4MMWP0xH0i', 'Single .50 AE Desert Eagle pistol gunshot fired indoors, very loud deep heavy boom with a sharp crack, concrete room echo'),
+    'shot-r22-1': ('KhyclUSdLITBmEaakIXZ/Q0aLtLoIy6FbstlRugqb', 'Single .22 LR rimfire rifle shot fired indoors, small sharp dry crack, light pop, short concrete room echo'),
+    'shot-r22-2': ('eF24EuUWTsuUgDcPrCGI/jWHjk4CplB4n4bbIyo7B', 'Single .22 LR rimfire rifle shot fired indoors, small sharp dry crack, light pop, short concrete room echo'),
+    'swing-heavy-1': ('PEgAaJuNBmbVYK16Az57/ssf3vnI7m8jx64jrBDTN', 'Slow heavy whoosh of a sledgehammer swung hard through the air, deep low air rush, close-mic'),
+    'swing-heavy-2': ('9g8XwIM1MTryA4lBLbtk/pkaRWgrugFl6seFwHUUL', 'Slow heavy whoosh of a sledgehammer swung hard through the air, deep low air rush, close-mic'),
+    'hit-shovel-1': ('4FIgQd4wDg5tnBGoBgj0/JhmnQzI6nGHD1DOjGuuc', 'Flat steel shovel blade smacking hard into a human body, dull metallic clang over a meaty thud, indoor concrete hall'),
+    'hit-shovel-2': ('XGeHLv4hCknSS9JuRvks/9o4CBpH0wZmxoRZ7SKtR', 'Flat steel shovel blade smacking hard into a human body, dull metallic clang over a meaty thud, indoor concrete hall'),
+    'hit-sledge-1': ('NCHSdrM5ntyvg7pt16mf/EccEzrCgyW4upu2tUliL', 'Sledgehammer smashing into a human body, very heavy deep crushing thud with a bone crunch, indoor concrete hall'),
+    'hit-sledge-2': ('0cdGGm5pVDTItmfzThzJ/trW1k4rL5VT4SmzcYehW', 'Sledgehammer smashing into a human body, very heavy deep crushing thud with a bone crunch, indoor concrete hall'),
+    'hit-hammer-1': ('jza407yZCis5bPrfheWS/WNlBmykhURafvLHpaL6Q', 'Claw hammer striking a human head, short hard dull knock with a crack, close-mic'),
+    'hit-hammer-2': ('kBphPfn0S9jBqNBwVEZa/ZbXKS7FTlgKgskusaHyM', 'Claw hammer striking a human head, short hard dull knock with a crack, close-mic'),
 }
 
 # Names the game asks for that are heard as another's recordings: a blade sounds the same in skin, fat, flesh and
 # whatever is inside.
 ALSO = {'skin': ['fat', 'flesh', 'organ', 'snip']}
+# Takes that start with near-silence before the sound (cut from the front too, below -40 dB).
+LATE = {'hit-hammer-1', 'hit-hammer-2'}
 
 
 def run(*args):
@@ -146,6 +160,8 @@ def main(downloads, out):
         shaped = 'aformat=channel_layouts=mono,highpass=f=35'
         if name not in LOOPS:
             shaped += ',areverse,silenceremove=start_periods=1:start_threshold=-60dB,areverse'
+        if file in LATE:
+            shaped += ',silenceremove=start_periods=1:start_threshold=-40dB'
         said = run('ffmpeg', '-hide_banner', '-nostats', '-i', source, '-af', shaped + ',ebur128=peak=true', '-f', 'null', '-').stderr
         summary = said[said.rindex('Summary:'):]
         lufs, peak = (float(re.search(p, summary).group(1)) for p in (r'I:\s+(-?[\d.]+) LUFS', r'Peak:\s+(-?[\d.]+) dBFS'))
