@@ -30,7 +30,12 @@ export class Film {
     declare used: number[] | null;
 
     constructor(scene: BABYLON.Scene, name: string) {
-        this.texture = new BABYLON.DynamicTexture(name + '_film', { width: SIZE, height: SIZE }, scene, false, BABYLON.Texture.BILINEAR_SAMPLINGMODE);
+        // Kept in memory rather than on the card: what changed is read back off it to be sent (sendCanvasPart), and a canvas
+        // on the card stalls for that read every time (10 ms a frame in Firefox, the F2 profiler showed).
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = SIZE;
+        canvas.getContext('2d', { willReadFrequently: true });
+        this.texture = new BABYLON.DynamicTexture(name + '_film', canvas, scene, false, BABYLON.Texture.BILINEAR_SAMPLINGMODE);
         this.texture.hasAlpha = false;
         this.texture.wrapU = this.texture.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
         this.g = this.texture.getContext() as CanvasRenderingContext2D;
