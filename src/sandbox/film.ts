@@ -113,6 +113,13 @@ export class Film {
     // oftener than SENDS, only the part of the sheet that changed.
     update(dt: number) {
         this.clock += dt;
+        this._draw();
+        this._dry();
+        this._send();
+    }
+
+    // (Three steps, each timed on its own by the F2 profiler.)
+    _draw() {
         if (this.lines.size) {
             const g = this.g;
             g.lineCap = 'round';
@@ -128,6 +135,9 @@ export class Film {
             g.globalCompositeOperation = 'source-over';
             this.lines.clear();
         }
+    }
+
+    _dry() {
         if (this.anyEver && this.clock - this.dried > 8 && this.clock - this.painted < DRIES * 3) {
             const k = Math.round(255 * Math.exp(-(this.clock - this.dried) / DRIES));
             this.dried = this.clock;
@@ -140,6 +150,9 @@ export class Film {
             this.g.globalCompositeOperation = 'source-over';
             this.anyDirty = true;
         }
+    }
+
+    _send() {
         if (this.anyDirty && this.clock - this.sent > SENDS) {
             // Each row's runs of changed tiles, one send a run.
             const canvas = this.g.canvas as HTMLCanvasElement, d = this.dirty;
