@@ -54,7 +54,9 @@ function curled(t, pain) {
         hipFlexL: 68 + 18 * s * a, hipFlexR: 74 - 16 * s * a, kneeL: 96 + 12 * c * a, kneeR: 102 - 10 * c * a,
         spineFlex: 28 + 8 * c * a, spineTwist: 12 * Math.sin(t * 0.9) * a, spineSide: 8 * Math.sin(t * 0.6) * a,
         neckFlex: 28 + 10 * s * a, headTilt: 10 * c * a,
-        shoulderFlexL: 70, shoulderFlexR: 70, shoulderAbductL: -14, shoulderAbductR: -14, elbowL: 105, elbowR: 100, curlL: 55, curlR: 60,
+        // (The arms in over the front of the trunk, not into it: drawn across it at -14 degrees, the upper arms pressed into
+        // the belly with all the shoulder had.)
+        shoulderFlexL: 70, shoulderFlexR: 70, shoulderAbductL: 6, shoulderAbductR: 6, elbowL: 95, elbowR: 90, curlL: 55, curlR: 60,
     });
 }
 
@@ -71,10 +73,14 @@ function braced(way: 'ahead' | 'behind' | 'side', side: number, give: number) {
         ['shoulderFlex' + far]: 55, ['shoulderAbduct' + far]: -20, ['elbow' + far]: 60, spineSide: -12 * side, neckFlex: 15 });
 }
 
-// The army crawl: one arm out ahead along the floor while the other drags the body up to it.
+// The army crawl, lying on the front: the elbows out to the sides on the floor, one forearm put out ahead while the other
+// elbow, planted beside the chest, drags the body up to it; the head up. (With the arms in at the sides, as a body standing
+// holds them, lying prone they went in under the chest and the hands were trapped under it.)
 function crawling(phase) {
     const reachL = (1 + Math.sin(phase)) / 2, reachR = 1 - reachL;
-    const arm = (k, r) => ({ ['shoulderFlex' + k]: 40 + 125 * r, ['shoulderAbduct' + k]: -8 + 34 * r, ['elbow' + k]: 105 - 85 * r, ['curl' + k]: 20 + 25 * (1 - r) });
+    // (Out to the side first and forward last, as person.ts turns a shoulder: an arm out at 70 degrees is only spun about
+    // its own length by the forward turn, so the elbow is brought forward by the forward turn with the arm half out.)
+    const arm = (k, r) => ({ ['shoulderFlex' + k]: 110 + 55 * r, ['shoulderAbduct' + k]: 42 - 12 * r, ['elbow' + k]: 100 - 75 * r, ['curl' + k]: 20 + 25 * (1 - r) });
     // The legs trail, a knee drawn up a little on the side that reaches.
     return add(P.RELAXED, { ...arm('L', reachL), ...arm('R', reachR), spineFlex: -12, neckFlex: -42, headFlex: -12, spineSide: 6 * Math.sin(phase),
         hipFlexL: 4 + 10 * reachL, hipAbductL: 6 * reachL, kneeL: 8 + 14 * reachL, hipFlexR: 4 + 10 * reachR, hipAbductR: 6 * reachR, kneeR: 8 + 14 * reachR,
@@ -467,7 +473,6 @@ export class Behaviour {
         const facing = Q.RotationAxis(BABYLON.Axis.Y, this.heading);
         const bent = facing.multiply(Q.RotationAxis(BABYLON.Axis.X, (pose.spineFlex || 0) * RAD));
         const kp = 30 * (1 - 0.3 * daze), kd = 9 * (1 - 0.3 * daze) * (this.settle > 0 ? 2 : 1);
-        const trunk = ['pelvis', 'belly', 'chest'].map((n) => rd.byName.get(n));
         if (down.length) this.act((dt) => {
             rd.com(this.com);
             rd.comVelocity(this.vel);
@@ -486,10 +491,7 @@ export class Behaviour {
             this.muscles.lean(sway, height, down, dt);
             // The trunk's spin as a whole (pelvis, belly and chest by their weight), which the turns below are damped
             // against (motor.ts `toward`).
-            _spin.setAll(0);
-            let mass = 0;
-            for (const seg of trunk) { seg.body.getAngularVelocityToRef(_w); _spin.addInPlace(_w.scaleInPlace(seg.mass)); mass += seg.mass; }
-            _spin.scaleInPlace(1 / mass);
+            this._spinOfTrunk();
             // And turned to face where they mean to, as hard as the soles' grip allows. (For a standing body's 1.5 kg m2
             // about its length: at 40 kg m2 its damping alone was more than a step can give and turned it back and forth.)
             _t.set(0, clamp(this.muscles.toward(pelvis, facing, 40, 1.5, Infinity, _v, _spin).y, -40 * legs, 40 * legs), 0);
@@ -912,6 +914,7 @@ export class Behaviour {
             case 'roll': return this._roll(dt);
             case 'push': case 'lunge': case 'rise': return this._rise(dt);
             case 'crawl': return this._crawl(dt);
+            case 'creep': return this._creep(dt);
             case 'writhe': return this._writhe(dt);
             case 'rest': {
                 const s = this.strength;
@@ -935,7 +938,7 @@ export class Behaviour {
         if (this.mode === 'still') return w > 0.15;
         if (w < 0.12) return true;
         if (this.mode === 'rest' || this.mode === 'writhe') return this.t > 1;
-        if (this.mode === 'crawl') return w < 0.35 || this.t > 12;
+        if (this.mode === 'crawl' || this.mode === 'creep') return w < 0.35 || this.t > 12;
         return false;
     }
 
@@ -948,11 +951,16 @@ export class Behaviour {
         if (this.mode === 'still') this.wait = Math.max(this.wait, this.lying + 3 + 5 * (v.daze ?? 0));
         if (npc.grabbed) return mode('writhe');
         const prone = this._front().y < -0.5;
-        const arms = this.strength.armL > 0.3 || this.strength.armR > 0.3;
+        // (An arm broken is no use to drag the body with: both broken, they lie where they are.)
+        const arms = ['L', 'R'].some((k) => this.strength['arm' + k] > 0.3 && !this._broken('arm', k));
         if (this._canStand() && w > 0.55 && v.pain < 0.75 && this.lying > this.wait)
             return prone ? mode('push') : mode('roll', 'push');
-        if (!this._canStand() && w > 0.4 && arms && this.lying > 2.5 + v.pain * 4)
-            return prone ? mode('crawl') : mode('roll', 'crawl');
+        if (!this._canStand() && w > 0.4 && arms && this.lying > 2.5 + v.pain * 4) {
+            // On hands and knees with one leg hurt and the rest sound (the bad one held off the floor and dragged); on the
+            // elbows, the legs trailing, when neither leg will take a knee or an arm is gone.
+            const kind = this._onAllFours() ? 'creep' : 'crawl';
+            return prone ? mode(kind) : mode('roll', kind);
+        }
         if (v.pain > 0.35 || v.lost > 0.2) return mode('writhe');
         return mode('rest');
     }
@@ -1072,7 +1080,7 @@ export class Behaviour {
                 }
                 this.muscles.push(seg, side, limbs, dt);
                 // The lean steered like the roll: as a turn of the trunk itself, while there is floor to push on.
-                if (limbs.length) seg.body.applyAngularImpulse(this.muscles.toward(seg, want, 30, 12, 160 * will, _t).scaleInPlace(dt));
+                if (limbs.length) seg.body.applyAngularImpulse(this.muscles.toward(seg, want, 30, 12, 160 * will, _t, this._spinOfTrunk()).scaleInPlace(dt));
             });
         }
         return pose;
@@ -1088,10 +1096,75 @@ export class Behaviour {
         return REST;
     }
 
+    // Whether they can go on hands and knees: both arms sound, the cord whole, and one leg sound to kneel on.
+    _onAllFours() {
+        const v = this.npc.vitals, legs = ['L', 'R'].filter((k) => !this._broken('leg', k) && !this.rd.cutOff(this.rd.byName.get('foot' + k)));
+        return !v.paralysed.legs && !v.paralysed.arms && legs.length > 0 && ['L', 'R'].every((k) => !this._broken('arm', k) && !this.rd.cutOff(this.rd.byName.get('hand' + k)));
+    }
+
+    // On hands and knees, away from whoever did it: a hand and the knee on the other side forward together, then the other
+    // two, the trunk held up level over them by the limbs on the floor (as getting up holds it, _rise) and carried on by
+    // them. A broken leg is not posed (_guard): it trails behind on the floor.
+    _creep(dt) {
+        const rd = this.rd, will = this.will;
+        if (this._front().y > -0.3) { this.mode = 'roll'; this.next = 'creep'; this.t = 0; return REST; }
+        const pelvis = rd.byName.get('pelvis'), chest = rd.byName.get('chest');
+        if (this.t < dt * 1.5) {
+            const eye = this.npc.world.camera?.position ?? V3.Zero();
+            this.heading = Math.atan2(chest.node.position.x - eye.x, chest.node.position.z - eye.z);
+        }
+        // Up onto all fours first, then on at about a stride a second and a half.
+        const up = smooth(this.t / 1.2);
+        this.phase += dt * (2 * Math.PI / 1.5) * (0.5 + 0.5 * will) * up;
+        const pose: any = { ...ALL4 };
+        const swing = (k) => Math.max(0, Math.sin(this.phase + k)) * up;
+        for (const [hand, knee, k] of [['L', 'R', 0], ['R', 'L', Math.PI]] as [string, string, number][]) {
+            // The hand lifted and carried forward (the elbow bending to clear the floor), the knee drawn up under the hips.
+            pose['shoulderFlex' + hand] += 26 * swing(k) - 8 * swing(k + Math.PI);
+            pose['elbow' + hand] += 25 * swing(k);
+            // (No further than a few degrees past square to the trunk: drawn up further, the thigh went into the belly.)
+            pose['hipFlex' + knee] += 12 * swing(k) - 12 * swing(k + Math.PI);
+            pose['knee' + knee] += 15 * swing(k);
+        }
+        pose.spineSide = 5 * Math.sin(this.phase);
+        const f = this._facing(), limbs = this._limbsDown();
+        const want = Q.RotationAxis(BABYLON.Axis.Y, this.heading).multiply(Q.RotationAxis(BABYLON.Axis.X, Math.PI / 2));
+        const weight = rd.mass * G, pace = 0.3 * will * up;
+        this._spinOfTrunk();
+        // The hips a thigh and a knee's thickness up off the floor, the trunk level with them. (_measure's all-fours heights,
+        // 0.79 m at the hips, are of legs left nearly straight: held up toward them, the lift ran out and the body sagged.)
+        const hips = this.leg.L.a + 0.06;
+        for (const [seg, height, share] of [[pelvis, hips, 0.45], [chest, hips, 0.55]] as [any, number, number][]) {
+            this.act((dt) => {
+                if (!limbs.length) return;
+                seg.body.getLinearVelocityToRef(_v);
+                const m = rd.mass * share;
+                const lift = clamp(m * (G * 0.55 + 30 * (this.floor + height - seg.node.position.y) - 9 * _v.y), 0, weight * share * 0.8 * will);
+                // Carried on at the pace along the way they face, held from drifting across it.
+                const along = V3.Dot(_v, f), push = clamp(m * 6 * (pace - along), -0.15 * weight * share, 0.15 * weight * share);
+                const force = new V3(f.x * push - (_v.x - f.x * along) * 4 * m, lift, f.z * push - (_v.z - f.z * along) * 4 * m);
+                this.muscles.push(seg, force, limbs, dt);
+                this._spinOfTrunk();
+                seg.body.applyAngularImpulse(this.muscles.toward(seg, want, 30, 12, 160 * will, _t, _spin).scaleInPlace(dt));
+            });
+        }
+        return pose;
+    }
+
+    // The trunk's spin as a whole (pelvis, belly and chest by their weight), in _spin: what turns given to the trunk are
+    // damped against (motor.ts `toward`).
+    _spinOfTrunk() {
+        _spin.setAll(0);
+        let mass = 0;
+        for (const n of ['pelvis', 'belly', 'chest']) { const seg = this.rd.byName.get(n); seg.body.getAngularVelocityToRef(_w); _spin.addInPlace(_w.scaleInPlace(seg.mass)); mass += seg.mass; }
+        return _spin.scaleInPlace(1 / mass);
+    }
+
     // Dragging themselves away from whoever did it, on their elbows, the legs trailing.
     _crawl(dt) {
         const rd = this.rd, will = this.will, s = this.strength;
-        if (this._front().y > -0.3) { this.mode = 'roll'; this.next = 'crawl'; this.t = 0; return REST; }
+        // (Flat on the front first: crawling from three-quarters over, the arm underneath was dragged under the hips.)
+        if (this._front().y > -0.5) { this.mode = 'roll'; this.next = 'crawl'; this.t = 0; return REST; }
         const chest = rd.byName.get('chest');
         if (this.t < dt * 1.5) {
             const eye = this.npc.world.camera?.position ?? V3.Zero();
@@ -1107,20 +1180,23 @@ export class Behaviour {
             if (!arm || this._broken('arm', side)) continue;
             const reaching = Math.cos(this.phase) * (side === 'L' ? 1 : -1);
             if (reaching > 0) {
-                const spot = chest.node.position.add(f.scale(0.62)).add(new V3(f.z, 0, -f.x).scale(side === 'R' ? 0.2 : -0.2));
+                // (Out past the side of the head: at 20 cm either side the forearm went across the face.)
+                const spot = chest.node.position.add(f.scale(0.5)).add(new V3(f.z, 0, -f.x).scale(side === 'R' ? 0.36 : -0.36));
                 spot.y = this.floor + 0.04;
                 this.act((dt) => this.muscles.push(hand, this.muscles.reach(hand, spot, 80, 2, 45 * arm * will, _t), [chest], dt));
-            } else if (rd.lowest(hand) < this.floor + TOUCH * 2) {
-                // The hand on the floor holds, and the body is pulled up to it.
+            } else {
+                // The forearm on the floor (or the hand, whichever is down) holds, and the body is pulled up to it.
+                const fore = rd.byName.get('forearm2' + side), on = rd.lowest(fore) < rd.lowest(hand) ? fore : hand;
+                if (rd.lowest(on) > this.floor + TOUCH * 2) continue;
                 const pull = -reaching * 230 * arm * will;
                 this.act((dt) => {
-                    this.muscles.push(chest, f.scale(pull), [hand], dt);
-                    this.muscles.push(hand, new V3(0, -pull * 0.7, 0), [chest], dt);
+                    this.muscles.push(chest, f.scale(pull), [on], dt);
+                    this.muscles.push(on, new V3(0, -pull * 0.7, 0), [chest], dt);
                 });
             }
         }
         const along = Q.RotationAxis(BABYLON.Axis.Y, this.heading).multiply(Q.RotationAxis(BABYLON.Axis.X, Math.PI / 2));
-        this.act((dt) => this.muscles.turn(chest, this.muscles.toward(chest, along, 8, 10, 30 * will, _t), limbs, dt));
+        this.act((dt) => this.muscles.turn(chest, this.muscles.toward(chest, along, 8, 10, 80 * will, _t, this._spinOfTrunk()), limbs, dt));
         return pose;
     }
 
@@ -1217,10 +1293,14 @@ const SEEDS = [[-60, 40, 0, 95], [-80, 65, 25, 105], [-45, 80, -30, 125], [-30, 
 // hand's middle and the fingertips, by about their flesh (m). (The hand only as far as its palm: it is meant to come to
 // the body; let through, it went across the front of the chest through the chest's box and stopped on it.)
 const ALONG = [0, 0.5, 0.75, 1, 1.2], FLESH = [0.04, 0.036, 0.03, 0.018, 0.008];
+// And the upper arm's lower half, which meets the belly and the hips (the half at the shoulder is jointed to the chest):
+// left out, a reach across the body was solved with the upper arm inside the belly's flank, and the shoulder's spring
+// pressed it there, 100 to 450 N, the arm shaking against it.
+const UPPER = [0.6, 0.85], UPPER_FLESH = 0.04;
 
 // What a reach misses by, as a list (_r, its length returned): the hand from _goal, then how deep each point of the
-// forearm is in the trunk.
-const _r = new Array(8).fill(0), _r2 = new Array(8).fill(0), _J = [_r.slice(), _r.slice(), _r.slice(), _r.slice()];
+// forearm is in the trunk, then each point of the upper arm in the belly or the hips.
+const _r = new Array(10).fill(0), _r2 = new Array(10).fill(0), _J = [_r.slice(), _r.slice(), _r.slice(), _r.slice()];
 function misses(arm, x: number[], r: number[]) {
     handAt(arm, x, _now);
     r[0] = _now.x - _goal.x; r[1] = _now.y - _goal.y; r[2] = _now.z - _goal.z;
@@ -1234,6 +1314,17 @@ function misses(arm, x: number[], r: number[]) {
             if (into < 0) deep = Math.max(deep, -into);
         }
         r[3 + k] = 2 * deep;
+    }
+    for (let k = 0; k < UPPER.length; k++) {
+        _pt.copyFrom(_elbow).subtractInPlace(arm.s).scaleInPlace(UPPER[k]).addInPlace(arm.s);
+        let deep = 0;
+        for (let i = 1; i < arm.boxes.length; i++) {
+            const b = arm.boxes[i], g = b.seg.geo;
+            _pt.subtractToRef(b.o, _loc).applyRotationQuaternionInPlace(b.inv);
+            const into = Math.max(Math.abs(_loc.x - g.c.x) - g.h.x, Math.abs(_loc.y - g.c.y) - g.h.y, Math.abs(_loc.z - g.c.z) - g.h.z) - UPPER_FLESH;
+            if (into < 0) deep = Math.max(deep, -into);
+        }
+        r[3 + ALONG.length + k] = 2 * deep;
     }
     return Math.hypot(...r);
 }

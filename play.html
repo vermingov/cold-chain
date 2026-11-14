@@ -69,7 +69,8 @@ window.addEventListener('error', (e) => hud.error(e.error || e.message));
 window.addEventListener('unhandledrejection', (e) => hud.error(e.reason));
 const sandbox = await openSandbox(engine, canvas, hud);
 const loading = document.getElementById('loading');
-await sandbox.warm((text) => { loading.textContent = text; });
+// (?nowarm: the rig's measurements, which never draw what the warm-up compiles; on the software renderer it takes many minutes.)
+if (!new URLSearchParams(location.search).has('nowarm')) await sandbox.warm((text) => { loading.textContent = text; });
 window.__sandbox = sandbox;
 engine.runRenderLoop(() => {
     try {
