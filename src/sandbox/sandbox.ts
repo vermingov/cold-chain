@@ -157,7 +157,11 @@ export async function openSandbox(engine, canvas, hud) {
         await sound.load('assets/cries/', await (await fetch('assets/cries/manifest.json')).json());
         sound.room('cold');
         sound.screened = screened;
-        world.sound = { shot: (name, o = {}) => (sound.has(name) ? sound.shot(name, o) : null), now: () => sound.context.currentTime, raw: sound };
+        world.sound = {
+            shot: (name, o = {}) => (sound.has(name) ? sound.shot(name, o) : null),
+            stream: (name, at = null) => (sound.has(name) ? sound.stream(name, at) : null),
+            now: () => sound.context.currentTime, raw: sound,
+        };
         player.onStep = (_, weight) => world.sound.shot('step-tarmac', { gain: weight * 0.8, most: 0.4 });
         if (sound.has('room-sandbox')) world.tone = sound.stream('room-sandbox');
     };
