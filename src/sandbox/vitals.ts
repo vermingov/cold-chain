@@ -38,6 +38,7 @@ export class Vitals {
     declare daze: number;
     declare pain: number;
     declare paralysed: { legs: boolean; arms: boolean };
+    declare blind: { L: boolean; R: boolean };      // an eye that no longer sees (eyes.ts)
     declare injuries: { text: string; severity: number }[];
     declare dead: boolean;
     declare lowPressure: number;
@@ -67,6 +68,7 @@ export class Vitals {
         this.daze = 0;             // 0 to 1: how muddled after a blow to the head, wearing off over minutes
         this.pain = 0;
         this.paralysed = { legs: false, arms: false };
+        this.blind = { L: false, R: false };
         this.injuries = [];
         this.dead = false;
         this.lowPressure = 0;

@@ -111,10 +111,10 @@ export class Behaviour {
     declare wasOut: boolean;
     declare settle: number;
     declare flinch: Record<string, number>;
-    declare wound: { seg: any; local: BABYLON.Vector3; out: BABYLON.Vector3; t: number; size: number; hands?: string[] } | null;
+    declare wound: { seg: any; local: BABYLON.Vector3; out: BABYLON.Vector3; t: number; size: number; hands?: string[]; front?: boolean } | null;
     declare hurt: Record<string, boolean>;
     declare holding: Record<string, boolean>;       // the hands on a wound this frame (_hold)
-    declare _grips: Record<string, { to: BABYLON.Vector3; best: number; since: number; hold: BABYLON.Vector3 | null; t: number }>;
+    declare _grips: Record<string, { to: BABYLON.Vector3; best: number; since: number; hold: BABYLON.Vector3 | null; t: number }>;     // (to and hold in the chest's frame)
     declare favour: { side: string; how: number } | null;
     declare hunch: number;
     declare _arms: Record<string, any>;
@@ -641,6 +641,7 @@ export class Behaviour {
             w.local = root.head.subtract(root.parent.head);
             w.out = w.local.normalizeToNew();
             w.hands = undefined;
+            w.front = undefined;
         }
         w.t += dt;
         // Quick to it (a third of a second), as much as it hurts, and not at all once the mind is going.
@@ -673,7 +674,20 @@ export class Behaviour {
                 this.strength['arm' + side] *= 1 - 0.5 * e;
                 this._cradle = side;
             }
-            if (this._free(other)) this._hold(other, on, out, e, pose);
+            if (this._free(other)) {
+                // The back of the shoulder or arm the other hand cannot get round to is clutched from in front, over the same
+                // place on the arm. (Sent after the back, out of its reach, the hand stopped wedged between the chest and
+                // the hurt arm held across it, and the two arms shook against each other, 18 to 24 rad/s.)
+                const ahead = new V3(0, 0, 1).applyRotationQuaternion(this.rd.byName.get('chest').node.rotationQuaternion);
+                // (Decided once for the wound: decided every frame, a reach missing by about the limit went back and forth.)
+                w.front ??= V3.Dot(out, ahead) < -0.3 && this._armTo(other, on).miss > 0.05;
+                if (w.front) {
+                    const [a, b] = this.rd.segmentEnds(seg), line = b.subtract(a), t = clamp(V3.Dot(on.subtract(a), line) / line.lengthSquared());
+                    on.copyFrom(a.add(line.scale(t))).addInPlace(ahead.scale(seg.radius + 0.02));
+                    out.copyFrom(ahead);
+                }
+                this._hold(other, on, out, e, pose);
+            }
             more({ spineFlex: 8, neckFlex: 14 });
         } else if (/^(thigh|shin|foot)/.test(name)) {
             // A hand to a thigh, which it reaches standing (the one on its side, or the other if that one cannot); lower
@@ -687,7 +701,9 @@ export class Behaviour {
             // The trunk, the neck, the face or the scalp: the free hand that gets nearest it (the arm's own reach worked out
             // round the body, _armTo), and for a big wound (a shotgun's, a rifle's way out) the other over it.
             if (!w.hands || w.hands.some((k) => !this._free(k))) {
-                const free = ['L', 'R'].filter((k) => this._free(k));
+                // (Not the hand whose own upper arm lies over the place, an armpit or the flank under it: reaching for it,
+                // that arm went up and round itself, flailing.)
+                const free = ['L', 'R'].filter((k) => this._free(k) && !this._under(k, on));
                 const miss = (k) => this._armTo(k, on).miss + (k === side ? 0 : 0.02);
                 free.sort((a, b) => miss(a) - miss(b));
                 w.hands = free.slice(0, w.size > 6 ? 2 : 1);
@@ -728,6 +744,13 @@ export class Behaviour {
     declare _eased: Record<string, any>;
     declare _dt: number;
 
+    // Whether a place (world) lies under the upper arm on `side`, within a hand's breadth of it.
+    _under(side, at: BABYLON.Vector3) {
+        const rd = this.rd, a = rd.byName.get('upperarm' + side), elbow = rd.segmentEnds(rd.byName.get('upperarm2' + side))[1];
+        const from = a.node.position, line = elbow.subtract(from), t = clamp(V3.Dot(at.subtract(from), line) / line.lengthSquared());
+        return V3.Distance(at, from.add(line.scale(t))) < a.radius + 0.07;
+    }
+
     // Which way is up the trunk.
     _up() { return new V3(0, 1, 0).applyRotationQuaternion(this.rd.byName.get('chest').node.rotationQuaternion); }
 
@@ -755,17 +778,23 @@ export class Behaviour {
         const skip = (s) => s === wound || (/^(upperarm|forearm|hand)/.test(s.name) && s.name.endsWith(side)) || (limb && s.name.replace(/2?([LR])$/, '') === limb && s.name.endsWith(wound.name.slice(-1)));
         for (let k = 0; k < 3 && rd.attached.some((s) => !skip(s) && rd.outside(s, at) < -0.005); k++) at = at.add(out.scale(0.02));
         const now = rd.worldPoint(hand, hand.centre, new V3());
+        // Where it is going and where it was held up are kept as the chest carries them, and it is sent again only when the
+        // place has moved on the body. (Kept in the room, a body swaying 5 cm sent the hand off again, and one held up was
+        // pulled back to where the room had been; with a try again every second and a half besides, a hand that could
+        // not get to a shoulder or an armpit went back and forth at it for as long as it hurt, the arm waving.)
+        const chest = rd.byName.get('chest'), cq = chest.node.rotationQuaternion, cp = chest.node.position;
+        Q.InverseToRef(cq, _q);
+        const local = at.subtract(cp).applyRotationQuaternionInPlace(_q);
         let g = this._grips[side];
-        if (!g || V3.Distance(g.to, at) > 0.05) g = this._grips[side] = { to: at.clone(), best: Infinity, since: this.clock, hold: null, t: this.clock };
-        const reach = this._armTo(side, g.hold ?? at), to = g.hold ?? (reach.miss > 0.03 ? reach.hand : at);
+        if (!g || V3.Distance(g.to, local) > 0.05) g = this._grips[side] = { to: local, best: Infinity, since: this.clock, hold: null, t: this.clock };
+        const held = g.hold && g.hold.applyRotationQuaternion(cq).addInPlace(cp);
+        const reach = this._armTo(side, held ?? at), to = held ?? (reach.miss > 0.03 ? reach.hand : at);
         const d = V3.Distance(now, to);
         // (On it: the hand's middle within its own half thickness and a little of where it is going, which lies just off
         // the skin.)
         const touching = d < 0.06;
-        if (!g.hold) {
-            if (d < g.best - 0.01) { g.best = d; g.since = this.clock; }
-            if (!touching && this.clock - g.since > 0.3) { g.hold = now.clone(); g.t = this.clock; }
-        } else if (this.clock - g.t > 1.5 && V3.Distance(now, at) > 0.08) this._grips[side] = null;
+        if (!g.hold && d < g.best - 0.01) { g.best = d; g.since = this.clock; }
+        if (!g.hold && !touching && this.clock - g.since > 0.3) { g.hold = now.subtract(cp).applyRotationQuaternionInPlace(_q); g.t = this.clock; }
         // A hand goes all the way or not at all: how much it hurts is in how hard it presses (and how bent over they are).
         const all = smooth(how * 2.5);
         this._reachPose(side, reach, all, pose);
@@ -776,7 +805,7 @@ export class Behaviour {
         // springs drove the hand on into it, 30 N at the hand for 2 cm, and it rattled there.)
         if (g.hold || touching) this.strength['arm' + side] *= g.hold ? 0.6 : 0.35;
         if (g.hold) return;
-        const chest = rd.byName.get('chest'), carrier = this.wound?.seg ?? null;
+        const carrier = this.wound?.seg ?? null;
         if (touching) {
             // Pressed into the skin a little, as firmly as it hurts.
             const into = at.subtract(out.scale(0.03)), most = 12 * this.will * how;

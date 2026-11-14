@@ -51,7 +51,7 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
         // Each gun at someone (entry, exit, lips, the hider's windows, blood on skin and clothes, soak), the shotgun from close
         // into a belly (the opened belly and its organs) and from range.
         const shots: [string, any, string, number?][] = [['pistol', a, 'chest'], ['m4', a, 'thighL'], ['ak', b, 'belly'], ['rifle', b, 'head'],
-            ['shotgun', c, 'belly', 0.9], ['shotgun', d, 'chest', 5], ['pistol', c, 'upperarmR'], ['rifle', d, 'thighR']];
+            ['shotgun', c, 'belly', 0.9], ['shotgun', d, 'chest', 5], ['pistol', c, 'upperarmR'], ['rifle', d, 'thighR'], ['deagle', a, 'belly'], ['r22', c, 'thighL']];
         for (const [key, npc, part, from] of shots) {
             say(`Preparing shaders: ${ARMS.find((x) => x.key === key)?.name ?? key}.`);
             weapons.take(key);

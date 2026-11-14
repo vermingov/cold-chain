@@ -50,7 +50,10 @@ export class Thuds {
             const trunk = base === 'pelvis' || base === 'belly' || base === 'chest';
             // Into something standing (a wall, a pillar, a crate's side), not a person and not from below.
             const into = V3.TransformCoordinates(seg.centre, seg.node.getWorldMatrix()).subtract(e.point);
-            const side = !other && Math.abs(into.normalize().y) < 0.6;
+            // (By the contact's own normal: by the way from the segment's middle to the contact, a hand or a foot, flat
+            // boxes, touching the floor at an edge was a slam into a wall, and people lying or getting up broke their
+            // wrists, forearms and feet on the floor, the pain sent them down again, and they went up and down.)
+            const side = !other && !!e.normal && Math.abs(e.normal.y) < 0.6;
             // A head knocks on the floor or a wall (on a person it is a blow); a trunk slams into a wall or falls; a limb
             // slaps (a soft one sometimes only lands), or a fast one hits as hard as a blow.
             const take = base === 'head' ? (other ? 'blunt' : 'head-hit') : trunk ? (side ? 'body-slam' : 'body-fall')
@@ -58,7 +61,7 @@ export class Thuds {
             sound?.shot(take, { at: e.point.asArray(), gain: trunk ? loud : loud * 0.8 });
             // Into something standing, hard: the wall gives nothing and the part takes it as a blow. (From below is a
             // landing: bones.ts counts those.)
-            if (side && speed > HURTS) blow(npc, e.point, into, seg.mass, speed);
+            if (side && speed > HURTS) blow(npc, e.point, into.normalize(), seg.mass, speed);
         }
     }
 

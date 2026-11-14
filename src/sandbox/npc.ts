@@ -152,8 +152,9 @@ export class Npc {
     // --- what a line through them meets ------------------------------------------------
 
     // The skin and clothes crossed by the line from `origin` along unit `dir`, nearer than `far`, in order:
-    // [{ t, kind: 'skin' | 'cloth', point, normal, uv, rest, restNormal, owner, scale }].
-    surface(origin: BABYLON.Vector3, dir: BABYLON.Vector3, far: number) {
+    // [{ t, kind: 'skin' | 'cloth', point, normal, uv, rest, restNormal, owner, scale }]. With `eyes`, the eyeballs too
+    // (kind 'eye'): a line through the open lids meets the eye before the socket's skin behind it (eyes.ts).
+    surface(origin: BABYLON.Vector3, dir: BABYLON.Vector3, far: number, eyes = false) {
         const skinned = this._skin();
         const inv = this.person.mesh.getWorldMatrix().clone().invert();
         const o = V3.TransformCoordinates(origin, inv), d = V3.TransformNormal(dir, inv).normalize();
@@ -163,7 +164,7 @@ export class Npc {
         const boxes = this._boxes(skinned, index);
         for (const p of this.person.header.parts) {
             // (The skin under the clothes is not drawn but is still where the body begins.)
-            const kind = p.kind === 'skin' ? 'skin' : p.kind === 'cloth' ? 'cloth' : null;
+            const kind = p.kind === 'skin' ? 'skin' : p.kind === 'cloth' ? 'cloth' : eyes && p.kind === 'eyes' ? 'eye' : null;
             if (!kind) continue;
             if (!slabFor(p, skinned, o, d, far * scale)) continue;
             const end = p.indexStart + p.indexCount;
@@ -173,6 +174,9 @@ export class Npc {
                 if (boxCrossed(boxes, run * 6, o, d, far * scale)) {
                     for (let i = start; i < next; i += 3) {
                         const t = triangle(o, d, skinned, index, i);
+                        // (The clear cornea over each eye is a shell painted see-through, its corners all on the sheet's
+                        // empty corner: the eye is the white and the iris under it.)
+                        if (kind === 'eye' && this._uv[index[i] * 2] > 0.87 && this._uv[index[i] * 2 + 1] < 0.13) continue;
                         if (t > 0 && t < far * scale) hits.push({ t: t / scale, i, kind });
                     }
                 }

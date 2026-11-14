@@ -67,11 +67,17 @@ const cap = (s) => s[0].toUpperCase() + s.slice(1);
 // A line from `origin` along unit `dir` through person `npc`, carrying `m`. Returns where it stopped (or left them)
 // and the energy it still has.
 export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Missile, far = 3) {
-    const surface = npc.surface(origin, dir, far);
-    const skins = surface.filter((h) => h.kind === 'skin');
+    const surface = npc.surface(origin, dir, far, true);
+    let skins = surface.filter((h) => h.kind === 'skin');
+    // The eyes in its way, the first crossing of each (eyes.ts). One met from in front, through the open lids or just behind
+    // a shut lid, is the way in: the skin of the socket behind it (and a shut lid's, in front) is the one crossing into the
+    // head, not two.
+    const eyes = surface.filter((h, k) => h.kind === 'eye' && !surface.slice(0, k).some((o) => o.kind === 'eye' && o.owner === h.owner));
+    const viaEye = skins.length && eyes[0] && eyes[0].t < Math.min(skins[1]?.t ?? Infinity, skins[0].t + 0.03) ? eyes[0] : null;
+    if (viaEye) skins = skins.filter((h, k) => k === 0 || h.t > viaEye.t + 0.035);
     if (!skins.length) {
         // Only clothes in the way (a sleeve standing off an arm): a hole in them and nothing else.
-        for (const h of surface) npc.wound(h, 'in', m.calibre);
+        for (const h of surface) if (h.kind === 'cloth') npc.wound(h, 'in', m.calibre);
         return { stopped: false, at: null, energy: m.energy, hit: surface.length > 0 };
     }
     const { spans, vessels } = npc.insides.trace(origin, dir, far, m.channel);
@@ -114,6 +120,13 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
             const at = energy, point = origin.add(dir.scale(Math.max(t, s.enter)));
             // A blade is stopped by bone, and does not break it: a heavy one bites into it.
             if (m.blade) {
+                // Except behind an eye: the socket's roof and walls are paper-thin, under a millimetre, and a blade driven
+                // through the eye goes on into the brain (eye-trauma.md sec. 2, Blade).
+                if (viaEye && at > 25 && /sphenoid|frontal|ethmoid/.test(s.part.name) && t < viaEye.t + 0.07) {
+                    energy -= 15;
+                    v.injure('Blade through the back of the eye socket into the skull', 8);
+                    continue;
+                }
                 if (at > 60) v.injure(`${cap(s.part.name)} notched by the blade`, 3);
                 stopAt = Math.max(t, s.enter); energy = 0; break;
             }
@@ -145,7 +158,15 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     for (const hit of vessels) if (hit.t < stopAt) vessel(npc, hit, m);
     // The flesh itself: skin, fat and muscle bleed a little from any wound.
     const deep = Math.min(stopAt, inside[0][1]) - enter.t;
-    if (m.blade && !m.slash) slit(npc, enter, cloths, dir, m, deep);
+    // (A blade into an open eye cuts the eye, not the socket's skin behind it: eyes.ts.)
+    if (m.blade && !m.slash && !(viaEye && viaEye.t < enter.t)) slit(npc, enter, cloths, dir, m, deep);
+    // Each eye it went through, hurt as an eye: through and through if the path went on well past it. What runs out of
+    // the one it went in by runs from that lower lid.
+    let lid = null;
+    if (!m.slash) for (const h of eyes) if (h.t < stopAt) {
+        const out = npc.face.eyes.pierced(h, m, dir, Math.min(stopAt, far) - h.t, stopAt > h.t + 0.04);
+        if (h === viaEye && viaEye.t < enter.t) lid = out;
+    }
     v.bleed({ name: 'wound', rate: 0.00025 * (m.channel / 0.006) * Math.min(1, deep / 0.05 + 0.3), clots: 0.02, source: { mark: enter } });
     v.pain = Math.min(1, v.pain + 0.25 + (bones ? 0.25 : 0));
     const region = regionOf(npc, enter);
@@ -166,7 +187,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         if (exitHit) exitHit.cloth = h;
     }
     // The scalp and face are full of small vessels and bleed far more than a wound anywhere else of the same size.
-    if (npc.ragdoll.nearest(enter.point).seg?.name === 'head') {
+    if (npc.ragdoll.nearest(enter.point).seg?.name === 'head' && !lid) {
         v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
         if (exitHit) v.bleed({ name: 'scalp', rate: 0.002, clots: 0.003, source: { mark: exitHit } });
     }
@@ -175,11 +196,11 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     // gunshot-blood.md sec. 2). A little follows the blade out or wets the lips of a hole (an estimate); the rest comes
     // as the wound bleeds (npc._bleed), welling over seconds.
     if (!m.slash) {
-        npc.welling(enter, 0.03);
+        if (!lid) npc.welling(enter, 0.03);
         npc.welling(exitHit, 0.1);
     }
     // What bleeds comes out of the wound: the way out if there is one, it being the bigger.
-    for (const b of v.bleeds.slice(first)) b.source = { ...b.source, mark: b.source?.mark ?? exitHit ?? enter };
+    for (const b of v.bleeds.slice(first)) b.source = { ...b.source, mark: (lid && b.source?.mark === enter ? lid : b.source?.mark) ?? exitHit ?? lid ?? enter };
     // The push it gave: its momentum, as much of it as it left in the body.
     const share = m.energy > 0 ? (m.energy - energy) / m.energy : 1;
     const speed = Math.sqrt((2 * m.energy) / Math.max(1e-4, m.mass));
@@ -408,6 +429,10 @@ export function blow(npc, point: BABYLON.Vector3, dir: BABYLON.Vector3, mass: nu
     if (skin) for (const b of v.bleeds.slice(first)) b.source = { mark: skin };
     // Redness, bruising, swelling and split skin (bruise.ts), after the line above: its own bleeds come out where it says.
     npc.bruise.blow(skin, dir, mass, speed, tool);
+    // The eye under it: blood under its white, in its front chamber, or burst by something narrower than the socket's
+    // rim (eyes.ts; the socket's floor is bones.ts's).
+    const narrow = tool === 'bat' || tool === 'edge' || tool === 'hammer' || (typeof tool === 'number' ? tool > 1e5 : tool === undefined && mass < 1.2 && speed > 10);
+    if (base === 'head') npc.face.eyes.struck(point, dir, energy, narrow);
     npc.hit(point, dir.scale(mass * speed * 0.9), 0);
 }
 

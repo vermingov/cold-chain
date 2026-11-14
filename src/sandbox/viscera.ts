@@ -32,6 +32,7 @@
 
 import * as BABYLON from '@babylonjs/core';
 import { GLSL_BLOOD } from './fluid.ts';
+import { Wall } from './wall.ts';
 const V3 = BABYLON.Vector3;
 
 // A cut must be this deep to go through the abdominal wall (skin, fat, muscle and peritoneum: 2 to 4 cm in a lean man).
@@ -174,6 +175,7 @@ export class Viscera {
     declare npc: any;
     declare openings: Opening[];
     declare loops: Loop[];
+    declare walls: Wall[];
     declare mesh: BABYLON.Mesh | null;
     declare tubes: Map<string, BABYLON.PBRMaterial>;
     declare spots: { at: BABYLON.Vector3; r: number }[];
@@ -185,6 +187,7 @@ export class Viscera {
         this.npc = npc;
         this.openings = [];
         this.loops = [];
+        this.walls = [];
         this.mesh = null;
         this.spots = [];
         this._stale = false;
@@ -209,16 +212,19 @@ export class Viscera {
         for (const h of [npc.skinHider, ...npc.underHiders]) { h.add(hole); h.opens(); }
         for (const h of npc.clothHiders) h.add({ at: o.at, ex, ey: n, half: [half[0] * 1.1 + 0.005, half[1] * 1.15 + 0.004] });
         for (const h of npc.underHiders) h.window(o.at, n, half[0] + 0.015, 0.05);
-        this._lips(o);
+        const edge = this._lips(o);
         this.openings.push(o);
         this._organs();
-        // What it does: the wall's own vessels bleed, and the chest open, the lung falls in.
         const v = npc.vitals, chest = region(npc, npc.worldOf(o.at, o.owner).at) === 'chest';
+        // The wall's own thickness round it, every layer cut (wall.ts).
+        this.walls.push(new Wall(npc, o, edge, chest, gape));
+        // What it does: the wall's own vessels bleed, and the chest open, the lung falls in.
         v.pain = Math.min(1, v.pain + 0.5);
         v.bleed({ name: chest ? 'chest wall' : 'abdominal wall', rate: 0.0008 + length * 0.006, clots: 0.006, source: { mark: hit } });
         if (chest) {
             // Air drawn in through the hole as the chest rises: the lung on that side falls in (a sucking chest wound).
-            const side = V3.Dot(o.at, V3.Right()) > 0 ? 'L' : 'R';
+            // (The person's right is +x at rest: anatomy.py.)
+            const side = o.at.x > 0 ? 'R' : 'L';
             v.lungs[`leak${side}`] = true;
             v.injure('Chest wall opened: air sucked in, the lung collapsing', 8);
         } else {
@@ -241,14 +247,15 @@ export class Viscera {
     _lips(o: Opening) {
         // (Each point of the edge found on the skin by a line in from outside along the skin's facing: the edge laid
         // flat across a curved belly stands off it, nearer the clothes than the skin, and nearest() then finds cloth.)
-        const npc = this.npc, ey = V3.Cross(o.normal, o.ex), edge = [];
+        const npc = this.npc, ey = V3.Cross(o.normal, o.ex), all = [];
         for (let k = 0; k < 40; k++) {
             const a = (k / 40) * Math.PI * 2, x = Math.cos(a) * o.half[0];
             const w = npc.worldOf(o.at.add(o.ex.scale(x)).add(ey.scale(Math.sign(Math.sin(a)) * gape(o.half, x))), o.owner, o.normal);
-            const on = npc.surface(w.at.add(w.normal.scale(0.1)), w.normal.scale(-1), 0.2).find((h) => h.kind === 'skin');
-            if (on) edge.push(on);
+            all.push(npc.surface(w.at.add(w.normal.scale(0.1)), w.normal.scale(-1), 0.2).find((h) => h.kind === 'skin') ?? null);
         }
+        const edge = all.filter(Boolean);
         if (edge.length > 2) npc.marks.lip(edge, Math.min(0.015, 0.006 + o.half[1] * 0.25));
+        return all;
     }
 
     // --- what can come out ----------------------------------------------------------------------
@@ -314,14 +321,14 @@ export class Viscera {
         const npc = this.npc, data = npc.insides.data, { position, normal, index } = data;
         const scene: BABYLON.Scene = npc.world.scene;
         // Whole clusters (about fifty triangles each) near an opening, part by part, by the look each is drawn in.
-        const groups = new Map<string, { tris: Int32Array; owner: number }[]>();
+        const groups = new Map<string, { tris: Int32Array; owner: number; part: any }[]>();
         let tris = 0;
         for (const part of npc.insides.parts) {
             const kind = part.kind === 'bone' || part.kind === 'cartilage' ? (SHOWN_BONES.test(part.name) ? part.kind : null) : SHOWN.test(part.kind) ? part.kind : null;
             if (!kind) continue;
             for (const c of part.clusters) {
                 if (!this.openings.some((o) => boxDistance(c.lo, c.hi, o.at) < REACH)) continue;
-                (groups.get(kind) ?? groups.set(kind, []).get(kind)).push({ tris: c.tris, owner: part.owner.index });
+                (groups.get(kind) ?? groups.set(kind, []).get(kind)).push({ tris: c.tris, owner: part.owner.index, part });
                 tris += c.tris.length;
             }
         }
@@ -331,20 +338,26 @@ export class Viscera {
         // The corners they use, each once, carried by its part's bone.
         const remap = this._remap ?? (this._remap = new Int32Array(position.length / 3));
         remap.fill(-1);
-        const P: number[] = [], N: number[] = [], J: number[] = [], G: number[] = [], I = new Uint32Array(tris * 3), subs: [string, number, number][] = [];
+        const P: number[] = [], N: number[] = [], J: number[] = [], G: number[] = [], S: number[] = [], sides: number[] = [], I = new Uint32Array(tris * 3), subs: [string, number, number][] = [];
         let k = 0;
         for (const [kind, list] of groups) {
             const start = k;
-            for (const { tris: t, owner } of list) for (const i of t) for (let j = 0; j < 3; j++) {
-                const v = index[i + j];
-                if (remap[v] < 0) {
-                    remap[v] = P.length / 3;
-                    P.push(position[v * 3], position[v * 3 + 1], position[v * 3 + 2]);
-                    N.push(normal[v * 3], normal[v * 3 + 1], normal[v * 3 + 2]);
-                    J.push(owner, 0, 0, 0);
-                    G.push(this._bloodAt(position[v * 3], position[v * 3 + 1], position[v * 3 + 2]));
+            for (const { tris: t, owner, part } of list) {
+                // A lung falls in toward its root (hilum), on the inner face of its middle (Collapse below).
+                const lung = kind === 'lung' ? (/left/.test(part.name) ? 1 : 2) : 0, c = part.source.centre;
+                for (const i of t) for (let j = 0; j < 3; j++) {
+                    const v = index[i + j];
+                    if (remap[v] < 0) {
+                        remap[v] = P.length / 3;
+                        P.push(position[v * 3], position[v * 3 + 1], position[v * 3 + 2]);
+                        N.push(normal[v * 3], normal[v * 3 + 1], normal[v * 3 + 2]);
+                        J.push(owner, 0, 0, 0);
+                        G.push(this._bloodAt(position[v * 3], position[v * 3 + 1], position[v * 3 + 2]));
+                        S.push(lung ? c[0] * 0.35 : 0, lung ? c[1] : 0, lung ? c[2] : 0, 0);
+                        sides.push(lung);
+                    }
+                    I[k++] = remap[v];
                 }
-                I[k++] = remap[v];
             }
             subs.push([kind, start, k - start]);
         }
@@ -355,6 +368,10 @@ export class Viscera {
         Object.assign(vd, { positions: new Float32Array(P), normals: new Float32Array(N), indices: I, matricesIndices: new Float32Array(J), matricesWeights: W });
         vd.applyToMesh(mesh, false);
         mesh.setVerticesData(BLOOD, new Float32Array(G), false, 1);
+        this._shrink = new Float32Array(S);
+        this._sides = Uint8Array.from(sides);
+        this._fallen = [-1, -1];
+        mesh.setVerticesData(SHRINK, this._shrink, true, 4);
         const { person } = npc;
         mesh.parent = person.mesh.parent;
         mesh.position.copyFrom(person.mesh.position);
@@ -374,6 +391,20 @@ export class Viscera {
         this.mesh = mesh;
     }
     declare _remap: Int32Array;
+    declare _shrink: Float32Array;
+    declare _sides: Uint8Array;
+    declare _fallen: number[];
+
+    // How far each lung has fallen in toward its root, from how collapsed vitals.ts says it is (an open chest or a
+    // punctured lung lets air into the pleural space, and the lung's own elastic recoil pulls it in: body-wall.md 2.4).
+    // Fully collapsed, it is drawn at half its size about its root.
+    _collapse() {
+        const v = this.npc.vitals, fallen = [0.5 * (1 - v.lungs.L), 0.5 * (1 - v.lungs.R)];
+        if (!this.mesh || !this._sides || (Math.abs(fallen[0] - this._fallen[0]) < 0.005 && Math.abs(fallen[1] - this._fallen[1]) < 0.005)) return;
+        this._fallen = fallen;
+        for (let i = 0; i < this._sides.length; i++) if (this._sides[i]) this._shrink[i * 4 + 3] = fallen[this._sides[i] - 1];
+        this.mesh.updateVerticesData(SHRINK, this._shrink);
+    }
 
     // Millimetres of blood lying on the organs at rest point (x, y, z): round each opening, where the wall's vessels
     // bleed into the belly and the blood wells up through it, and round each place a missile or a blade went through an
@@ -410,6 +441,7 @@ export class Viscera {
         m.maxSimultaneousLights = 8;
         new Wet(m, look);
         new Bloodied(m);
+        if (kind === 'lung') new Collapse(m);
         return m;
     }
 
@@ -550,6 +582,7 @@ export class Viscera {
     update(dt: number) {
         if (this._stale && this.openings.length) { this._organs(); for (const l of this.loops) l.bloodied(); }
         this._stale = false;
+        this._collapse();
         if (!this.loops.length) return;
         const npc = this.npc, rd = npc.ragdoll, v = npc.vitals;
         // The body as capsules, for what is out to lie on; the belly and pelvis also as the cavity it is in.
@@ -602,6 +635,7 @@ export class Viscera {
 
     dispose() {
         this.mesh?.dispose();
+        for (const w of this.walls) w.dispose();
         for (const l of this.loops) l.dispose();
     }
 }
@@ -1112,6 +1146,30 @@ class Wet extends BABYLON.MaterialPluginBase {
 // the organ's colour as a film of blood is (fluid.ts's Beer-Lambert colour): a thin film reddens, a thick one is dark.
 
 const BLOOD = 'organBlood';
+const SHRINK = 'organShrink';
+
+// A lung fallen in: each corner drawn that share of the way to its root (organShrink: the root, and the share), before
+// the skeleton carries it. Its surface (Wet, from the rest position) goes with it.
+class Collapse extends BABYLON.MaterialPluginBase {
+    constructor(material) {
+        super(material, 'Collapse', 219, { COLLAPSE: false });
+        this._enable(true);
+    }
+
+    getClassName() { return 'Collapse'; }
+
+    prepareDefines(defines) { defines.COLLAPSE = true; }
+
+    getAttributes(attributes) { attributes.push(SHRINK); }
+
+    getCustomCode(shaderType) {
+        if (shaderType !== 'vertex') return null;
+        return {
+            CUSTOM_VERTEX_DEFINITIONS: `#ifdef COLLAPSE\nattribute vec4 ${SHRINK};\n#endif\n`,
+            CUSTOM_VERTEX_UPDATE_POSITION: `#ifdef COLLAPSE\npositionUpdated = mix(positionUpdated, ${SHRINK}.xyz, ${SHRINK}.w);\n#endif\n`,
+        };
+    }
+}
 
 class Bloodied extends BABYLON.MaterialPluginBase {
     constructor(material) {
