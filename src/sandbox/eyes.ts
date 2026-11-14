@@ -151,7 +151,7 @@ export class Eyes {
             e.lost = 1;
             e.bloodTo = 1;
             e.patches.push({ u: e.centre[0], v: e.centre[1], r: 0.05, to: SCLERA, tau: 2.5, dense: 1 });
-            v.injure(`${cap(word)} eye destroyed by the bullet`, 9);
+            v.injure(`${cap(word)} eye destroyed by the ${m.pellets > 1 ? 'pellet' : 'bullet'}`, 9);
         }
         this._blinded(e, 1);
         // What runs from it: blood with the eye's own fluid, little in all (the globe holds about 7 ml) but more from a

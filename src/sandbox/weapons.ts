@@ -74,17 +74,17 @@ export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip;
         left: { hold: 'pinch', at: [-0.03, -0.065, -0.025], along: [0, 1, 0], back: [1, 0, 0] } },
     // A .50 AE Desert Eagle weighs 2 kg and has about four times a 9 mm service pistol's free recoil (some 25 J against 6):
     // it drives back and flips up far more, held out the same way in two hands.
-    deagle: { at: [0.07, -0.12, 0.5], kick: [0.06, 0.45],
-        right: { hold: 'grip', at: [0, -0.005, -0.005], along: [0, -0.95, -0.31], back: [0, -0.31, 0.95] },
-        left: { hold: 'support', at: [-0.024, -0.022, 0.008], along: [0.1, -0.95, -0.3], back: [0.45, -0.25, 0.85] } },
+    // (Its grip is raked back further than the 9 mm's, about 37 degrees: the hands lie along it.)
+    deagle: { at: [0.06, -0.11, 0.52], kick: [0.06, 0.45],
+        right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.8, -0.6], back: [0, -0.6, 0.8] },
+        left: { hold: 'support', at: [-0.026, -0.018, 0.01], along: [0.1, -0.8, -0.59], back: [0.45, -0.35, 0.82] } },
     // A 10/22: a straight wrist (no pistol grip), the other hand under the forend. Its .22 LR recoils by a fraction of a
     // joule in a 2.3 kg rifle: hardly a nudge.
     r22: { at: [0.15, -0.165, 0.33], kick: [0.006, 0.012],
         right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
         left: { hold: 'wrap', at: [0, -0.02, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
-    // The tools in both hands (the hammer in one), carried as the bat is: the shovel's blade forward and low, the
-    // sledgehammer's head up by the shoulder.
-    shovel: { at: [0.17, -0.2, 0.36], turn: [0.35, -0.3, 0.2],
+    // The tools in both hands (the hammer in one), carried up as the bat is.
+    shovel: { at: [0.19, -0.22, 0.42], turn: [-1.0, -0.35, 0.3],
         right: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] },
         left: { hold: 'handle', at: [0, 0, 0.32], along: [0, 0, -1], back: [0, -1, 0] } },
     sledge: { at: [0.2, -0.26, 0.4], turn: [-1.0, -0.35, 0.3],
@@ -140,7 +140,7 @@ const PARTS: Record<string, Record<string, RegExp>> = { pistol: { slide: /slide/
 // forend (everything ahead of the hinge), which break open.
 const SPLIT: Record<string, Record<string, (lo: BABYLON.Vector3, hi: BABYLON.Vector3) => boolean>> = {
     ak: { mag: (lo) => lo.y < -0.1 }, shotgun: { barrels: (lo) => lo.z > 0.06 } };
-type Part = { nodes: { node: BABYLON.TransformNode; at: BABYLON.Vector3; turn: BABYLON.Quaternion; local: BABYLON.Matrix }[]; min: BABYLON.Vector3; max: BABYLON.Vector3 };
+type Part = { nodes: { node: BABYLON.TransformNode; at: BABYLON.Vector3; turn: BABYLON.Quaternion; size: BABYLON.Vector3; local: BABYLON.Matrix }[]; min: BABYLON.Vector3; max: BABYLON.Vector3 };
 
 export const ARMS = [
     { key: 'knife', name: 'Knife', kind: 'blade', reach: 1.0, swing: 0.32,
@@ -422,7 +422,7 @@ export class Weapons {
                     }
                 }
                 node.rotationQuaternion ??= Q.FromEulerVector(node.rotation);
-                return { node, at: node.position.clone(), turn: node.rotationQuaternion.clone(),
+                return { node, at: node.position.clone(), turn: node.rotationQuaternion.clone(), size: node.scaling.clone(),
                     local: (node.parent as BABYLON.TransformNode).getWorldMatrix().multiply(home).invert() };
             }) };
         }
@@ -434,7 +434,8 @@ export class Weapons {
     _move(part: Part | undefined, by?: BABYLON.Vector3, turn?: { axis: BABYLON.Vector3; pivot: BABYLON.Vector3; angle: number }, shown = true) {
         if (!part) return;
         for (const n of part.nodes) {
-            n.node.scaling.setAll(shown ? 1 : 0);
+            // (its own scale, not 1: the Desert Eagle's parts are scaled up 100 times in their nodes, as FBX2glTF wrote them)
+            if (shown) n.node.scaling.copyFrom(n.size); else n.node.scaling.setAll(0);
             if (!by && !turn) { n.node.position.copyFrom(n.at); n.node.rotationQuaternion.copyFrom(n.turn); continue; }
             const local = n.local, toHand = local.clone().invert();
             let at = V3.TransformCoordinates(n.at, toHand), q = n.turn;

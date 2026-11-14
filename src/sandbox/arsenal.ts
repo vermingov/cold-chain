@@ -75,6 +75,14 @@ export async function buildArsenal(world, weapons) {
     }
     // Light lies still on the board once it is hung.
     for (const mesh of scene.meshes) if (mesh.metadata?.arsenal) mesh.freezeWorldMatrix();
+    // The lamp overhead is three metres from the bottom row (a ninth of its light at the top row's distance): a small
+    // lamp low on the board's frame lights only the tools hung there, and casts no shadow.
+    const low = new Set(ROWS[ROWS.length - 1].keys);
+    const fill = new BABYLON.SpotLight('arsenalFill', new V3(WALL.x + 1.3, 1.45, WALL.z), new V3(-0.85, -0.5, 0).normalize(), 2.2, 1.2, scene);
+    fill.falloffType = BABYLON.Light.FALLOFF_GLTF;
+    fill.intensity = 18;
+    fill.diffuse = lamp.diffuse;
+    fill.includedOnlyMeshes = scene.meshes.filter((m) => low.has(m.metadata?.arsenal));
 
     return {
         hung,

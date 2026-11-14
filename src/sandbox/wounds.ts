@@ -120,9 +120,10 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
             const at = energy, point = origin.add(dir.scale(Math.max(t, s.enter)));
             // A blade is stopped by bone, and does not break it: a heavy one bites into it.
             if (m.blade) {
-                // Except behind an eye: the socket's roof and walls are paper-thin, under a millimetre, and a blade driven
-                // through the eye goes on into the brain (eye-trauma.md sec. 2, Blade).
-                if (viaEye && at > 25 && /sphenoid|frontal|ethmoid/.test(s.part.name) && t < viaEye.t + 0.07) {
+                // Except behind an eye: the socket's roof (the frontal bone's orbital plate) and inner wall (the ethmoid's) are
+                // paper-thin, under a millimetre, and a blade driven up or in through the eye goes on into the brain; straight
+                // back it meets the apex, the sphenoid's thick body, and stops (eye-trauma.md sec. 1-2).
+                if (viaEye && at > 25 && /frontal|ethmoid/.test(s.part.name) && t < viaEye.t + 0.07) {
                     energy -= 15;
                     v.injure('Blade through the back of the eye socket into the skull', 8);
                     continue;
