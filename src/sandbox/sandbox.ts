@@ -9,6 +9,7 @@ import { Surfaces } from '../surfaces.ts';
 import { Models } from '../models.ts';
 import { Sound } from '../sound.ts';
 import { gradePicture } from '../picture.ts';
+import { graphics } from './graphics.ts';
 import { Npc } from './npc.ts';
 import { Blood } from './blood.ts';
 import { Weapons } from './weapons.ts';
@@ -61,7 +62,8 @@ export async function openSandbox(engine, canvas, hud) {
     player.spawn(0, -4, { toward: [0, 1.4, 2] });
     const camera = player.camera;
     camera.minZ = 0.02;
-    gradePicture(scene, camera, { exposure: 1.6 });
+    const picture = gradePicture(scene, camera, { exposure: 1.6 });
+    const quality = graphics(engine, picture, lights.shadows, document.getElementById('over'));
 
     const blood = new Blood(scene, { x: HALL.x, z: HALL.z, height: HALL.height }, room.reflections.cubeTexture);
     blood.map = { ground, land };
@@ -212,6 +214,7 @@ export async function openSandbox(engine, canvas, hud) {
             }
             const shown = look() ?? lastHurt;
             hud.update(weapons, shown, shown?.label);
+            quality.update();
         },
     };
     return sandbox;
