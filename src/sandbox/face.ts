@@ -56,6 +56,7 @@
 // Sources and numbers: dev/research/faces.md.
 
 import * as BABYLON from '@babylonjs/core';
+import { Eyes } from './eyes.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion, RAD = Math.PI / 180;
 
 const WINDOW = 0.03;        // seconds of the voice the mouth is opened by, at each moment
@@ -154,6 +155,8 @@ export class Face {
     declare eyeUnits: Record<string, number>;
     declare eyeMaterial: BABYLON.PBRMaterial | null;
     declare pupil: PupilLayer | null;
+    // The eyes' own hurts: wounds, blood in and on them, blindness (eyes.ts).
+    declare eyes: Eyes;
 
     constructor(npc) {
         this.npc = npc;
@@ -193,7 +196,7 @@ export class Face {
     // widens and narrows (PupilLayer). The shared eye material is left as it was.
     _eyes() {
         const p = this.person, mm = p.mesh.material as BABYLON.MultiMaterial, i = p.header.parts.findIndex((x) => x.kind === 'eyes');
-        if (i < 0 || !mm?.subMaterials) return;
+        if (i < 0 || !mm?.subMaterials) { this.eyes = new Eyes(this.npc, null, IRISES.brown); return; }
         const shared = mm.subMaterials[i] as BABYLON.PBRMaterial, scene = p.scene;
         const m = shared.clone(`${shared.name}:${p.mesh.name}`) as BABYLON.PBRMaterial;
         // The tear film is smoother than anything else on a body: a sharp catchlight of every lamp and the room behind.
@@ -205,9 +208,11 @@ export class Face {
         this.pupil = new PupilLayer(m, iris);
         mm.subMaterials[i] = m;
         this.eyeMaterial = m;
+        this.eyes = new Eyes(this.npc, m, iris);
     }
 
     dispose() {
+        this.eyes.dispose();
         this.eyeMaterial?.dispose();
         this.eyeMaterial = null;
     }
@@ -288,6 +293,7 @@ export class Face {
 
         // --- blinks
         this._blinks(dt, v, alert, dead);
+        this.eyes.update(dt);
 
         // --- the mix
         const wt = this.weights;
@@ -303,11 +309,13 @@ export class Face {
         this._lids(add, dead, alert);
         this._gaze(dt, add, v, alert, dead);
         this._compose();
+        this.eyes.pose();
 
         // --- pupils and the colour of the skin
         const pupil = dead ? 5.5 : 3.4 + 1.6 * Math.max(s.fear, s.pain * 0.8) + 2.0 * ramp(92 - v.spo2, 0, 30) + 1.2 * ramp(v.lost, 0.2, 0.4);
         s.pupil += (pupil - s.pupil) * Math.min(1, dt / (pupil > s.pupil ? (dead ? 25 : 0.8) : 1.5));
-        if (this.pupil) this.pupil.size = s.pupil / MM_IRIS;
+        // (an eye whose sphincter a blow tore stays wide whatever the other does: traumatic mydriasis)
+        if (this.pupil) for (const k of [0, 1] as const) { const e = this.eyes.which(k); this.pupil.sizes[k] = (e.pupil || s.pupil) / MM_IRIS; }
         // Pale with blood lost and the pressure falling (the skin's vessels shut down first), paler still once dead.
         const pale = dead ? 1 : Math.max(ramp(v.lost, 0.12, 0.4), ramp(70 - v.map, 0, 40)) * 0.85;
         s.pale += (pale - s.pale) * Math.min(1, dt / (dead ? 60 : 8));
@@ -361,7 +369,8 @@ export class Face {
         const heavy = dead ? s.deadLids : alert <= 0.05 ? 0.85 + 0.1 * wander(this.clock * 0.2, this.seed) : (1 - alert) * 0.5;
         for (const side of ['Left', 'Right'] as const) {
             const swollen = this.swollen[side[0]];
-            const shut = Math.min(1.05, Math.max(this.blink * 1.05, au.AU43, au.AU7 * 0.25, heavy, swollen));
+            // (and clamped shut over an eye that is hurt: eyes.ts)
+            const shut = Math.min(1.05, Math.max(this.blink * 1.05, au.AU43, au.AU7 * 0.25, heavy, swollen, dead ? 0 : this.eyes.shut(side[0] as 'L' | 'R', alert)));
             add(`${side}UpperLidClosed`, shut);
             add(`${side}UpperLidOpen`, Math.max(0, au.AU5 * 0.9 - shut));
             add(`${side}LowerLidUp`, Math.min(1, au.AU7 * 0.6 + au.AU6 * 0.4 + this.blink * 0.25 + au.AU43 * 0.3 + swollen * 0.45));
@@ -375,9 +384,10 @@ export class Face {
         const g = this.gaze;
         let want: { L: number[]; R: number[] };
         if (dead) want = { L: [4, -3], R: [-4, -3] };
-        else if (alert <= 0.05) {
-            const rove = 12 * wander(this.clock * 0.6, this.seed);
-            want = { L: [rove + 2, 14], R: [rove - 2, 14] };
+        else if (alert <= 0.05 || (this.eyes.blind('L') && this.eyes.blind('R'))) {
+            // Out cold, or nothing left to see with: no fixing on anything, the eyes roving together (awake, level).
+            const rove = 12 * wander(this.clock * 0.6, this.seed), up = alert <= 0.05 ? 14 : 4 * wander(this.clock * 0.4, this.seed + 3);
+            want = { L: [rove + 2, up], R: [rove - 2, up] };
         } else {
             g.t += dt;
             if ((g.next -= dt) <= 0) this._choose(v, alert);
@@ -391,6 +401,9 @@ export class Face {
             }
             // Microsaccades: tiny jumps of a fraction of a degree, one or two a second, while fixing on something.
             if ((g.microAt -= dt) <= 0) { g.microAt = 0.4 + Math.random() * 0.9; g.micro = [(Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.6]; }
+            // A blind eye fixes on nothing: it is carried with the seeing one (both get the same command, Hering's law).
+            if (this.eyes.blind('L')) want.L = [...want.R];
+            else if (this.eyes.blind('R')) want.R = [...want.L];
         }
         for (const k of ['L', 'R'] as const) {
             const to = want[k], cur = g[k];
@@ -518,13 +531,14 @@ const IRISES = {
 // The pupil drawn at any size: inside the iris, the picture is sampled from where the painted pupil and iris would put
 // that point, so the pupil grows into the iris and the iris's pattern is squeezed toward its rim, as a real iris's is.
 export class PupilLayer extends BABYLON.MaterialPluginBase {
-    declare size: number;
+    // Each pupil's share of its iris: the one round the table's first centre, then the second's.
+    declare sizes: [number, number];
     declare iris: { centres: number[]; iris: number; pupil: number };
 
     constructor(material: BABYLON.Material, iris) {
         super(material, 'Pupil', 210, { PUPIL: false });
         this.iris = iris;
-        this.size = 0.3;
+        this.sizes = [0.3, 0.3];
         this._enable(true);
     }
 
@@ -532,12 +546,12 @@ export class PupilLayer extends BABYLON.MaterialPluginBase {
 
     prepareDefines(defines) { defines.PUPIL = true; }
 
-    getUniforms() { return { ubo: [{ name: 'pupilCentres', size: 4, type: 'vec4' }, { name: 'pupilSizes', size: 3, type: 'vec3' }] }; }
+    getUniforms() { return { ubo: [{ name: 'pupilCentres', size: 4, type: 'vec4' }, { name: 'pupilSizes', size: 4, type: 'vec4' }] }; }
 
     bindForSubMesh(ubo) {
-        const c = this.iris.centres;
+        const c = this.iris.centres, shown = (x: number) => Math.min(0.85, Math.max(0.12, x)) * this.iris.iris;
         ubo.updateFloat4('pupilCentres', c[0], c[1], c[2], c[3]);
-        ubo.updateFloat3('pupilSizes', this.iris.iris, this.iris.pupil, Math.min(0.85, Math.max(0.12, this.size)) * this.iris.iris);
+        ubo.updateFloat4('pupilSizes', this.iris.iris, this.iris.pupil, shown(this.sizes[0]), shown(this.sizes[1]));
     }
 
     getCustomCode(shaderType) {
@@ -545,9 +559,10 @@ export class PupilLayer extends BABYLON.MaterialPluginBase {
         return {
             CUSTOM_FRAGMENT_DEFINITIONS: `#ifdef PUPIL
 vec2 pupilUV(vec2 uv) {
-    vec2 c = distance(uv, pupilCentres.xy) < distance(uv, pupilCentres.zw) ? pupilCentres.xy : pupilCentres.zw;
+    bool first = distance(uv, pupilCentres.xy) < distance(uv, pupilCentres.zw);
+    vec2 c = first ? pupilCentres.xy : pupilCentres.zw;
     vec2 d = uv - c;
-    float r = length(d), R = pupilSizes.x, painted = pupilSizes.y, shown = pupilSizes.z;
+    float r = length(d), R = pupilSizes.x, painted = pupilSizes.y, shown = first ? pupilSizes.z : pupilSizes.w;
     if (r >= R || r < 1e-6) return uv;
     float from = r < shown ? r * painted / shown : painted + (r - shown) * (R - painted) / (R - shown);
     return c + d * (from / r);
