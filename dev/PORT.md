@@ -141,3 +141,61 @@ takes a shot; `scenario::log(world, json!(...))` adds to `<out>/log.json`. Frame
 board is hung. Existing: `hall` (four views, the Medium and Low presets, the 40% render scale), `people` (each person
 front, side and face, the segment table into the log, everyone in X-ray), `arsenal` (the board wide and close). The
 TS game's matching shots: tools/port-views.mjs (the same views through tools/rig.mjs).
+
+## Medicine (phase 2, branch port/medicine)
+
+vitals.rs, wounds.rs, anatomy.rs (tracing), npc.rs, bones.rs, teeth.rs, throat.rs, eyes.rs, bruise.rs and dressing.rs's
+second half are the TS's logic, number for number: the same shot gives the same injuries, bleeds and vital signs (checked
+below). What they draw, play or move is not done here: it is handed over (`Happened`, below).
+
+### A person's medicine
+Each person gets `npc::Hurt` (bones, teeth, throat, eyes, bruising, dressings, the voice, which vessels are cut) beside
+their `vitals::Vitals`, the frame after they are made (npc.rs `fit`; sandbox.rs is untouched). Everything medical works
+through `npc::Npc`, a borrow of the person (`&Person`, the root's Transform, `&mut Vitals`, `&mut Hurt`, the body's
+traced insides, the `Dice`) for one shot, blow or frame:
+
+    npc::with(world, entity, |npc| wounds::pierce(npc, origin, dir, &missile, far))   // from anything with the World
+
+`npc::update` runs every person's insides once a frame (Update): the vitals, the throat, the eyes, the bruising, the
+dressings, the blood out of each wound, the voice, the bones (the TS's npc.update order, less what is phase 2's).
+
+### For the hands (weapons.rs): shots, stabs, cuts, blows, dressings
+- `wounds::pierce(npc, origin, dir, &Missile, far) -> Pierced { stopped, at, energy, hit, enter }`: the TS's pierce.
+  `Missile` has the TS's fields (`energy`, `mass`, `calibre`, `channel`, `soft`, `hard`, and the optional `reach`, `blade`,
+  `slash`, `name`, `speed`, `across`, `edges`, `taper`, `pellets`), `..default()` for the rest. weapons.ts `_shot` carries
+  on with `res.energy` from `res.at` as before. A slash's cut along the crossings is npc.slash's (phase 3: marks).
+- `wounds::blow(npc, point, dir, mass, speed, tool: Option<Tool>)`: `Tool::Named("fist" | "bat" | "flat" | "edge" |
+  "hammer" | "wall")` or `Tool::Stiff(N/m)`; None as the TS's undefined.
+- `npc.surface(origin, dir, far, eyes) -> Vec<Crossing>`: the skin and clothes a line crosses, in order (the weapons' `_meets`
+  and `_person` tests can use it; it is cached a frame).
+- `dressing::wounds(npc) -> Vec<OpenWound>` (worst first) and `dressing::dress(npc, &wound) -> Option<usize>`: what the
+  TS's Medic did when the button had been held for `dressing::SECONDS` (the bandage on the wound looked at, within
+  `dressing::REACH`; the medkit on `wounds(npc)[0]` again and again). The Medic itself (prompt, timing, sounds) is yours.
+- Randomness: `vitals::Dice` (a resource), the generator the check puts in Math.random's place.
+
+### For the body (ragdoll.rs, behaviour.rs): "port: needs body" in the code
+- `Npc::bone_worlds` and `Npc::segment_world` work the bones and segments out from `person.posed`; when the ragdoll moves
+  them, write each segment's Transform into `Hurt::segments` each step (and keep `posed` the skeleton as drawn), and
+  medicine follows. The TS's ragdoll drives the neck from the head's segment, spread over neck01..head: the check does this
+  by hand (scenario.rs `wounds`).
+- Take from `Hurt::happened`: `Hit { point, impulse, jolt }` (behaviour.hit), `Joint { segment, change }` (`Range`, `Widen`,
+  `Hold` where it is, `Out` dislocated, `Shorten` a broken shaft's halves sliding, `Limp`), `Broke { segment }` (breakAt:
+  the mid joint let go). Read `Hurt::leg_gone`, `Vitals::paralysed_*`, `Throat::retch`, `Bones::jaw_hangs`.
+- Call `npc.bones().fell(seg, was_vy, now_vy, low, under, held, pelvis_vy, chest_vy, pelvis_y)` after each step for each
+  segment (the TS's `_falls`: breaks from landing) and `npc.bones().opens(|segment| bend_degrees)` (open fractures).
+  Joint angles for `at_joint` are taken as the pose's (straight): give it the ragdoll's.
+
+### For phase 3 (the look of hurt)
+Everything to draw is in `Hurt::happened`, each variant named after the TS call it replaces: `Wound`, `Hole`, `Stab`,
+`Tear` (a bullet's way out, its splits already worked out with the TS's dice), `Welling`, `Spatter`, `Runs`, `Soak`,
+`Spray`, `Stream`, `Blot`, `Drawn` / `Through` (a break to draw: bones.rs `Break` has where and how), `Tooth`, `Tongue`,
+`Edge` / `Charge` / `Bled` (dismember and viscera). `Say`, `Cut` and `Sound` are the voice and the sounds. The bruise field
+(`Bruise`: per welded skin place, `ery`, `blood`, `age`, `h` the swelling out) and the eyes' state (`Eye`: marks,
+patches, blood, collapse) are kept as the TS kept them for its shaders. Take what you draw and clear the list.
+
+### The check
+`cargo run -- --scenario wounds --out <dir>` fires fifteen shots and blows (rifle, pistol, shotgun pellets, a knife stab,
+bat blows; chest, belly, neck, head, mouth, eye, thigh, shin, ribs; two then dressed) at bone-relative points of the
+standing people, on a person made whole again each time, with the TS people's breathing clocks, and logs a minute of
+vitals. tools/port-wounds.mjs fires the same in the TS game (dev server, rig; Math.random seeded as `Dice`, drawing
+stubbed, no physics stepped); tools/port-wounds-compare.py compares the two logs.

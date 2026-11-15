@@ -22,9 +22,9 @@ await rig.until('!!window.__sandbox', 600000);
 await rig.eval(`(async () => {
   const S = window.__sandbox; S.scene.getEngine().stopRenderLoop();
   document.getElementById('start')?.remove(); const o = document.getElementById('over'); if (o) o.style.display = 'none';
-  const W = await import('/src/sandbox/wounds.ts'), WE = await import('/src/sandbox/weapons.ts');
+  const W = await import('/src/sandbox/wounds.ts'), WE = await import('/src/sandbox/weapons.ts'), D = await import('/src/sandbox/dressing.ts');
   let sim = 0; performance.now = () => sim * 1000;
-  window.__M = { S, W, WE, tick: (dt) => { sim += dt; S.update(dt); } };
+  window.__M = { S, W, WE, D, tick: (dt) => { sim += dt; S.update(dt); } };
   window.__lcg = (seed) => { let s = seed; Math.random = () => ((s = (s * 1103515245 + 12345) >>> 0) / 4294967296); };
   return true; })()`);
 const results = [];
@@ -32,7 +32,7 @@ for (const [k, shot] of SHOTS.entries()) {
     await rig.eval(`(() => { __lcg(${1000 + k}); __M.S.world.npcs.forEach((n) => (n.__old = true)); window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyK' })); return true; })()`);
     await rig.until('__M.S.world.npcs.length === 4 && !__M.S.world.npcs.some((n) => n.__old)', 120000);
     const r = await rig.eval(`(() => {
-      const { S, W, WE } = __M, V = BABYLON.Vector3, shot = ${JSON.stringify(shot)};
+      const { S, W, WE, D } = __M, V = BABYLON.Vector3, shot = ${JSON.stringify(shot)};
       const npc = S.world.npcs[shot.person], log = (window.__log = []);
       const no = (name) => () => { log.push(name); };
       for (const m of ['hole', 'entry', 'exit', 'stab', 'lip', 'cut']) npc.marks[m] = no('marks.' + m);
@@ -60,6 +60,8 @@ for (const [k, shot] of SHOTS.entries()) {
           res.push({ stopped: p.stopped, energy: +p.energy.toFixed(1), hit: p.hit });
         }
       }
+      // The medkit: the worst open wound dressed, then the next, until none is left open.
+      if (shot.dress) for (let n = 0, w; (w = D.wounds(npc)[0]) && n < 12; n++) { const d = D.dress(w); res.push(d ? d.kind + ' ' + +d.capacity.toFixed(2) : 'none'); if (!d) break; }
       return { clocks: S.world.npcs.map((n) => n.clock), target: target.asArray(), res };
     })()`);
     const series = [];
@@ -75,7 +77,7 @@ for (const [k, shot] of SHOTS.entries()) {
             throat: { mouth: +th.mouth.toFixed(2), lungs: [+th.lungs.L.toFixed(2), +th.lungs.R.toFixed(2)], stomach: +th.stomach.toFixed(2) },
             legGone: npc.legGone, paralysed: v.paralysed, out: +v.out.toFixed(2),
             injuries: v.injuries.map((i) => [i.text, +i.severity.toFixed(3)]),
-            bleeds: v.bleeds.map((b) => [b.name, +(b.rate * 1000).toFixed(5), b.arterial, b.internal, b.into ?? null, b.side ?? null, +(b.lost * 1000).toFixed(2)]),
+            bleeds: v.bleeds.map((b) => [b.name, +(b.rate * 1000).toFixed(5), b.arterial, b.internal, b.into ?? null, b.side ?? null, +(b.lost * 1000).toFixed(2), b.dressed ?? null]),
             breaks: npc.bones.breaks.map((b) => [b.text, b.type, +b.ratio.toFixed(3)]),
             log };
         })()`);

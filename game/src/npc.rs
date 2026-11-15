@@ -211,6 +211,10 @@ pub struct Hurt {
     pub clock: f32,
     // Seconds since they were made (bones.ts counts the settling into their stance from it).
     pub age: f32,
+    // Where each ragdoll segment is now, in the person.segments' order.
+    // port: needs body. The ragdoll writes its rigid bodies' transforms here each step; while it is None each is worked
+    // out from the pose (segment_world).
+    pub segments: Option<Vec<Transform>>,
     skinned: Option<(u32, Arc<Skinned>)>,
 }
 
@@ -263,6 +267,9 @@ impl<'a> Npc<'a> {
     // A segment of the ragdoll in the world now: its bone's head and turn (ragdoll.rs `segments`'s `rest`, posed now).
     // port: needs body. The ragdoll's rigid bodies, once there are any.
     pub fn segment_world(&self, k: usize) -> Transform {
+        if let Some(segments) = &self.hurt.segments {
+            return segments[k];
+        }
         let p = self.person;
         let s = &p.segments[k];
         let abs = p.absolute(&p.posed.local);
@@ -898,6 +905,7 @@ impl Hurt {
             happened: Vec::new(),
             clock: 0.0,
             age: 0.0,
+            segments: None,
             skinned: None,
         }
     }

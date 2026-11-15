@@ -313,26 +313,36 @@ struct Shot {
     bone: &'static str,
     offset: [f32; 3],
     pellets: &'static [[f32; 3]],
+    // Then the medkit: every open wound dressed, worst first.
+    dress: bool,
 }
 
 const PELLETS: [[f32; 3]; 9] = [[-0.03, -0.03, 0.0], [0.0, -0.03, 0.0], [0.03, -0.03, 0.0], [-0.03, 0.0, 0.0], [0.0, 0.0, 0.0], [0.03, 0.0, 0.0],
     [-0.03, 0.03, 0.0], [0.0, 0.03, 0.0], [0.03, 0.03, 0.0]];
-const SHOTS: [Shot; 9] = [
-    Shot { name: "rifle chest", person: 0, weapon: "rifle", bone: "spine01", offset: [0.03, 0.06, 0.0], pellets: &[] },
-    Shot { name: "pistol belly", person: 1, weapon: "pistol", bone: "spine03", offset: [-0.06, 0.0, 0.0], pellets: &[] },
-    Shot { name: "pistol neck", person: 2, weapon: "pistol", bone: "neck01", offset: [0.025, -0.03, 0.0], pellets: &[] },
-    Shot { name: "pistol head", person: 3, weapon: "pistol", bone: "head", offset: [0.0, 0.07, 0.0], pellets: &[] },
-    Shot { name: "rifle thigh", person: 0, weapon: "rifle", bone: "mid-upperleg01.L", offset: [0.0, 0.0, 0.0], pellets: &[] },
-    Shot { name: "shotgun thigh", person: 1, weapon: "shotgun", bone: "mid-upperleg01.R", offset: [0.0, 0.0, 0.0], pellets: &PELLETS },
-    Shot { name: "knife belly", person: 2, weapon: "knife", bone: "spine03", offset: [0.05, 0.02, 0.0], pellets: &[] },
-    Shot { name: "bat shin", person: 3, weapon: "bat", bone: "mid-lowerleg01.L", offset: [0.0, 0.0, 0.0], pellets: &[] },
-    Shot { name: "bat head", person: 0, weapon: "bat", bone: "head", offset: [0.0, 0.06, 0.0], pellets: &[] },
+const SHOTS: [Shot; 15] = [
+    Shot { name: "rifle chest", person: 0, weapon: "rifle", bone: "spine01", offset: [0.03, 0.06, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol belly", person: 1, weapon: "pistol", bone: "spine03", offset: [-0.06, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol neck", person: 2, weapon: "pistol", bone: "neck01", offset: [0.025, -0.03, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol head", person: 3, weapon: "pistol", bone: "head", offset: [0.0, 0.07, 0.0], pellets: &[], dress: false },
+    Shot { name: "rifle thigh", person: 0, weapon: "rifle", bone: "mid-upperleg01.L", offset: [0.0, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "shotgun thigh", person: 1, weapon: "shotgun", bone: "mid-upperleg01.R", offset: [0.0, 0.0, 0.0], pellets: &PELLETS, dress: false },
+    Shot { name: "knife belly", person: 2, weapon: "knife", bone: "spine03", offset: [0.05, 0.02, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat shin", person: 3, weapon: "bat", bone: "mid-lowerleg01.L", offset: [0.0, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat head", person: 0, weapon: "bat", bone: "head", offset: [0.0, 0.06, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol mouth", person: 1, weapon: "pistol", bone: "jaw", offset: [0.0, -0.03, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol eye", person: 2, weapon: "pistol", bone: "eye.L", offset: [0.0, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat mouth", person: 3, weapon: "bat", bone: "jaw", offset: [0.0, -0.02, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat chest", person: 0, weapon: "bat", bone: "spine01", offset: [0.06, 0.04, 0.0], pellets: &[], dress: false },
+    Shot { name: "shotgun thigh dressed", person: 1, weapon: "shotgun", bone: "mid-upperleg01.R", offset: [0.0, 0.0, 0.0], pellets: &PELLETS, dress: true },
+    Shot { name: "knife belly dressed", person: 2, weapon: "knife", bone: "spine03", offset: [0.05, 0.02, 0.0], pellets: &[], dress: true },
 ];
 // Each shot's TS people's breathing clocks (npc.clock), as the TS check's line-up seeded them.
-const CLOCKS: [[f32; 4]; 9] = [
+const CLOCKS: [[f32; 4]; 15] = [
     [9.953437, 1.125917, 9.438391, 1.91038], [9.579623, 0.727354, 6.705976, 7.415471], [1.70114, 7.488001, 7.410059, 9.114563],
     [1.591377, 2.309687, 1.928463, 5.384727], [7.952396, 9.888322, 1.618743, 2.172264], [6.803715, 5.951882, 1.190528, 4.966309],
     [5.464768, 9.904354, 2.333751, 8.069235], [5.895665, 5.740893, 3.519757, 4.244878], [9.548464, 4.805066, 7.201037, 3.941357],
+    [8.554673, 7.663012, 8.291871, 4.884174], [7.049819, 2.107716, 6.973362, 5.930157], [7.535425, 5.501478, 2.81213, 5.5396],
+    [3.764198, 1.875085, 8.795955, 2.020388], [9.343004, 9.88456, 3.250806, 1.43631], [0.294337, 8.830086, 6.545365, 2.548188],
 ];
 const TIMES: [f32; 8] = [0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0];
 
@@ -359,8 +369,11 @@ fn wounds() -> Vec<Step> {
             crate::npc::renew(w, who, CLOCKS[k][shot.person]);
             // The TS's ragdoll, built on the pose, drives the neck from the head's segment, whose turn is its lead bone's
             // (neck01's share of the neck's flex) spread evenly over the four bones from neck01 to the head (ragdoll.ts):
-            // a person in the TS stands with a third of the stand pose's neck flex. Phase 2's ragdoll will do the same; here
-            // it is done by hand, or the head stands 2 to 4 mm off the TS's.
+            // a person in the TS stands with a third of the stand pose's neck flex, and their head's segment as it was put on
+            // the pose. Phase 2's ragdoll will do the same; here it is done by hand, or the head stands 2 to 4 mm off the TS's
+            // and the mouth drains a few per cent differently.
+            let segments = crate::npc::with(w, who, |npc| (0..npc.person.segments.len()).map(|k| npc.segment_world(k)).collect());
+            w.get_mut::<crate::npc::Hurt>(who).unwrap().segments = segments;
             {
                 let mut q = w.query::<&mut Person>();
                 let mut p = q.get_mut(w, who).unwrap();
@@ -391,6 +404,18 @@ fn wounds() -> Vec<Step> {
                         for o in pellets {
                             let p = crate::wounds::pierce(npc, target + babylon(o[0], o[1], o[2]) - dir * 1.5, dir, &missile(weapon), 3.0);
                             res.push(json!({ "stopped": p.stopped, "energy": (p.energy * 10.0).round() / 10.0, "hit": p.hit }));
+                        }
+                    }
+                }
+                if shot.dress {
+                    for _ in 0..12 {
+                        let Some(w) = crate::dressing::wounds(npc).into_iter().next() else { break };
+                        match crate::dressing::dress(npc, &w) {
+                            Some(d) => res.push(json!(format!("{} {}", npc.hurt.dressings[d].kind, (npc.hurt.dressings[d].capacity * 100.0).round() / 100.0))),
+                            None => {
+                                res.push(json!("none"));
+                                break;
+                            }
                         }
                     }
                 }
@@ -440,7 +465,7 @@ fn snapshot(npc: &mut crate::npc::Npc, t: f32) -> Value {
         "legGone": npc.hurt.leg_gone, "paralysed": { "legs": v.paralysed_legs, "arms": v.paralysed_arms }, "out": r(v.out, 100.0),
         "injuries": v.injuries.iter().map(|i| json!([i.text, r(i.severity, 1e3)])).collect::<Vec<_>>(),
         "bleeds": v.bleeds.iter().map(|b| json!([b.name, r(b.rate * 1000.0, 1e5), b.arterial, b.internal,
-            b.into.map(|i| format!("{i:?}").to_lowercase()), b.side.map(|s| format!("{s:?}")), r(b.lost * 1000.0, 100.0)])).collect::<Vec<_>>(),
+            b.into.map(|i| format!("{i:?}").to_lowercase()), b.side.map(|s| format!("{s:?}")), r(b.lost * 1000.0, 100.0), b.dressed])).collect::<Vec<_>>(),
         "breaks": npc.hurt.bones.breaks.iter().map(|b| json!([b.text, b.r#type, r(b.ratio, 1e3)])).collect::<Vec<_>>(),
         "log": log,
     })
