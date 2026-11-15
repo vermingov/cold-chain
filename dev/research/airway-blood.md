@@ -84,11 +84,22 @@ the diaphragm squeeze against a shut glottis), then the stomach empties up the o
 force. Unconscious people still vomit or regurgitate, and what does not leave the mouth is aspirated: the classic
 death of the drunk lying on his back.
 
+## Drawn
+
+- The blood lying in the mouth is a level liquid surface inside an ellipsoid standing for the oral cavity (throat.ts
+  `_pool`), filled from its lowest side as the head lies: on the back it gathers in the throat and rises over the
+  tongue to the teeth; face down or on the side it runs out and leaves only the tongue and teeth wet red (`_coat`).
+  Lung blood in it is pinker and duller (froth), stomach blood darker. The fill against the ellipsoid was fitted by eye.
+- A vomit comes in a surge (most of it within the first 0.3 s), as a rope as thick as that flow through an open mouth
+  at about 1 m/s, with a fifth of it thrown as clots; where it lands it splashes and pools like any blood.
+- A wound through the tongue is a torn card on it (the tongue has its own texture, which the skin's wound sheet does
+  not cover); the back of the throat is part of the skin mesh and takes the skin's own wound.
+
 ## Not modelled
 
 - Coffee-ground vomit (needs hours in acid) and the colour difference between frothy lung blood and gut blood on the
-  floor and skin: blood.ts, floor.ts and film.ts draw one blood colour. Coughed blood differs only in being a finer
-  spray.
+  floor, in the air and on skin: blood.ts, floor.ts and film.ts draw one blood colour (only the pool in the mouth
+  differs). Coughed blood differs only in being a finer spray.
 - Clots casting the bronchi, absorption of alveolar blood over days, aspiration pneumonia.
 - The oesophagus filling as a visible thing: the vomit passes through it in the model (`gullet`) but is not drawn.
 

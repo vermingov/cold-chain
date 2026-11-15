@@ -54,6 +54,7 @@ export class Npc {
     declare _skinnedAt: number;
     declare _boxed: Float32Array | null;
     declare _boxedAt: number;
+    declare _groups: Float32Array | null;
     declare _parted: Map<any, number[]>;
     declare _partedAt: number;
     declare _restPos: Float32Array;
@@ -120,6 +121,7 @@ export class Npc {
         this._skinnedAt = -1;
         this._boxed = null;
         this._boxedAt = -1;
+        this._groups = null;
         this._parted = new Map();
         this._partedAt = -1;
         person.apply(P.stand(this.clock));
@@ -166,7 +168,7 @@ export class Npc {
         const scale = V3.TransformNormal(dir, inv).length();
         const hits = [];
         const index = this.person.header.indexArray ?? this._indices();
-        const boxes = this._boxes(skinned, index);
+        const boxes = this._boxes(skinned, index), groups = this._groups;
         for (const p of this.person.header.parts) {
             // (The skin under the clothes is not drawn but is still where the body begins.)
             // (With `eyes`, the tongue as well: a wound in it is drawn on it, throat.ts.)
@@ -175,8 +177,14 @@ export class Npc {
             if (!slabFor(this._partBox(p, skinned), o, d, far * scale)) continue;
             const end = p.indexStart + p.indexCount;
             for (let start = p.indexStart; start < end;) {
-                // Only the runs of triangles whose box the line crosses: the same crossings as trying every triangle.
-                const run = Math.floor(start / RUN), next = Math.min(end, (run + 1) * RUN);
+                // Only the runs of triangles whose box the line crosses: the same crossings as trying every triangle. A
+                // GROUP of runs at a time first, past the whole group if its box is not crossed.
+                const run = Math.floor(start / RUN), group = Math.floor(run / GROUP);
+                if ((run % GROUP === 0 || start === p.indexStart) && !boxCrossed(groups, group * 6, o, d, far * scale)) {
+                    start = Math.min(end, (group + 1) * GROUP * RUN);
+                    continue;
+                }
+                const next = Math.min(end, (run + 1) * RUN);
                 if (boxCrossed(boxes, run * 6, o, d, far * scale)) {
                     for (let i = start; i < next; i += 3) {
                         const t = triangle(o, d, skinned, index, i);
@@ -230,6 +238,14 @@ export class Npc {
                 if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
             }
             b[r * 6] = x0; b[r * 6 + 1] = y0; b[r * 6 + 2] = z0; b[r * 6 + 3] = x1; b[r * 6 + 4] = y1; b[r * 6 + 5] = z1;
+        }
+        // And the box round each GROUP of runs.
+        const count = Math.ceil(runs / GROUP);
+        const g = this._groups?.length === count * 6 ? this._groups : (this._groups = new Float32Array(count * 6));
+        for (let k = 0; k < count * 6; k += 6) { g[k] = g[k + 1] = g[k + 2] = Infinity; g[k + 3] = g[k + 4] = g[k + 5] = -Infinity; }
+        for (let r = 0; r < runs; r++) {
+            const k = Math.floor(r / GROUP) * 6;
+            for (let j = 0; j < 3; j++) { g[k + j] = Math.min(g[k + j], b[r * 6 + j]); g[k + 3 + j] = Math.max(g[k + 3 + j], b[r * 6 + 3 + j]); }
         }
         this._boxedAt = this._skinnedAt;
         return b;
@@ -595,6 +611,7 @@ export class Npc {
 // Whether the line meets a part's box (_partBox, its skinned corners this frame) at all: cheap next to the triangles it
 // saves.
 const RUN = 96;     // indices: 32 triangles, which lie together in the mesh (MakeHuman's faces are in order over the body)
+const GROUP = 8;    // runs: a short line (sixty round each exit, wounds.ts tear) crosses few of them
 
 // Whether the line o + t d, 0 < t < far, meets the box at `k` in `b` (a hair larger, for rounding).
 function boxCrossed(b: Float32Array, k: number, o, d, far: number) {

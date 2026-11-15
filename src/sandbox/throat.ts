@@ -325,6 +325,9 @@ export class Throat {
             m.albedoTexture = tex;
             m.useAlphaFromAlbedoTexture = true;
             m.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+            // (Only the wound shines: a highlight over the clear part of the card is a pale ring on the tongue.)
+            m.useSpecularOverAlpha = false;
+            m.useRadianceOverAlpha = false;
             m.metallic = 0;
             m.roughness = 0.25;
             m.environmentIntensity = 0;
