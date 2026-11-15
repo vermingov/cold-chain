@@ -1,4 +1,4 @@
-# Cold Chain: handoff (2026-11-14)
+# Cold Chain: handoff (2026-11-15)
 
 Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
@@ -22,7 +22,7 @@ npm run build            # dist/; node server.js serves dist/ + assets from the 
 ```
 `tools/rig.mjs` drives headless Chromium over DevTools (read its header; `RIG_GPU=1` for real frame times). Every change
 is judged from screenshots taken with it. `window.__sandbox` (play.html) is the sandbox, reachable from the rig.
-Bump `version` in package.json with every update (shown top left). Current: 0.8.22.
+Bump `version` in package.json with every update (shown top left). Current: 0.8.25.
 
 Not in this zip: `node_modules`, `dist`, the git history (the last two commits' text diff is in
 `dev/last-commits.patch`), and `~/.cache/cold-chain` (fetched MakeHuman/BodyParts3D sources for tools/*.py, and old
@@ -45,63 +45,53 @@ cloud. Hand back a build or a commit; they redeploy.
 - Commits are authored `vermingov <vermingov@users.noreply.github.com>`.
 - Don't wait for replies; work autonomously and report what was verified and what was not.
 
-## Where the work stands (2026-11-14, end of the cloud session)
+## Where the work stands (2026-11-15, end of the second cloud session)
 
-Live: https://vermingov.github.io/cold-chain/ (the gh-pages branch, one bundle built with `vite.one.config.ts`) is
-`main` at 0.8.22 plus hotfixes up to 3eae4df (marks.ts/film.ts send only the changed tiles of their sheets; resolution
-follows the frame rate; F3 quality presets High/Medium/Low; F2 shows render scale and preset). Everything on `main`
-was checked from screenshots or numbers before it went out, except what dev/NOTES.md "## 0.8.22" lists as not checked.
+Live: https://vermingov.github.io/cold-chain/ is 0.8.25, the whole of `wip/0.8.19` at the end of the session, pushed at
+the user's word with only a smoke check: it boots; pistol, shotgun, sword and bat hit people with no page errors; a
+punch is thrown but did not land in the headless check (could be the test: 75 cm away at 1-5 fps). Everything listed
+under "stopped mid-way" below is in it unfinished. `main` is still 0.8.22 + hotfixes.
 
-`wip/0.8.19` is `main` plus the work below, **none of it verified in the running game**, stopped mid-way at the user's
-word. It typechecks. Five jobs were running as agents; each one's state and next step:
+### Done and measured this session
+- **F2 profiler records the session** (profiler.ts): F4 saves `coldchain-profile-<version>-<time>.json`;
+  `node tools/profile-report.mjs <file>` prints worst systems, spikes with what the player did before each, fps spread.
+  A friend's log (Radeon R9 200, Firefox, 81 fps mean) is what found the next two.
+- **Film/marks uploads** (film.ts, marks.ts, fluid.ts `sendCanvasParts`): mipmaps remade once a send, not after every
+  run of tiles; the film dries a few tiles a frame on each tile's own clock instead of every sheet every 8 s (170-220 ms
+  spikes with nothing happening). Not re-measured on a real GPU.
+- **Adaptive resolution judged by the median frame** (graphics.ts), not the mean: CPU spikes no longer drop it to 40%.
+- **Jitter** (ragdoll.ts, behaviour.ts, weapons.ts `step`): the shoulder's bend zero moved 30 deg off Havok's +-180 wrap
+  (the crawl's reach crossed it and the limit flung the arm the long way round); the crawl blends in over 0.5 s; the
+  grab's pull is applied every physics step. Crawl 5.0 -> 2.6, drag by the hand 5.3 -> 1.6 rad/s high-frequency spin.
+  Open: standing people's shins buzz (cause not found); elbows give up to 18 deg sideways in the crawl.
+- **Cries cut off** (sound.ts `cut`, npc.ts `_saying`): knocked out or killed mid-cry, the cry stops. A 2-minute log
+  after kills showed nothing else from a dead body but the fall (one settling thump at 12 s).
+- **Throat** (throat.ts, wounds.ts, bones.ts `levelAt`): blood in the mouth/airways/stomach now works. Causes fixed: a
+  NaN from `getDirectionToRef` (returns the node), the cord level backwards (C4 and above stops breathing), a holed
+  windpipe getting only 0.3 ml/s (now 30% of the track's bleeding), cough/spit thresholds, `SICK` 30 ml, negative bleed
+  rates for organs inside organs. Estimates are in dev/research/airway-blood.md.
 
-### 1. Draw calls and shooting cost (weapons.ts, anatomy.ts, profiler.ts)
-The 1055 draw calls the user saw are X-ray (X): the insides are ~224 submeshes a person. Done in wip: spent casings are
-one thin-instanced mesh and one Havok body per cartridge kind (40 kept, oldest reused); F2 has a "draw calls by source"
-section (each mesh/particle system by name, main and shadow passes apart). Not done: merging the insides' submeshes by
-material kind; the first-person arms' CPU cost (29 ms a frame on the user's laptop, spikes to 394 ms); the 1-2 s freeze
-on a shotgun shot to the head. The laptop is GPU-bound (165-202 ms waiting on the GPU): ask the user for an F2 shot on
-F3 Low with the new render-scale line before going further.
-
-### 2. Bones breaking too easily (bones.ts, thuds.ts)
-Done in wip: a wall slam hurts at the speed the part was moving toward the wall before the step (not the contact's
-impulse over the part's own mass, which read a pinned forearm at 12-25 m/s and broke every arm on the wall) and as a
-broad flat blow ('wall' tool, 2500 mm2). Not done: the before/after table against published fracture thresholds;
-its test scripts were in the session scratchpad (gone).
-
-### 3. Joint limits (ragdoll.ts)
-Done in wip: ranges set to AAOS 1965 / Norkin & White (table in ragdoll.ts); elbow and knee twist cut to 5 degrees
-(any twist there lets the limb bend sideways; the forearm turns at the wrist's joint instead). Measured: back, hip and
-knee-past-straight now stop near their limits. Not fixed: limits give 10-40 degrees under muscle-sized torque inside
-the lying body (the neck, the wrist's side bend to +-56-76 against 25, the knee sideways), though one joint alone holds
-within 3; the shoulder sweeps almost all the way round (three per-axis limits, no cone). Next: find why (mass ratio
-across the joint, limit stiffness/damping, solver), a cone-and-twist shoulder; keep the never-NONE motor rule and check
-a dead body still settles without jitter.
-
-### 4. Body wall and chest (tools/anatomy.py, assets/anatomy/*.bin, wall.ts, viscera.ts)
-Done and live: anatomy rebuilt against the current rig (hand bones inside the fingers). Done in wip: wall.ts (the cut
-face of an opening in layers: skin, fat, fascia, muscle), viscera.ts lung collapse and the wrong-lung-side fix
-(`x > 0 ? 'R' : 'L'`); research in dev/research/body-wall.md. Found: the front ribs sit 0-9 mm under the skin in buyer,
-groundskeeper and old man (hood 31) where a real chest has 25-45 mm; that is why an opened chest shows no flesh. The
-fix was started in tools/anatomy.py (`chest_depth`) and the four bins in wip are rebuilt with it, **unchecked**: if the
-insides look wrong, take the bins from `main`. Next: a compare that only ribs/sternum/cartilage moved, lit before/after
-shots of chest and belly, then the BodyParts3D wall muscles, rib scoring, fracture deformity, blunt dents.
-
-### 5. Blood in the mouth, airways and stomach (new: throat.ts)
-The user: blood should fill the mouth, the lungs should fill with blood, and vomited blood should come up the throat and
-out of the mouth. Research in dev/research/airway-blood.md. throat.ts (wired into npc.ts, vitals.ts, wounds.ts,
-face.ts, behaviour.ts, teeth.ts, bruise.ts) keeps millilitres in the mouth, each lung's airways and the stomach: wounds
-fill them; the mouth drains by the head's real orientation (out of the lips face down or on the side, back to the larynx
-on the back); awake people swallow, spit and cough airway blood up; unconscious ones breathe it in (vitals `flooded`,
-`choked`); past 60 ml in the stomach brings retching and a vomit up the gullet. Nine new ElevenLabs takes (cough-wet,
-gurgle, retch, vomit, spit; tools/sfx.py, CREDITS, manifest). **Never run**: the agent was stopped while finishing it.
-Next: load the game, shoot a lung, a face, a stomach; screenshots face down and supine; listen to the takes.
-
-### Smaller open items
-Eyes are live, but no frame after an eye injury has been rendered (a hang is possible); K after heavy damage can hang
-(the warm-up resets the same way); the army crawl makes no progress; the free hand stops short of arm wounds; shovel
-and sledgehammer rest pose and the sledgehammer's left hand unseen; the 10/22 sits low; a dark chin smudge; a material
-leak on K; Deagle firing/reload frames.
+### Stopped mid-way (in the live build, unfinished)
+1. **Mouth interior**: the user wants the mouth to visibly fill with blood (a liquid surface at the fill level, level with
+   gravity, spilling over the lips, sprayed by coughs), a wet red interior instead of the grey blob (tongue/oral cavity
+   material), wounds inside the mouth (tongue, palate, back of the throat) visible, the vomit a gush not a thread, and
+   neck wounds not bleeding as scalp. Not started in code beyond the throat fixes above.
+2. **Shotgun cost** (a blast is 110-360 ms of JS on the friend's PC): profile in the session showed bones `_draw`
+   rebuilding a break's meshes per break (new vertex buffers), `trace`/`surface` recomputed per pellet, a sound chain per
+   pellet hit (sound.ts now merges the same take near the same place in one moment), shards `region`. The agent was
+   making `rayToSegment` and the vessel loop allocation-free when stopped; nothing measured after.
+3. **First-person arms and weapons** (arm.ts, fist.ts, weapons.ts, hud.ts, arsenal.ts, warm.ts): the user finds the arms
+   "extremely annoying" (sleeves as huge flat flaps looking down, odd grips, the .22 low; the arms cost 29 ms a frame on
+   the laptop). Asked for: a true first-person viewmodel; shots from the muzzle along the barrel and melee hits only
+   where the weapon model actually sweeps (not the crosshair; hud.ts now draws the aim where `weapons.sight()` puts it);
+   Hands (grab/drag/bandage) and Fists separate, left/right punches, hold to charge (real 1-5 kN). Partly written:
+   fists slot and board item, charge/punch code, sight. Check all of it: punches may not land.
+4. **Head**: no brain shows in an opened skull (viscera.ts SHOWN has no brain; the anatomy has one), and a sword cut to the
+   face stretched part of the face into a long spike (user's screenshot; likely face-bone weights on a cut piece). Not
+   started in code.
+5. From the first session, still open: joint limits give 10-40 deg under load and the shoulder has no cone; bones'
+   fracture thresholds table; the chest wall fit (front ribs 0-9 mm under the skin, `chest_depth` in tools/anatomy.py,
+   bins rebuilt but unchecked); eyes after an injury never rendered; K hang after heavy damage; shovel/sledge rest pose.
 
 ### Shipping
 From a checkout of `main`: `npx vite build -c vite.one.config.ts`, check `one/play.html` exists and boots in
