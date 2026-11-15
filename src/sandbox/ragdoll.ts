@@ -173,6 +173,9 @@ export function jointAngles(q: BABYLON.Quaternion, frame: BABYLON.Vector3[], out
     return out;
 }
 
+// An angle brought into -PI to PI.
+const wrap = (a: number) => a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+
 const _v = new V3(), _q = new Q(), _q2 = new Q(), _I = Q.Identity(), _c = new V3(), _w = new V3(), _w2 = new V3();
 const _p = new V3(), _qp = new Q();
 
@@ -223,7 +226,7 @@ export class Ragdoll {
             const head = byName[bone].head;
             const limb = !TRUNK_NAMES.has(name) && !ROOT.test(name);
             const seg = { name, bone, node, head, joint, limb, shape: null, body: null, constraint: null, parent: null, broken: false, locked: false, mass: mass * share,
-                points: flesh.get(name) || [], clothes: clothes.get(name) || [], abs: new Q(), chain: [], spread: [], frame: null, unneutral: Q.Identity(), lo: [0, 0, 0], hi: [0, 0, 0], muscle: joint?.muscle ?? 0,
+                points: flesh.get(name) || [], clothes: clothes.get(name) || [], abs: new Q(), chain: [], spread: [], frame: null, unneutral: Q.Identity(), lo: [0, 0, 0], hi: [0, 0, 0], zero: 0, muscle: joint?.muscle ?? 0,
                 motor: { on: false, made: false, f: -1, t: [NaN, NaN, NaN] } };
             seg.shape = this._shape(seg, shape, byName);
             const kind = TRUNK_NAMES.has(name) ? TRUNK : limb ? LIMBS : ROOTS;
@@ -455,18 +458,22 @@ export class Ragdoll {
         // bones' joints, about which the curve they make swings what is past them as one turn would (about the first
         // joint, the skull drawn on a curved neck lay 7 cm from the head's body, and through the floor under it).
         const pivot = seg.spread.length > 1 ? seg.spread.reduce((a, b) => a.addInPlace(this.person.byName[b.name].head), new V3()).scaleInPlace(1 / seg.spread.length) : seg.head;
-        const params = { pivotA: pivot.subtract(parent.head), pivotB: pivot.subtract(seg.head), axisA: hinge, perpAxisA: along,
-            axisB: hinge.applyRotationQuaternion(seg.unneutral), perpAxisB: along.applyRotationQuaternion(seg.unneutral), collision: false };
-        const limits: any[] = [{ axis: AXIS.LINEAR_DISTANCE, minLimit: 0, maxLimit: 0 }];
-        if (j.lock) {
-            for (const axis of ANGULAR) limits.push({ axis, minLimit: 0, maxLimit: 0 });
-        } else {
+        if (!j.lock) {
             this._range(seg, 0, j.bend);
             this._range(seg, 2, j.side);
             seg.lo[1] = -j.twist * RAD;
             seg.hi[1] = j.twist * RAD;
-            ANGULAR.forEach((axis, i) => limits.push({ axis, minLimit: seg.lo[i], maxLimit: seg.hi[i] }));
         }
+        // Havok reads the bend as an angle from -180 to 180 degrees about its own zero, which is put in the middle of the
+        // bend's range, as far from both ends of it as it can be. (At the neutral, the shoulder's 175 degrees up in front
+        // lay 5 degrees short of where the angle goes over from 180 to -180: an arm reaching overhead went past it, read
+        // as far out past the range the other way, and the limit and the muscles threw it back round the long way, the
+        // arm flailing at up to 100 rad/s.) `seg.zero` is that middle, in the joint's own angles (angles(), hold(), range()).
+        seg.zero = (seg.lo[0] + seg.hi[0]) / 2;
+        const params = { pivotA: pivot.subtract(parent.head), pivotB: pivot.subtract(seg.head), axisA: hinge, perpAxisA: along.applyRotationQuaternion(Q.RotationAxis(hinge, seg.zero)),
+            axisB: hinge.applyRotationQuaternion(seg.unneutral), perpAxisB: along.applyRotationQuaternion(seg.unneutral), collision: false };
+        const limits: any[] = [{ axis: AXIS.LINEAR_DISTANCE, minLimit: 0, maxLimit: 0 }];
+        ANGULAR.forEach((axis, i) => limits.push({ axis, minLimit: seg.lo[i] - (i ? 0 : seg.zero), maxLimit: seg.hi[i] - (i ? 0 : seg.zero) }));
         seg.constraint = new BABYLON.Physics6DoFConstraint(params, limits, this.scene);
         parent.body.addConstraint(seg.body, seg.constraint);
         seg.locked = !!j.lock;
@@ -511,7 +518,24 @@ export class Ragdoll {
     }
 
     // A joint's three angles now (hinge, twist, side), radians, from its neutral.
-    angles(seg, out: number[]) { return jointAngles(this.relative(seg, _q).multiplyInPlace(seg.unneutral), seg.frame, out); }
+    angles(seg, out: number[]) {
+        jointAngles(this.relative(seg, _q).multiplyInPlace(seg.unneutral), seg.frame, out);
+        out[0] = seg.zero + wrap(out[0] - seg.zero);
+        return out;
+    }
+
+    // A joint's range set to `lo` to `hi` (radians: hinge, twist, side), in Havok, about its zero, and where the muscles
+    // and bones.ts read it.
+    range(seg, lo: number[], hi: number[]) {
+        ANGULAR.forEach((axis, i) => {
+            const zero = i === 0 ? seg.zero : 0;
+            seg.constraint.setAxisMode(axis, LIMIT.LIMITED);
+            seg.constraint.setAxisMinLimit(axis, lo[i] - zero);
+            seg.constraint.setAxisMaxLimit(axis, hi[i] - zero);
+            seg.lo[i] = lo[i];
+            seg.hi[i] = hi[i];
+        });
+    }
 
     // Muscle on a joint: its motors pull it toward `target` (hinge, twist, side, radians) with up to `strength` (0 to
     // 1) of what its muscles have. A muscle is a spring with give, not a servo: it pulls harder the further the joint is
@@ -554,7 +578,7 @@ export class Ragdoll {
         if (!on) return;
         for (let i = 0; i < 3; i++) {
             const t = Math.max(seg.lo[i] + 0.02, Math.min(seg.hi[i] - 0.02, target[i]));
-            if (!(Math.abs(t - m.t[i]) < 0.002)) { each((id, axis, j) => j === i && hp.HP_Constraint_SetAxisMotorPositionTarget(id, axis, t)); m.t[i] = t; }
+            if (!(Math.abs(t - m.t[i]) < 0.002)) { each((id, axis, j) => j === i && hp.HP_Constraint_SetAxisMotorPositionTarget(id, axis, t - (i ? 0 : seg.zero))); m.t[i] = t; }
         }
     }
 

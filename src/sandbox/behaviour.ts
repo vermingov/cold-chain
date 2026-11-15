@@ -1219,7 +1219,9 @@ export class Behaviour {
             this.heading = Math.atan2(chest.node.position.x - eye.x, chest.node.position.z - eye.z);
         }
         this.phase += dt * (2 * Math.PI / 1.9) * (0.5 + 0.5 * will);
-        const pose = crawling(this.phase);
+        // (Into it from lying as they lay, over half a second: taken from beside the body to out past the head at once, the
+        // arms were flung up through the floor and spun at 100 rad/s.)
+        const pose = P.mix(REST, crawling(this.phase), smooth(this.t / 0.5));
         s.legL *= 0.12; s.legR *= 0.12;
         const f = this._facing();
         const limbs = this._limbsDown();

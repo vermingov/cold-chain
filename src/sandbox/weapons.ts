@@ -801,16 +801,25 @@ export class Weapons {
         if (ahead !== null) setTimeout(() => land(5.25, ahead), 110);
     }
 
-    _hold(dt) {
+    // Where what is held is drawn to: in front of the eye, as far off as it was taken hold of. The pull is step()'s.
+    _hold() {
         const g = this.grab;
         if (!g) return;
         const { camera } = this.world;
-        const target = camera.globalPosition.add(camera.getDirection(V3.Forward()).scale(Math.min(g.distance, 2.2)));
-        if (g.bowel) { viscera.pull(g.bowel, target); return; }
+        g.target = camera.globalPosition.add(camera.getDirection(V3.Forward()).scale(Math.min(g.distance, 2.2)));
+        if (g.bowel) viscera.pull(g.bowel, g.target);
+    }
+
+    // A stiff spring on the point that was taken hold of, damped, as strong as two arms: given every physics step
+    // (sandbox.ts), from where the point is by then. (Given once a frame for the whole frame, it all came in the first of
+    // the frame's steps and none in the next: someone dragged by the hand had the arm yanked out and let spring back
+    // every step, the whole arm turning one way and the other at 25 rad/s, and the leg the same by the foot.)
+    step(dt: number) {
+        const g = this.grab;
+        if (!g?.target || g.bowel) return;
         const at = V3.TransformCoordinates(g.local, g.node.computeWorldMatrix(true));
         const v = g.body.getLinearVelocity();
-        // A stiff spring on the point that was taken hold of, damped, as strong as two arms.
-        const force = target.subtract(at).scale(320 * Math.min(g.mass, 12)).subtract(v.scale(28 * Math.min(g.mass, 12)));
+        const force = g.target.subtract(at).scale(320 * Math.min(g.mass, 12)).subtract(v.scale(28 * Math.min(g.mass, 12)));
         const most = 900;
         if (force.length() > most) force.scaleInPlace(most / force.length());
         g.body.applyImpulse(force.scale(dt), at);
@@ -1007,7 +1016,7 @@ export class Weapons {
                 this.action = null;
             }
         }
-        this._hold(dt);
+        this._hold();
         this.fist?.update(dt);
         this.medic.update(dt);
         // The flash goes as fast as it came.

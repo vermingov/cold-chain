@@ -35,7 +35,7 @@ export async function openSandbox(engine, canvas, hud) {
     // two of 8.3, 17 ms in three of 5.7) moved where Havok's joints and the floor settle a standing body each time, and
     // the people bobbed on their legs at the frame rate's wander (the pelvis over 1.2 to 1.6 cm, a millimetre a frame,
     // at frames of 12 to 22 ms; 3 to 7 mm of breathing and sway with every step the same length).
-    // Before each, the people push on what they push on (behaviour.ts).
+    // Before each, the people push on what they push on (behaviour.ts), and the player pulls on what they hold (weapons.ts).
     // A frame longer than a thirtieth runs the bodies slower than the clock: each step costs a millisecond or two, and
     // stepping through all of a slow frame made the next one slower still (9 steps a frame after a grenade).
     const physics = scene.getPhysicsEngine() as BABYLON.PhysicsEngine;
@@ -47,6 +47,7 @@ export async function openSandbox(engine, canvas, hud) {
         owed -= steps / 120;
         for (let i = 0; i < steps; i++) {
             for (const npc of world.npcs) npc.behaviour.beforeStep(1 / 120);
+            world.weapons?.step(1 / 120);
             step(1 / 120);
         }
     };

@@ -37,7 +37,6 @@ import { region, crack, bone, jag, type Cut, type Tri } from './shards.ts';
 import { Teeth } from './teeth.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const AXIS = BABYLON.PhysicsConstraintAxis, LIMIT = BABYLON.PhysicsConstraintAxisLimitMode;
-const ANGULAR = [AXIS.ANGULAR_X, AXIS.ANGULAR_Y, AXIS.ANGULAR_Z];
 
 // Each bone by its name (side left off): its strength in a young adult man, and what lies over it. The figures and
 // their sources are in dev/research/blunt-trauma.md; laboratory specimens are mostly elderly, so these are the
@@ -1141,15 +1140,7 @@ export class Bones {
     // --- joints' ranges -----------------------------------------------------------------------
 
     // A joint's range set to `lo` to `hi` (radians: hinge, twist, side), in Havok and where the muscles read it.
-    _range(seg, lo: number[], hi: number[]) {
-        ANGULAR.forEach((axis, i) => {
-            seg.constraint.setAxisMode(axis, LIMIT.LIMITED);
-            seg.constraint.setAxisMinLimit(axis, lo[i]);
-            seg.constraint.setAxisMaxLimit(axis, hi[i]);
-            seg.lo[i] = lo[i];
-            seg.hi[i] = hi[i];
-        });
-    }
+    _range(seg, lo: number[], hi: number[]) { this.npc.ragdoll.range(seg, lo, hi); }
 
     // A joint's range opened `by` radians either way on `axes`: what held it there is torn.
     _widen(seg, axes: number[], by: number) {
