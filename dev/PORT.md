@@ -194,6 +194,13 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
   so a gun held out at a wall did not go into it; here they are drawn in the room. A shot still never starts beyond a
   wall (`before_wall`). The AK's magazine and the shotgun's barrels are not cut out of their meshes (weapons.ts
   `split`), so they stay put through a reload.
+- Known difference, on purpose: fist.ts mirrors the left fist's place twice (`at` is kept mirrored, and `knuckles()`
+  and `_pose` mirror it again), so in the TS both fists sit right of the middle and the left one punches from there.
+  fist.rs mirrors it once: each fist on its own side. Say if the TS's way is wanted.
+- Measured (the `sound` scenario, mixed into memory): a shot 2.8 m off is as loud in the room as itself (-28.0 dB each);
+  the room rings about 1.2 s to -60 dB (Freeverb at the 'cold' room's 1.1 s, the shot's own tail in the figure); behind
+  the cover wall a shot is cut to 0.35 and 1 kHz on its way to the ears, and the total falls only 0.6 dB, as in the TS,
+  the room's ring being unmuffled; nine 'bullet-flesh' asked for in one frame within a metre are one sound at gain 3.
 - Profiler (F2): `profiler::timed("row name", system)` in place of a system gives it a row of its own; every main
   schedule has a row for the rest of its systems, and the render world one for its own thread. `Notes::note(now, what)`
   is the TS's `world.note`. F4 saves `coldchain-profile-<version>-<time>.json` in ~/Downloads (or the working directory)
