@@ -157,6 +157,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.extend(view("people_xray", 0.0, -1.5, [0.0, 1.0, 2.2], 1.65));
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
+        "sound" => s = crate::sound::scenario(),
         _ => return None,
     }
     Some(s)

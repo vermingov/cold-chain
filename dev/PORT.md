@@ -141,3 +141,31 @@ takes a shot; `scenario::log(world, json!(...))` adds to `<out>/log.json`. Frame
 board is hung. Existing: `hall` (four views, the Medium and Low presets, the 40% render scale), `people` (each person
 front, side and face, the segment table into the log, everyone in X-ray), `arsenal` (the board wide and close). The
 TS game's matching shots: tools/port-views.mjs (the same views through tools/rig.mjs).
+
+## Sound (sound.rs), for every job that makes a noise
+The mixer is kira 0.12, used directly (Bevy's rodio audio has no filters, sends or effects; bevy_kira_audio's spatial
+sound is a gain and a pan per instance). No maintained Rust crate does HRTF: a sound with a place is panned at equal
+power between the ears (Web Audio's 'equalpower'), with the TS's distance (inverse, 1.5 m, rolloff 1.1), its wall
+muffling (`map.screened`: lowpass to 1 kHz and 0.35 of the gain) and its room (kira's reverb, calibrated to the TS's
+2.8 m critical distance by the `sound` scenario). Without a sound device nothing sounds and everything is still decided
+and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be heard can be measured.
+
+    use crate::sound::{Sound, Play};
+    fn my_system(mut sound: ResMut<Sound>, ...) {
+        sound.play("bullet-flesh", Play::at(point));                       // a burst, from a place (Bevy's space)
+        sound.play("thud", Play { gain: 0.6, rate: 1.1, at: Some(p), ..default() });
+        let cry = sound.play("scream-hood", Play { follow: Some(head_bone_entity), ..default() });   // follows it
+        cry.as_ref().map(|c| c.cut());                                     // cut off in 50 ms (knocked out, killed)
+        sound.play("step-tarmac", Play { gain: 0.8, most: 0.4, ..default() });   // one strike (`hits`), no place
+        let drag: Option<Stream> = sound.stream("drag", Some(at));         // keep it (a component, a Local)
+        drag.drive(level, rate); drag.at(new_place);                      // every frame; dropped, it stops
+    }
+- `play` returns `Option<Playing>` (None: no such recording; nothing is made up). `Playing::voice()` gives what is
+  playing (`data`: the take's samples, `from`, `length`, `rate`, `start` on `Sound::now()`'s clock): a face mouthing
+  its voice. `sound.has(name)`.
+- The same take asked for again in the same frame within a metre of where it was asked is merged into the first (as
+  loud as both by power): a shotgun's pellets into one body are one sound. A `follow` or `most` sound never merges.
+- What was played and how (distance gain, wall, cutoff, pan, merged count) is pushed to `sound.heard` (Heard), which a
+  scenario may drain into its log.
+- Takes are the manifests' (assets/sounds, assets/cries); the room is 'cold' and the room tone 'room-sandbox' is driven
+  at 0.35 from the start, as sandbox.ts did. Footsteps (player.ts onStep) are sound.rs's `steps`.
