@@ -25,7 +25,12 @@ use serde_json::{json, Value};
 use crate::arsenal::Arsenal;
 use crate::map::WORLD;
 use crate::models::Models;
+use crate::dressing::{self, REACH, SECONDS};
+use crate::npc::{self, Hurt, Npc};
 use crate::person::Person;
+use crate::vitals::{Dice, Vitals};
+use crate::wounds;
+use bevy::diagnostic::FrameCount;
 use crate::player::Player;
 use crate::profiler::{timed, Notes};
 use crate::rng::Rng;
@@ -65,12 +70,27 @@ pub struct Missile {
     pub speed: f32,
     // Which way across it its edge is (unit, world, from the back to the edge).
     pub across: Option<Vec3>,
+    // A gun's pellets a shot (0: one bullet).
+    pub pellets: u32,
 }
 
 const M: Missile = Missile {
     name: "bullet", energy: 0.0, mass: 0.0, calibre: 0.0, channel: 0.0, soft: 0.0, hard: 0.0, reach: 0.0, blade: false, slash: false,
-    edges: 0, taper: 0.0, speed: 0.0, across: None,
+    edges: 0, taper: 0.0, speed: 0.0, across: None, pellets: 0,
 };
+
+impl Missile {
+    // As wounds.rs takes it (the TS's optional fields left out where weapons.ts left them out).
+    fn wounds(&self) -> wounds::Missile {
+        let some = |x: f32| (x > 0.0).then_some(x);
+        wounds::Missile {
+            energy: self.energy, mass: self.mass, calibre: self.calibre, channel: self.channel, soft: self.soft, hard: self.hard,
+            reach: some(self.reach), blade: self.blade, slash: self.slash, name: (self.name != "bullet").then(|| self.name.to_string()),
+            speed: some(self.speed), across: self.across, edges: (self.edges > 0).then_some(self.edges), taper: some(self.taper),
+            pellets: (self.pellets > 1).then_some(self.pellets),
+        }
+    }
+}
 
 pub struct Gun {
     pub m: Missile,
@@ -102,6 +122,17 @@ pub enum Tool {
     Edge,
     Hammer,
     Stiff(f32),
+}
+
+impl Tool {
+    fn wounds(self) -> wounds::Tool {
+        match self {
+            Tool::Flat => wounds::Tool::Named("flat"),
+            Tool::Edge => wounds::Tool::Named("edge"),
+            Tool::Hammer => wounds::Tool::Named("hammer"),
+            Tool::Stiff(n) => wounds::Tool::Stiff(n),
+        }
+    }
 }
 
 pub struct Arm {
@@ -429,25 +460,11 @@ pub struct Weapons {
     pub medic: Medic,
 }
 
-// An open wound a dressing can go on (dressing.ts wounds()): whose, where, which way its surface faces, the first of the
-// person's bleeds under it (which says it is the same wound from one frame to the next), how much it bleeds.
+// An open wound a dressing can go on (dressing.rs wounds), and whose.
 #[derive(Clone)]
 pub struct Wound {
     pub person: Entity,
-    pub at: Vec3,
-    pub normal: Option<Vec3>,
-    pub first: usize,
-    pub flow: f32,
-}
-
-// port: needs medicine. A person's open wounds, worst first (dressing.ts wounds: their bleeds grouped by where they are,
-// those dressed left out), and a dressing put on one (dress). None until vitals.rs has bleeds.
-pub fn wounds(_person: &Person) -> Vec<Wound> {
-    Vec::new()
-}
-
-fn dress(log: &mut Vec<Value>, label: &str, w: &Wound) {
-    log.push(json!({ "dress": label, "at": w.at.to_array() }));
+    pub open: dressing::OpenWound,
 }
 
 // The player putting dressings on (dressing.ts Medic): the bandage on the wound looked at, the medkit on every open wound
@@ -463,8 +480,6 @@ pub struct Medic {
     opened: Option<Entity>,
 }
 
-const SECONDS: f32 = 4.0; // to put one on: a game's few seconds for what takes a minute with pressure held
-const REACH: f32 = 1.9; // metres from the eye to a wound that can be reached (one on the floor, kneeling down to it)
 
 impl Medic {
     // How far through the one being put on, 0 to 1, or None.
@@ -694,7 +709,7 @@ fn into_capsule(o: Vec3, d: Vec3, a: Vec3, b: Vec3, r: f32) -> Option<f32> {
     Some(hi.max(0.0))
 }
 
-// A crossing of someone's skin or clothes (npc.surface's): where, on which segment.
+// A crossing of someone's skin or clothes (npc.surface's): where, how far along the line, the segment it is on.
 #[derive(Clone, Debug)]
 pub struct Crossing {
     pub point: Vec3,
@@ -702,23 +717,14 @@ pub struct Crossing {
     pub segment: usize,
 }
 
-// The first skin or clothes of `person` the line from `o` along `d` crosses within `far`.
-// port: needs medicine. npc.surface traces the skin and clothes themselves; until it lands, the segments' capsules.
-pub fn surface(person: &Person, o: Vec3, d: Vec3, far: f32) -> Option<Crossing> {
-    let mut best: Option<Crossing> = None;
-    for (k, s) in person.segments.iter().enumerate() {
-        let (a, b) = segment_ends(s);
-        if let Some(t) = into_capsule(o, d, a, b, s.radius) {
-            if t <= far && best.as_ref().is_none_or(|c| t < c.t) {
-                best = Some(Crossing { point: o + d * t, t, segment: k });
-            }
-        }
-    }
-    best
+// The first skin or clothes of `npc` the line from `o` along `d` crosses within `far` (npc.surface).
+pub fn surface(npc: &mut Npc, o: Vec3, d: Vec3, far: f32) -> Option<Crossing> {
+    let c = npc.surface(o, d, far, false).into_iter().find(|h| matches!(h.kind, npc::Kind::Skin | npc::Kind::Cloth))?;
+    Some(Crossing { point: c.point, t: c.t, segment: npc.nearest(c.point).0.unwrap_or(0) })
 }
 
-// What a missile did (wounds.ts pierce's result): whether it went in, stopped in there, where it ended or came out,
-// with what energy left, and where it went in.
+// What a missile did (wounds.rs Pierced): whether it went in, stopped in there, where it ended or came out, with what
+// energy left, and where it went in.
 #[derive(Debug)]
 pub struct Pierced {
     pub hit: bool,
@@ -728,28 +734,35 @@ pub struct Pierced {
     pub enter: Option<Vec3>,
 }
 
-// The two calls a weapon makes into a body: everything a shot, a blade or a blow does to a person goes through here.
-// port: needs medicine. wounds::pierce(person, origin, dir, missile, far) and wounds::blow(person, point, dir, mass,
-// speed, tool); until they land, what was met is only found and logged, and a missile is taken to stop where it went in.
-fn pierce(log: &mut Vec<Value>, label: &str, person: &Person, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> Pierced {
-    let Some(c) = surface(person, origin, dir, far) else { return Pierced { hit: false, stopped: false, at: None, energy: m.energy, enter: None } };
-    log.push(json!({ "hit": "pierce", "person": label, "segment": person.segments[c.segment].name, "point": c.point.to_array(),
-                     "dir": dir.to_array(), "missile": m.name, "energy": m.energy, "calibre": m.calibre, "slash": m.slash, "blade": m.blade }));
-    Pierced { hit: true, stopped: true, at: Some(c.point), energy: 0.0, enter: Some(c.point) }
+// The two calls a weapon makes into a body (wounds.rs pierce and blow): everything a shot, a blade or a blow does to a
+// person goes through here, and into the log of what was hit.
+fn pierce(cx: &mut Cx, who: Entity, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> Pierced {
+    let missile = m.wounds();
+    let Some((res, seg)) = cx.npc(who, |n| {
+        let res = wounds::pierce(n, origin, dir, &missile, far);
+        let seg = res.enter.as_ref().and_then(|c| n.nearest(c.point).0).map(|k| n.person.segments[k].name.clone());
+        (res, seg)
+    }) else {
+        return Pierced { hit: false, stopped: false, at: None, energy: m.energy, enter: None };
+    };
+    if res.hit {
+        let label = cx.label(who);
+        cx.weapons.log.push(json!({ "hit": "pierce", "person": label, "segment": seg, "point": res.enter.as_ref().map(|c| c.point.to_array()),
+                                    "dir": dir.to_array(), "missile": m.name, "energy": m.energy, "calibre": m.calibre, "slash": m.slash,
+                                    "blade": m.blade, "stopped": res.stopped, "left": res.energy, "out": res.at.map(|a| a.to_array()) }));
+    }
+    Pierced { hit: res.hit, stopped: res.stopped, at: res.at, energy: res.energy, enter: res.enter.map(|c| c.point) }
 }
 
-fn blow(log: &mut Vec<Value>, label: &str, person: &Person, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) {
-    let seg = person
-        .segments
-        .iter()
-        .min_by(|a, b| {
-            let (pa, qa) = segment_ends(a);
-            let (pb, qb) = segment_ends(b);
-            ray_to_segment(point, Vec3::Y, pa, qa).1.min(point.distance(pa)).total_cmp(&ray_to_segment(point, Vec3::Y, pb, qb).1.min(point.distance(pb)))
-        })
-        .map_or("chest".to_string(), |s| s.name.clone());
-    log.push(json!({ "hit": "blow", "person": label, "segment": seg, "point": point.to_array(), "dir": dir.to_array(), "mass": mass,
-                     "speed": speed, "joules": 0.5 * mass * speed * speed, "tool": format!("{tool:?}") }));
+#[allow(clippy::too_many_arguments)]
+fn blow(cx: &mut Cx, who: Entity, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) {
+    let seg = cx.npc(who, |n| {
+        wounds::blow(n, point, dir, mass, speed, tool.map(Tool::wounds));
+        n.nearest(point).0.map(|k| n.person.segments[k].name.clone())
+    });
+    let label = cx.label(who);
+    cx.weapons.log.push(json!({ "hit": "blow", "person": label, "segment": seg.flatten(), "point": point.to_array(), "dir": dir.to_array(), "mass": mass,
+                                "speed": speed, "joules": 0.5 * mass * speed * speed, "tool": format!("{tool:?}") }));
 }
 
 // The point of the segments of `person` nearest `p` (ragdoll.ts nearest): which segment.
@@ -826,6 +839,9 @@ pub struct Cx<'w, 's> {
     pub people: Query<'w, 's, (Entity, &'static Person)>,
     pub bodies: Query<'w, 's, (&'static Transform, Option<&'static Velocity>), (With<RigidBody>, Without<Player>)>,
     pub fists: ResMut<'w, crate::fist::Fists>,
+    pub hurts: Query<'w, 's, (&'static Transform, &'static mut Vitals, &'static mut Hurt), Without<Player>>,
+    pub dice: ResMut<'w, Dice>,
+    pub frame: Res<'w, FrameCount>,
 }
 
 struct Wall {
@@ -835,6 +851,16 @@ struct Wall {
 }
 
 impl Cx<'_, '_> {
+    // A person's medicine borrowed for one shot, blow or dressing (npc::with's, inside a system). None until they have
+    // their Hurt (the frame after they are made).
+    pub fn npc<R>(&mut self, who: Entity, f: impl FnOnce(&mut Npc) -> R) -> Option<R> {
+        let (_, person) = self.people.get(who).ok()?;
+        let (root, mut vitals, mut hurt) = self.hurts.get_mut(who).ok()?;
+        let traced = hurt.traced.clone();
+        let mut npc = Npc { person, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut self.dice, frame: self.frame.0 };
+        Some(f(&mut npc))
+    }
+
     fn eye(&self) -> Transform {
         self.player.single().map(|(_, t)| *t).unwrap_or_default()
     }
@@ -931,11 +957,7 @@ fn shot(cx: &mut Cx, from: Vec3, mut dir: Vec3, m: Missile, skips: f32) {
             continue;
         };
         let reach = (3.0f32).min(far - t + 2.0) + t;
-        let res = {
-            let (_, p) = cx.people.get(who).unwrap();
-            let label = p.label.clone();
-            pierce(&mut cx.weapons.log, &label, p, origin, dir, &Missile { energy, ..m }, reach)
-        };
+        let res = pierce(cx, who, origin, dir, &Missile { energy, ..m }, reach);
         if !res.hit {
             origin += dir * (t + 0.3);
             continue;
@@ -1078,24 +1100,28 @@ fn swing(cx: &mut Cx, how: How) {
 
 // The first skin or clothes of anyone that a point of what is held crosses going from `a` to `b` (this frame's move):
 // who, the crossing, and the way it was going.
-fn meets(cx: &Cx, a: Vec3, b: Vec3) -> Option<(Entity, Crossing, Vec3)> {
+fn meets(cx: &mut Cx, a: Vec3, b: Vec3) -> Option<(Entity, Crossing, Vec3)> {
     let d = b - a;
     let far = d.length();
     if far < 1e-5 {
         return None;
     }
     let d = d / far;
-    for (e, p) in &cx.people {
-        // (Within reach of any of its segments, before the costlier look at the skin.)
-        let near = p.segments.iter().any(|s| {
-            let (pa, pb) = segment_ends(s);
-            let (t, dist) = ray_to_segment(a, d, pa, pb);
-            dist < s.radius + 0.1 && t > -0.1 && t < far + 0.1
-        });
-        if !near {
-            continue;
-        }
-        if let Some(c) = surface(p, a, d, far) {
+    // (Within reach of any of its segments, before the costlier look at the skin.)
+    let near: Vec<Entity> = cx
+        .people
+        .iter()
+        .filter(|(_, p)| {
+            p.segments.iter().any(|s| {
+                let (pa, pb) = segment_ends(s);
+                let (t, dist) = ray_to_segment(a, d, pa, pb);
+                dist < s.radius + 0.1 && t > -0.1 && t < far + 0.1
+            })
+        })
+        .map(|(e, _)| e)
+        .collect();
+    for e in near {
+        if let Some(c) = cx.npc(e, |n| surface(n, a, d, far)).flatten() {
             return Some((e, c, d));
         }
     }
@@ -1136,7 +1162,7 @@ fn sweep(cx: &mut Cx, dt: f32) {
             How::Stab => {
                 let stab = a.stab.unwrap();
                 let across = cx.hand.anchors.get(a.key).and_then(|x| x.edge).map(|e| (hand.rotation * e).normalize());
-                let res = pierce(&mut cx.weapons.log, &label, cx.people.get(who).unwrap().1, was[k], dir, &Missile { across, name: a.key, ..stab }, far + stab.reach);
+                let res = pierce(cx, who, was[k], dir, &Missile { across, name: a.key, ..stab }, far + stab.reach);
                 cx.weapons.action.as_mut().unwrap().landed = true;
                 cx.note(format!("  {} stab met {label} at {:.2?}", a.key, hit.point.to_array()));
                 // The blade comes out with blood over what went in, both faces, about as wide as it is.
@@ -1154,19 +1180,19 @@ fn sweep(cx: &mut Cx, dt: f32) {
                 if let Some(claw) = down.and_then(|d| d.claw) {
                     // The claw's tines driven in (a puncture), along the way it comes down.
                     let across = Some(cx.eye().right().as_vec3());
-                    let res = pierce(&mut cx.weapons.log, &label, cx.people.get(who).unwrap().1, hit.point - dir * 0.05, dir, &Missile { across, name: "claw", ..claw }, 0.05 + claw.reach);
+                    let res = pierce(cx, who, hit.point - dir * 0.05, dir, &Missile { across, name: "claw", ..claw }, 0.05 + claw.reach);
                     if res.hit {
                         cx.sound.play("stab", Play::at(hit.point));
                     }
                 } else {
                     let speed = down.and_then(|d| d.speed).unwrap_or(a.speed);
                     let tool = down.and_then(|d| d.tool).or(a.tool);
-                    blow(&mut cx.weapons.log, &label, cx.people.get(who).unwrap().1, hit.point, dir, a.mass, speed, tool);
+                    blow(cx, who, hit.point, dir, a.mass, speed, tool);
                     cx.sound.play(a.sound.unwrap_or("blunt"), Play::at(hit.point));
                     // The shovel's edge also splits the skin over what it broke: a chop, drawn as a short cut across it.
                     if let Some(cut) = down.and_then(|d| d.cut) {
                         let chop = Missile { name: "chop", energy: 60.0, mass: 0.3, calibre: 0.004, channel: cut * 0.5, soft: 0.8, hard: 60.0, reach: cut, blade: true, slash: true, ..M };
-                        let res = pierce(&mut cx.weapons.log, &label, cx.people.get(who).unwrap().1, hit.point - dir * 0.05, dir, &chop, 0.05 + cut);
+                        let res = pierce(cx, who, hit.point - dir * 0.05, dir, &chop, 0.05 + cut);
                         if let (true, Some(enter)) = (res.hit, res.enter) {
                             cx.weapons.action.as_mut().unwrap().hits.push((who, vec![enter]));
                         }
@@ -1179,7 +1205,7 @@ fn sweep(cx: &mut Cx, dt: f32) {
             How::Cut => {
                 let m = Missile { name: a.key, energy: if a.key == "sword" { 90.0 } else { 35.0 }, mass: 0.3, calibre: 0.004, channel: a.cut * 0.5, soft: 0.8, hard: 60.0,
                                   reach: a.cut, blade: true, slash: true, ..M };
-                let res = pierce(&mut cx.weapons.log, &label, cx.people.get(who).unwrap().1, was[k], dir, &m, far + a.cut);
+                let res = pierce(cx, who, was[k], dir, &m, far + a.cut);
                 let (true, Some(enter)) = (res.hit, res.enter) else { continue };
                 // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).
                 let act = cx.weapons.action.as_mut().unwrap();
@@ -1217,10 +1243,9 @@ fn take_hold(cx: &mut Cx) {
     // held by the segment nearest the skin looked at (ragdoll.nearest, the segment's rigid body). Until the ragdoll
     // lands, a person met is only logged.
     if let Some((who, _)) = cx.person(at, ahead, 3.0) {
-        let p = cx.people.get(who).unwrap().1;
-        if let Some(skin) = surface(p, at, ahead, 3.0) {
-            let label = p.label.clone();
-            let seg = p.segments[nearest(p, skin.point)].name.clone();
+        if let Some(skin) = cx.npc(who, |n| surface(n, at, ahead, 3.0)).flatten() {
+            let label = cx.label(who);
+            let seg = cx.people.get(who).unwrap().1.segments[skin.segment].name.clone();
             cx.weapons.log.push(json!({ "grab": label, "segment": seg, "point": skin.point.to_array() }));
         }
         return;
@@ -1357,10 +1382,8 @@ fn explode(cx: &mut Cx, ball: Entity) {
         })
         .collect();
     for (who, d, k) in near {
-        let p = cx.people.get(who).unwrap().1;
-        let label = p.label.clone();
-        let point = p.segments[k].rest.translation;
-        blow(&mut cx.weapons.log, &label, p, point, (point - at).normalize(), 2.0, (12.0 / d).min(18.0), Some(Tool::Flat));
+        let point = cx.people.get(who).unwrap().1.segments[k].rest.translation;
+        blow(cx, who, point, (point - at).normalize(), 2.0, (12.0 / d).min(18.0), Some(Tool::Flat));
     }
     // The fragments, about a thousand, each spending its energy against air first (half its speed in 15 m). Followed one
     // by one only where they meet somebody: each part of each person takes as many as the share of the sphere it covers
@@ -1593,7 +1616,7 @@ pub fn act(mut cx: Cx) {
         let act = cx.weapons.action.as_ref().unwrap();
         if act.t >= act.length {
             // The cuts drawn along every place each crossed the skin (npc.slash).
-            // port: needs medicine (npc.slash: the cut drawn and its wound made).
+            // port: phase 3 (npc.slash draws the cut along them: marks); the wound under each crossing is pierce's, already made.
             let act = cx.weapons.action.take().unwrap();
             let sweep = cx.eye().left().as_vec3();
             for (who, hits) in act.hits {
@@ -1633,25 +1656,27 @@ fn medic(cx: &mut Cx, dt: f32) {
     // within reach and facing the eye (bandage).
     let found: Option<(Wound, usize)> = if medkit {
         cx.person(at, ahead, REACH).and_then(|(who, _)| {
-            let list = wounds(cx.people.get(who).unwrap().1);
-            list.first().cloned().map(|w| (w, list.len()))
+            let list = cx.npc(who, |n| dressing::wounds(n)).unwrap_or_default();
+            list.first().cloned().map(|w| (Wound { person: who, open: w }, list.len()))
         })
     } else {
         let mut best: Option<(Wound, f32)> = None;
-        for (_, p) in &cx.people {
-            let centre = p.segments.iter().find(|s| s.name == "pelvis").map_or(Vec3::ZERO, |s| s.rest.translation);
-            if at.distance(centre) > REACH + 1.2 {
-                continue;
-            }
-            for w in wounds(p) {
+        let near: Vec<Entity> = cx
+            .people
+            .iter()
+            .filter(|(_, p)| at.distance(p.segments.iter().find(|s| s.name == "pelvis").map_or(Vec3::ZERO, |s| s.rest.translation)) <= REACH + 1.2)
+            .map(|(e, _)| e)
+            .collect();
+        for who in near {
+            for w in cx.npc(who, |n| dressing::wounds(n)).unwrap_or_default() {
                 let to = w.at - at;
                 let t = to.dot(ahead);
-                if t < 0.1 || t > REACH || w.normal.is_some_and(|n| n.dot(ahead) > 0.3) {
+                if t < 0.1 || t > REACH || w.normal.dot(ahead) > 0.3 {
                     continue;
                 }
                 let off = (to - ahead * t).length() / t;
                 if off < 0.09 && best.as_ref().is_none_or(|b| off < b.1) {
-                    best = Some((w, off));
+                    best = Some((Wound { person: who, open: w }, off));
                 }
             }
         }
@@ -1668,8 +1693,8 @@ fn medic(cx: &mut Cx, dt: f32) {
         return;
     }
     // The same wound as last frame is the one its first bleed is still in.
-    if cx.weapons.medic.job.is_none_or(|j| (j.0, j.1) != (wound.person, wound.first)) {
-        cx.weapons.medic.job = Some((wound.person, wound.first, 0.0));
+    if cx.weapons.medic.job.is_none_or(|j| (j.0, j.1) != (wound.person, wound.open.bleeds.first().copied().unwrap_or(0))) {
+        cx.weapons.medic.job = Some((wound.person, wound.open.bleeds.first().copied().unwrap_or(0), 0.0));
         if medkit && cx.weapons.medic.opened != Some(wound.person) {
             cx.weapons.medic.opened = Some(wound.person);
             cx.sound.play("zip", Play::default().gain(0.7));
@@ -1684,18 +1709,20 @@ fn medic(cx: &mut Cx, dt: f32) {
     let t = t + dt;
     cx.weapons.medic.job.as_mut().unwrap().2 = t;
     if cx.weapons.medic.wrap.is_none() {
-        cx.weapons.medic.wrap = cx.sound.stream("gauze-wrap", Some(wound.at));
+        cx.weapons.medic.wrap = cx.sound.stream("gauze-wrap", Some(wound.open.at));
     }
     if let Some(w) = &cx.weapons.medic.wrap {
-        w.at(wound.at);
+        w.at(wound.open.at);
     }
     cx.weapons.medic.prompt = format!("Dressing{} {}%", if n > 1 { format!(" ({n} left)") } else { String::new() }, (100.0 * (t / SECONDS).min(1.0)).round());
     if t < SECONDS {
         return;
     }
+    let open = wound.open.clone();
+    let done = cx.npc(wound.person, |n| dressing::dress(n, &open)).flatten();
     let label = cx.label(wound.person);
-    dress(&mut cx.weapons.log, &label, &wound);
-    cx.sound.play("tape", Play::at(wound.at).gain(0.7));
+    cx.weapons.log.push(json!({ "dress": label, "at": open.at.to_array(), "dressing": done }));
+    cx.sound.play("tape", Play::at(open.at).gain(0.7));
     cx.weapons.medic.job = None;
 }
 

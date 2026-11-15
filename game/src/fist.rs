@@ -18,7 +18,11 @@ use serde_json::json;
 
 use crate::arm::{Arm, Grasp, Reach};
 use crate::hands::Arms;
+use crate::npc::{Hurt, Npc};
 use crate::person::Person;
+use crate::vitals::{Dice, Vitals};
+use crate::wounds;
+use bevy::diagnostic::FrameCount;
 use crate::player::Player;
 use crate::sound::{Play, Sound};
 use crate::weapons::{e, Kind, Weapons};
@@ -339,7 +343,9 @@ pub fn punch(
     mut weapons: ResMut<Weapons>,
     mut sound: ResMut<Sound>,
     mut eye: Query<&mut Transform, With<Player>>,
-    people: Query<(Entity, &Person)>,
+    mut people: Query<(Entity, &Person, &Transform, &mut Vitals, &mut Hurt), Without<Player>>,
+    mut dice: ResMut<Dice>,
+    frame: Res<FrameCount>,
 ) {
     let Some(mut arms) = arms else { return };
     let Ok(mut eye) = eye.single_mut() else { return };
@@ -396,10 +402,18 @@ pub fn punch(
             let far = d.length();
             if far > 1e-5 {
                 let dir = d / far;
-                let met = people.iter().find_map(|(e, p)| crate::weapons::surface(p, was, dir, far).map(|c| (e, p, c)));
-                if let Some((_, p, c)) = met {
-                    // port: needs medicine (wounds::blow): the blow is logged where it would be dealt.
-                    weapons.log.push(json!({ "hit": "blow", "person": p.label, "segment": p.segments[c.segment].name, "point": c.point.to_array(),
+                // The first skin or clothes anyone's knuckles cross on the way (npc.surface), and the blow landed there.
+                let mut met = None;
+                for (e, p, root, mut vitals, mut hurt) in &mut people {
+                    let traced = hurt.traced.clone();
+                    let mut npc = Npc { person: p, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut dice, frame: frame.0 };
+                    let Some(c) = crate::weapons::surface(&mut npc, was, dir, far) else { continue };
+                    wounds::blow(&mut npc, c.point, dir, f.mass, f.speed, Some(wounds::Tool::Stiff(FIST_GIVES)));
+                    met = Some((e, p.label.clone(), p.segments[c.segment].name.clone(), c));
+                    break;
+                }
+                if let Some((_, label, segment, c)) = met {
+                    weapons.log.push(json!({ "hit": "blow", "person": label, "segment": segment, "point": c.point.to_array(),
                                              "dir": dir.to_array(), "mass": f.mass, "speed": f.speed, "joules": 0.5 * f.mass * f.speed * f.speed,
                                              "tool": format!("Stiff({FIST_GIVES})"), "with": format!("{side} fist") }));
                     sound.play("blunt", Play::at(c.point).gain(0.45 + 0.35 * (f.mass - 1.5) / 1.4));

@@ -837,6 +837,35 @@ fn render(tap: Option<Res<Tap>>, meter: Option<ResMut<Meter>>, time: Res<Time>) 
     meter.frames.push([l, rr, peak]);
 }
 
+// What hurt people say and what their hurts sound like (npc.rs Happened, the TS's npc.say and world.sound.shot): a cry
+// (`kind`-`voice`, the voice being the body's) from the head, following it as it falls or is dragged; the one playing cut
+// off when they are knocked out or killed mid-cry; a take at a place, or at the head.
+fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person, &crate::npc::Hurt)>, mut saying: Local<HashMap<Entity, Playing>>) {
+    use crate::npc::Happened;
+    for (e, p, h) in &people {
+        let head = p.body.by_name.get("head").map(|&i| p.joints[i]);
+        for x in &h.happened {
+            match x {
+                Happened::Say { kind, gain } => {
+                    if let Some(playing) = sound.play(&format!("{kind}-{}", p.body.name), Play { gain: *gain, follow: head, ..default() }) {
+                        saying.insert(e, playing);
+                    }
+                }
+                Happened::Cut => {
+                    if let Some(playing) = saying.remove(&e) {
+                        playing.cut();
+                    }
+                }
+                Happened::Sound { name, at, gain } => {
+                    sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, ..default() });
+                }
+                _ => {}
+            }
+        }
+    }
+    saying.retain(|e, _| people.contains(*e));
+}
+
 // A footfall heard (player.ts onStep): harder running, softer on the heels.
 fn steps(mut sound: ResMut<Sound>, players: Query<&Player>, mut last: Local<u32>) {
     let Ok(p) = players.single() else { return };
@@ -851,7 +880,7 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(Sound::new())
         .add_systems(Startup, (load, mix).chain())
         .add_systems(Update, steps)
-        .add_systems(PostUpdate, (crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));
+        .add_systems(PostUpdate, (hurts, crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));
 }
 
 #[test]
