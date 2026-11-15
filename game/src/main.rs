@@ -4,6 +4,10 @@
 // original of anything is easy to find (dev/PORT.md). `cargo run` is the game; `cargo run -- --scenario <name> --out
 // <dir>` runs one of scenario.rs's scripted runs, deterministically, and exits.
 
+// shortcut: the foundation reads in everything the TS files hold (the anatomy's vessels, the face's pose units, the
+// map's questions for blood and sound) before the phase 2 modules that use it exist; take this out once they do.
+#![allow(dead_code)]
+
 mod anatomy;
 mod arsenal;
 mod dressing;
