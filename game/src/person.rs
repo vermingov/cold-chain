@@ -117,8 +117,9 @@ pub struct Bone {
     pub tail: Vec3,
 }
 
-// One body as read, in Bevy's space (main.rs `babylon`): every corner, bone and face pose mirrored, the triangles wound
-// the other way to keep their fronts out, the textures' v turned over (Babylon flips an image as it loads it).
+// One body as read, in Bevy's space (main.rs `babylon`): every corner, bone and face pose mirrored, the textures' v
+// turned over (Babylon flips an image as it loads it). The triangles keep their order: Babylon's front face is the
+// clockwise one, and the mirror makes it counter-clockwise, Bevy's front.
 pub struct Body {
     pub name: String,
     pub height: f32,
@@ -168,14 +169,6 @@ pub fn vec3s(b: &[u8]) -> Vec<Vec3> {
     f32s(b).chunks_exact(3).map(|p| babylon(p[0], p[1], p[2])).collect()
 }
 
-// Triangles wound the other way: the mirror turns every front face to the back.
-pub fn wound(mut index: Vec<u32>) -> Vec<u32> {
-    for t in index.chunks_exact_mut(3) {
-        t.swap(1, 2);
-    }
-    index
-}
-
 pub fn read_body(path: &str) -> Body {
     let (buf, header, base) = read_file(path, b"CCPF");
     let h: RawHeader = serde_json::from_value(header).expect(path);
@@ -204,7 +197,7 @@ pub fn read_body(path: &str) -> Body {
         uv,
         joints,
         weights,
-        index: wound(index),
+        index,
     };
     assert_eq!(body.position.len(), h.vertex_count, "{path}: corners");
     body.index_by_name();

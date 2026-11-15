@@ -21,10 +21,6 @@ impl Rng {
         self.0 = s;
         (s as f64 / 4_294_967_296.0) as f32
     }
-
-    pub fn range(&mut self, a: f32, b: f32) -> f32 {
-        a + self.next() * (b - a)
-    }
 }
 
 pub fn plugin(app: &mut App) {

@@ -12,12 +12,6 @@ pub struct Sounds {
     pub takes: HashMap<String, Vec<Handle<AudioSource>>>,
 }
 
-impl Sounds {
-    pub fn has(&self, name: &str) -> bool {
-        self.takes.contains_key(name)
-    }
-}
-
 fn load(assets: Res<AssetServer>, mut sounds: ResMut<Sounds>) {
     for dir in ["sounds", "cries"] {
         let path = crate::asset_file(&format!("{dir}/manifest.json"));

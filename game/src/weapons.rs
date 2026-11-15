@@ -147,7 +147,8 @@ impl WeaponModels {
     }
 
     pub fn loaded(&self, assets: &AssetServer) -> bool {
-        self.gltf.values().all(|h| assets.is_loaded_with_dependencies(h))
+        // (One that failed is as loaded as it will get: it is left off the board, with Bevy's error in the log.)
+        self.gltf.values().all(|h| assets.is_loaded_with_dependencies(h) || assets.load_state(h).is_failed())
     }
 }
 

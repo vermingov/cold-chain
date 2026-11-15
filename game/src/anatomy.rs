@@ -16,7 +16,7 @@ use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use crate::person::{array, read_file, vec3s, wound, Body, Person, RawArray};
+use crate::person::{array, read_file, vec3s, Body, Person, RawArray};
 
 #[derive(Deserialize, Clone)]
 pub struct Part {
@@ -74,7 +74,7 @@ pub fn read(path: &str) -> Insides {
         }).collect(),
         position: vec3s(get("position")),
         normal: vec3s(get("normal")),
-        index: wound(index),
+        index,
     }
 }
 

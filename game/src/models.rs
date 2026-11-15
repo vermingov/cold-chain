@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 use serde::Deserialize;
 
-use crate::person::{array, f32s, read_file, vec3s, wound, RawArray};
+use crate::person::{array, f32s, read_file, vec3s, RawArray};
 use crate::surfaces::image;
 
 // How much of a map's metalness is honoured. There is no environment here to reflect, so a full metal is black except
@@ -127,11 +127,11 @@ fn read(path: &str, assets: &AssetServer, meshes: &mut Assets<Mesh>, materials: 
     let uv: Vec<Vec2> = f32s(get("uv")).chunks_exact(2).map(|t| Vec2::new(t[0], if h.invert_y { 1.0 - t[1] } else { t[1] })).collect();
     let raw = get("index");
     let wide = h.arrays.iter().any(|a| a.name == "index" && a.kind == "uint32");
-    let index = wound(if wide {
+    let index: Vec<u32> = if wide {
         raw.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect()
     } else {
         raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) as u32).collect()
-    });
+    };
     let parts = h
         .parts
         .iter()

@@ -10,7 +10,7 @@
 
 use bevy::anti_alias::fxaa::Fxaa;
 use bevy::camera::Exposure;
-use bevy::core_pipeline::tonemapping::{tonemapping, Tonemapping};
+use bevy::core_pipeline::tonemapping::{tonemapping, DebandDither, Tonemapping};
 use bevy::core_pipeline::{Core3d, FullscreenShader};
 use bevy::ecs::query::QueryItem;
 use bevy::ecs::system::lifetimeless::Read;
@@ -88,6 +88,7 @@ fn grade(add: On<Add<Camera3d>>, mut commands: Commands, mut images: ResMut<Asse
     commands.entity(add.entity).insert((
         Hdr,
         Tonemapping::None,
+        DebandDither::Disabled,
         Exposure { ev100: -(1.2f32).log2() },
         bloom_setting(48.0),
         Fxaa::default(),
@@ -202,6 +203,9 @@ fn picture(
 pub fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "picture.wesl");
     app.add_plugins((ExtractComponentPlugin::<Picture>::default(), UniformComponentPlugin::<Picture>::default()))
+        // (No light from nowhere: Bevy's default ambient would light every surface eighty times over in these units.
+        // The fill is the environment map's.)
+        .insert_resource(bevy::light::GlobalAmbientLight::NONE)
         .add_observer(grade)
         .add_systems(Update, animate);
     let Some(render) = app.get_sub_app_mut(RenderApp) else { return };

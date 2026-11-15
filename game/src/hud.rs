@@ -3,7 +3,7 @@
 // look is play.html's: IM Fell on the picture with a soft shadow under it, sizes in its rems (16 px).
 
 use bevy::prelude::*;
-use bevy::text::FontSize;
+use bevy::text::{FontSize, LineHeight};
 
 use crate::arsenal::Arsenal;
 use crate::person::Person;
@@ -100,7 +100,7 @@ fn spawn(mut commands: Commands, assets: Res<AssetServer>) {
     ];
     commands.spawn((Node { max_width: px(34.0 * REM), flex_direction: FlexDirection::Column, ..at(Some(1.0), None, None, Some(1.0)) }, Help)).with_children(|c| {
         for line in help {
-            c.spawn((Text::new(line), font(r, 0.9), TextColor(HELP), shadow(), Node { margin: UiRect::bottom(px(0.35 * 0.9 * REM)), ..default() }));
+            c.spawn((Text::new(line), font(r, 0.9), LineHeight::RelativeToFont(1.35), TextColor(HELP), shadow()));
         }
     });
     commands.spawn((at(None, None, Some(1.0), Some(3.2)), Text::new(""), font(r, 0.9), TextColor(HELP), shadow(), NoteText));

@@ -24,6 +24,7 @@ use crate::anatomy::Seeing;
 use crate::map::Map;
 use crate::person::Person;
 use crate::player::Player;
+use crate::ragdoll::Shape;
 use crate::rng::Rng;
 use crate::{babylon, Loading};
 
@@ -122,6 +123,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         }
         // Each person alone, whole from the front and the side, and their face; then everyone seen through (X).
         "people" => {
+            s.push(Step::Do(Box::new(segments)));
             for (i, body) in crate::sandbox::BODIES.into_iter().enumerate() {
                 let (x, z) = ((i as f32 - 1.5) * 1.5, 2.2);
                 s.push(only(Some(body)));
@@ -143,9 +145,51 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.extend(view("people_xray", 0.0, -1.5, [0.0, 1.0, 2.2], 1.65));
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
+        "debugparts" => {
+            s.push(only(Some("buyer")));
+            for kind in ["skin", "eyes", "teeth", "tongue", "brows", "lashes", "hair", "cloth"] {
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    let mut q = w.query::<&Person>();
+                    let parts: Vec<(Entity, bool)> = q.iter(w).flat_map(|p| p.parts.iter().map(|&(i, e)| (e, p.body.parts[i].kind == kind)).collect::<Vec<_>>()).collect();
+                    for (e, on) in parts {
+                        *w.get_mut::<Visibility>(e).unwrap() = if on { Visibility::Inherited } else { Visibility::Hidden };
+                    }
+                })));
+                s.extend(view(&format!("debug_{kind}"), 0.75, 2.2 - 0.6, [0.75, 1.77, 2.2], 1.79));
+            }
+        }
         _ => return None,
     }
     Some(s)
+}
+
+// Each person's ragdoll segments as fitted (ragdoll.rs), into the log: what phase 2's ragdoll is built from.
+fn segments(w: &mut World) {
+    let mut q = w.query::<&Person>();
+    let table: Vec<Value> = q
+        .iter(w)
+        .map(|p| {
+            let segs: Vec<Value> = p
+                .segments
+                .iter()
+                .map(|s| {
+                    let shape = match &s.shape {
+                        Shape::Capsule { a, b, r } => json!({ "capsule": { "a": a.to_array(), "b": b.to_array(), "r": r } }),
+                        Shape::Cuboid { centre, half, rotation } => json!({ "box": { "centre": centre.to_array(), "half": half.to_array(), "rotation": rotation.to_array() } }),
+                        Shape::Ball { centre, r } => json!({ "ball": { "centre": centre.to_array(), "r": r } }),
+                    };
+                    json!({
+                        "name": s.name, "bone": p.body.bones[s.bone].name, "mass": s.mass, "group": format!("{:?}", s.group), "limb": s.limb,
+                        "parent": s.parent.map(|k| p.segments[k].name.clone()), "joint": s.joint.as_ref().map(|j| format!("{j:?}")),
+                        "radius": s.radius, "centre": s.centre.to_array(), "end": s.end.to_array(), "head": s.head.to_array(), "shape": shape,
+                        "rest": { "at": s.rest.translation.to_array(), "turn": s.rest.rotation.to_array() },
+                    })
+                })
+                .collect();
+            json!({ "person": p.label, "body": p.body.name, "mass": p.mass, "height": p.height, "bones": p.body.bones.len(), "segments": segs })
+        })
+        .collect();
+    log(w, json!({ "event": "segments", "people": table }));
 }
 
 // Every texture a material in the world refers to, and every font, loaded (or failed: it will not come).
