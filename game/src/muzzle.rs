@@ -92,6 +92,9 @@ pub struct Muzzle {
     dice: u32,
     pub hole: (Handle<Mesh>, Handle<StandardMaterial>),
     pub brass: Handle<StandardMaterial>,
+    // The puffs' look: the muzzle's lumpy one, the grenade's soft round one (white, see-through by its alpha).
+    puff: Handle<Image>,
+    cloud: Handle<Image>,
     // A shot asked for since the flame was last placed: (key, tip in the hand, muzzle, bore) and the shot's dice.
     asked: Option<(&'static str, Vec3, Vec3, Vec3, f32)>,
     burst_at: Option<(Vec3, f32)>,
@@ -163,6 +166,14 @@ impl Canvas {
                 p[3] = (p[3] + col[3]).min(1.0);
             }
         }
+    }
+
+    // As an image of white, as see-through as what was painted on it.
+    fn alpha(&self) -> Image {
+        let h = self.px.len() / self.w;
+        let data: Vec<u8> = self.px.iter().flat_map(|p| [255, 255, 255, (p[3].clamp(0.0, 1.0) * 255.0).round() as u8]).collect();
+        Image::new(Extent3d { width: self.w as u32, height: h as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data,
+                   TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
     }
 
     // As an image to add: each pixel's light, its alpha one (AlphaMode::Add adds colour times alpha).
@@ -370,6 +381,23 @@ fn setup(
         ..default()
     });
     let brass = materials.add(StandardMaterial { base_color: Color::linear_rgb(0.78, 0.56, 0.24), metallic: 1.0, perceptual_roughness: 0.3, ..default() });
+    // A muzzle's puff: lumpy, not a clean disc, a few overlapping soft blobs (muzzle.ts puffTexture). A grenade's: a soft
+    // round cloud (weapons.ts smoke), 0.55 at its middle, 0.18 at six tenths out, nothing at its edge.
+    let mut puff = Canvas { w: 64, px: vec![[0.0; 4]; 64 * 64] };
+    let mut rnd = seeded(7);
+    for _ in 0..7 {
+        let (a, b, c, d, t) = (rnd(), rnd(), rnd(), rnd(), rnd());
+        puff.blob(32.0 + (a - 0.5) * 18.0, 32.0 + (b - 0.5) * 18.0, 12.0 + c * 9.0, 11.0 + d * 8.0, [1.0, 1.0, 1.0, 0.5], [1.0, 1.0, 1.0, 0.22], t * 6.0);
+    }
+    let mut cloud = Canvas { w: 64, px: vec![[0.0; 4]; 64 * 64] };
+    for y in 0..64 {
+        for x in 0..64 {
+            let d = (((x as f32 + 0.5 - 32.0).powi(2) + (y as f32 + 0.5 - 32.0).powi(2)).sqrt() / 32.0).min(1.0);
+            let a = if d < 0.6 { 0.55 + (0.18 - 0.55) * d / 0.6 } else { 0.18 * (1.0 - (d - 0.6) / 0.4) };
+            cloud.px[y * 64 + x] = [1.0, 1.0, 1.0, a];
+        }
+    }
+    let (puff, cloud) = (images.add(puff.alpha()), images.add(cloud.alpha()));
     commands.insert_resource(Muzzle {
         flames,
         meshes: flame_meshes,
@@ -386,6 +414,8 @@ fn setup(
         dice: 20261113,
         hole: (meshes.add(Rectangle::new(1.0, 1.0)), hole_material),
         brass,
+        puff,
+        cloud,
         asked: None,
         burst_at: None,
     });
@@ -465,8 +495,8 @@ fn update(
             let (e, _) = match m.free_smoke.pop() {
                 Some(x) => x,
                 None => {
-                    let mat = materials.add(StandardMaterial { base_color: Color::linear_rgba(0.62, 0.6, 0.58, 0.16), unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
-                    let e = commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(at), NotShadowCaster, Name::new("muzzle smoke"))).id();
+                    let mat = materials.add(StandardMaterial { base_color: Color::linear_rgba(0.62, 0.6, 0.58, 0.16), base_color_texture: Some(m.puff.clone()), unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
+                    let e = commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(at).with_scale(Vec3::ZERO), NotShadowCaster, Name::new("muzzle smoke"))).id();
                     m.smoke_materials.insert(e, mat.clone());
                     (e, mat)
                 }
@@ -482,7 +512,7 @@ fn update(
                 let v = dir * (6.0 + m.dice() * 12.0);
                 let (life, size) = (0.04 + m.dice() * 0.16, 0.002 + m.dice() * 0.002);
                 let e = m.free_sparks.pop().unwrap_or_else(|| {
-                    commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(spark_material.clone()), Transform::from_translation(at), NotShadowCaster, Name::new("spark"))).id()
+                    commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(spark_material.clone()), Transform::from_translation(at).with_scale(Vec3::ZERO), NotShadowCaster, Name::new("spark"))).id()
                 });
                 m.specks.push(Speck { e, at, v, age: 0.0, life, size, spin: 0.0, turn: 0.0, smoke: false });
             }
@@ -512,8 +542,8 @@ fn update(
             let e = match m.free_smoke.pop() {
                 Some((e, _)) => e,
                 None => {
-                    let mat = materials.add(StandardMaterial { base_color: Color::linear_rgba(0.55, 0.53, 0.5, 0.85), unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
-                    let e = commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(at), NotShadowCaster, Name::new("grenade smoke"))).id();
+                    let mat = materials.add(StandardMaterial { base_color: Color::linear_rgba(0.55, 0.53, 0.5, 0.85), base_color_texture: Some(m.cloud.clone()), unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
+                    let e = commands.spawn((Mesh3d(quad.clone()), MeshMaterial3d(mat.clone()), Transform::from_translation(at).with_scale(Vec3::ZERO), NotShadowCaster, Name::new("grenade smoke"))).id();
                     m.smoke_materials.insert(e, mat);
                     e
                 }

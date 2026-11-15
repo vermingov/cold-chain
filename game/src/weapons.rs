@@ -1364,6 +1364,8 @@ fn explode(cx: &mut Cx, ball: Entity) {
     let Ok((t, _)) = cx.bodies.get(ball) else { return };
     let at = t.translation;
     cx.note("grenade went off".into());
+    let near: Vec<(String, f32)> = cx.people.iter().map(|(_, p)| (p.label.clone(), p.segments.iter().find(|s| s.name == "pelvis").map_or(0.0, |s| s.rest.translation.distance(at)))).collect();
+    cx.weapons.log.push(json!({ "grenade": at.to_array(), "people": near }));
     cx.commands.entity(ball).despawn();
     cx.sound.play("explosion", Play::at(at));
     let now = cx.time.elapsed_secs();
@@ -2625,7 +2627,8 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(report(format!("{key}: fired at the wall")));
                 at_person(&mut s);
                 s.push(level(1.0));
-                s.push(Step::Wait(8));
+                // (Long enough for the hands to catch up with the turn, and the rifle's bolt to be worked.)
+                s.push(Step::Wait(70));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
                 // (The flash is drawn in the one frame after the shot.)
                 s.push(Step::Wait(2));
@@ -2655,7 +2658,7 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(Step::Wait(40));
                 s.push(report(format!("{key}: swung at the wall")));
                 at_person(&mut s);
-                s.push(Step::Wait(8));
+                s.push(Step::Wait(40));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
                 s.push(Step::Wait(15));
                 s.push(level(1.0));
