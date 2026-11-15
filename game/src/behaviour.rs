@@ -27,7 +27,8 @@ use crate::poses::{self, add, get, over, set, side, Pose};
 use crate::ragdoll::{self, Ragdoll, Steps};
 use crate::rng::Rng;
 use crate::thuds::Heard;
-use crate::vitals::Vitals;
+use crate::npc::{self, Happened, Hurt};
+use crate::vitals::{Side, Vitals};
 
 const G: f32 = 9.81;
 const TOUCH: f32 = 0.035; // m: a segment this close to the floor is on it
@@ -184,10 +185,7 @@ const LEG: [&str; 4] = ["hipFlex", "hipAbduct", "knee", "ankle"];
 
 // --- what they feel ------------------------------------------------------------------------------------------------
 //
-// What the behaviour reads of the vitals. vitals.rs has dead, beating and the blood lost; the rest (how awake, the pain,
-// how dazed, out cold, which limbs the cord still reaches) is medicine's vitals.rs, when it comes: until then they are
-// here, at a healthy person's, and the scenarios set them.
-// port: vitals.rs (conscious, pain, daze, out, paralysed) when medicine's lands.
+// What the behaviour reads of the vitals (vitals.rs), taken each frame; the pain it adds (guard) goes back.
 #[derive(Clone, Debug)]
 pub struct Felt {
     pub conscious: f32,
@@ -2225,7 +2223,7 @@ fn think(
     map: Res<Map>,
     players: Query<&Player>,
     mut rng: ResMut<Rng>,
-    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&Vitals>, Has<Grabbed>)>,
+    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&Hurt>, Has<Grabbed>)>,
     mut sounds: MessageWriter<Heard>,
 ) {
     let dt = time.delta_secs();
@@ -2234,14 +2232,21 @@ fn think(
     }
     let eye = players.iter().next().map(|p| p.eye().translation);
     let mut heard = Vec::new();
-    for (mut person, root, mut rd, mut b, vitals, grabbed) in &mut people {
-        if let Some(v) = vitals {
-            b.felt.dead = v.dead;
-            b.felt.beating = v.beating;
-            b.felt.lost = v.lost();
+    for (mut person, root, mut rd, mut b, mut vitals, hurt, grabbed) in &mut people {
+        if let Some(v) = &vitals {
+            b.felt = Felt { conscious: v.conscious(), pain: v.pain, daze: v.daze, out: v.out, lost: v.lost(), dead: v.dead, beating: v.beating(),
+                paralysed_arms: v.paralysed_arms, paralysed_legs: v.paralysed_legs };
+        }
+        if let Some(h) = hurt {
+            b.leg_gone = h.leg_gone;
+            b.retch = h.throat.retch;
+            b.breaks = h.bones.breaks.iter().filter_map(|br| Some((if br.side? == Side::L { 'L' } else { 'R' }, br.key.clone()))).collect();
         }
         b.grabbed = grabbed;
         b.update(dt, &person, &mut rd, &map, eye, &mut rng, &mut heard);
+        if let Some(v) = &mut vitals {
+            v.pain = b.felt.pain;
+        }
         // The muscles do what the body can, the physics moves it, and the skeleton follows the bodies.
         let posed = rd.drive(&person, root, &b.muscles.hands);
         person.posed = posed;
@@ -2259,10 +2264,93 @@ fn step(time: Res<Time>, mut people: Query<(&mut Ragdoll, &Behaviour, Option<&Gr
     }
 }
 
+// --- medicine (npc.rs, bones.rs) ------------------------------------------------------------------------------------
+
+// After every step: where each segment is, for medicine to trace and hit (Hurt::segments), and each segment the floor
+// has just stopped (bones.ts _falls: breaks from landing).
+fn landings(world: &mut World) {
+    let mut q = world.query::<(Entity, &Ragdoll, &Hurt)>();
+    let map = world.resource::<Map>();
+    // Per person: each segment's turn and place, its downward speed before and after the step, its lowest point, the
+    // ground under it, and whether its muscle holds it; and the pelvis's and chest's.
+    #[allow(clippy::type_complexity)]
+    let people: Vec<(Entity, Vec<Transform>, Vec<(f32, f32, f32, f32, bool)>, [f32; 3])> = q
+        .iter(world)
+        .map(|(e, rd, _)| {
+            let segs = (0..rd.segs.len())
+                .map(|k| {
+                    let (low, at) = (rd.lowest(k), rd.segs[k].now.translation);
+                    (rd.segs[k].was.y, rd.segs[k].vel.y, low, map.ground(at.x, at.z, low + 0.1), rd.held(k))
+                })
+                .collect();
+            let (pelvis, chest) = (rd.by_name("pelvis"), rd.by_name("chest"));
+            (e, rd.segs.iter().map(|s| s.now).collect(), segs, [rd.segs[pelvis].vel.y, rd.segs[chest].vel.y, rd.segs[pelvis].now.translation.y])
+        })
+        .collect();
+    for (e, now, segs, [pelvis_vy, chest_vy, pelvis_y]) in people {
+        if let Some(mut h) = world.get_mut::<Hurt>(e) {
+            h.segments = Some(now);
+        }
+        npc::with(world, e, |npc| {
+            for (k, &(was, vy, low, under, held)) in segs.iter().enumerate() {
+                npc.bones().fell(k, was, vy, low, under, held, pelvis_vy, chest_vy, pelvis_y);
+            }
+        });
+    }
+}
+
+// Once a frame, what medicine asked of the body: the pushes of shots and blows (behaviour.hit), joints loosened, locked
+// or let go (bones.rs), a shaft let go at its mid joint (breakAt); and the open fractures, by how far each break is bent.
+fn hurts(world: &mut World) {
+    let mut q = world.query::<(Entity, &Hurt)>();
+    let asked: Vec<(Entity, Vec<Happened>)> = q
+        .iter(world)
+        .map(|(e, h)| (e, h.happened.iter().filter(|x| matches!(x, Happened::Hit { .. } | Happened::Joint { .. } | Happened::Broke { .. })).cloned().collect()))
+        .collect();
+    let mut state: bevy::ecs::system::SystemState<(Query<(&Transform, &mut Ragdoll, &mut Behaviour)>, Query<&mut bevy_rapier3d::prelude::ImpulseJoint>, ResMut<Rng>)> =
+        bevy::ecs::system::SystemState::new(world);
+    let mut bends: Vec<(Entity, std::collections::HashMap<String, f32>)> = Vec::new();
+    {
+        let Ok((mut people, mut joints, mut rng)) = state.get_mut(world) else { return };
+        for (e, list) in &asked {
+            let Ok((root, mut rd, mut b)) = people.get_mut(*e) else { continue };
+            for x in list {
+                match x {
+                    Happened::Hit { point, impulse, jolt } => {
+                        let (seg, _) = rd.nearest(*point);
+                        b.hit(&mut rd, root, &mut rng, seg, *impulse, *point, *jolt);
+                    }
+                    Happened::Joint { segment, change } => {
+                        let k = rd.by_name(segment);
+                        rd.change(k, change, &mut joints);
+                    }
+                    Happened::Broke { segment } => {
+                        rd.break_at(segment, &mut joints);
+                    }
+                    _ => {}
+                }
+            }
+            let bend = (0..rd.segs.len())
+                .filter(|&k| rd.segs[k].def.parent.is_some())
+                .map(|k| {
+                    let a = rd.angles(k);
+                    (rd.segs[k].def.name.clone(), a[0].hypot(a[2]) / RAD)
+                })
+                .collect();
+            bends.push((*e, bend));
+        }
+    }
+    state.apply(world);
+    for (e, bend) in bends {
+        npc::with(world, e, |npc| npc.bones().opens(|segment| bend.get(segment).copied().unwrap_or(0.0)));
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, make)
-        .add_systems(FixedUpdate, step.in_set(Steps::Push))
-        .add_systems(Update, (think, ragdoll::send).chain());
+        .add_systems(FixedUpdate, (step.in_set(Steps::Push), landings.after(Steps::Read)))
+        .add_systems(Update, (think, ragdoll::send).chain())
+        .add_systems(PostUpdate, hurts);
 }
 
 #[test]

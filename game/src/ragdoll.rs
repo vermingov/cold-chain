@@ -1064,6 +1064,53 @@ impl Ragdoll {
         true
     }
 
+    // Whether a joint's muscle is working on it now (bones.rs: a landing the muscles take part of).
+    pub fn held(&self, k: usize) -> bool {
+        self.segs[k].motor.on
+    }
+
+    // What medicine asks of a joint (bones.rs: a break at a bone's end, a broken shaft's halves, a joint out), as
+    // bones.ts did it to the ragdoll's constraint.
+    pub fn change(&mut self, k: usize, change: &crate::npc::Joint, joints: &mut Query<&mut ImpulseJoint>) {
+        use crate::npc::Joint as J;
+        let (lo, hi) = (self.segs[k].lo, self.segs[k].hi);
+        match change {
+            J::Range { lo, hi } => self.set_range(k, *lo, *hi, joints),
+            // Opened `by` radians either way on `axes`: what held it there is torn.
+            J::Widen { axes, by } => {
+                let (mut lo, mut hi) = (lo, hi);
+                for &i in axes {
+                    lo[i] -= by;
+                    hi[i] += by;
+                }
+                self.set_range(k, lo, hi, joints);
+            }
+            // Held where it is now, a little either way.
+            J::Hold { by } => {
+                let a = self.angles(k);
+                self.set_range(k, a.map(|x| x - by), a.map(|x| x + by), joints);
+            }
+            // Out of its socket: locked where it went (pose degrees, turned into the joint's own signs), a little
+            // either way.
+            J::Out { at, by } => {
+                let s = self.segs[k].sign;
+                let a = [at[0] * s[0], at[1] * s[1], at[2] * s[2]];
+                self.set_range(k, a.map(|x| x - by), a.map(|x| x + by), joints);
+            }
+            // A broken shaft's halves sliding over each other, as far as `s` m. (The TS let the halves' distance run from
+            // nothing to that, any way; Rapier's generic joint limits it along the limb, its frame's Y, either way.)
+            J::Shorten(d) => {
+                if let Ok(mut j) = joints.get_mut(self.segs[k].entity) {
+                    let g: &mut GenericJoint = j.data.as_mut();
+                    g.raw.locked_axes.remove(JointAxesMask::LIN_Y);
+                    g.set_limits(JointAxis::LinY, [-d, *d]);
+                }
+            }
+            // Gone limp: nothing past it is moved by the muscles any more (seg.broken in the TS).
+            J::Limp => self.segs[k].broken = true,
+        }
+    }
+
     // --- where the body is -----------------------------------------------------------------------------------------
 
     // A point given in a segment's own frame, in the world.

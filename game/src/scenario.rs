@@ -158,6 +158,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.extend(view("people_xray", 0.0, -1.5, [0.0, 1.0, 2.2], 1.65));
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
+        "wounds" => s = wounds(),
         _ => return body(name),
     }
     Some(s)
@@ -498,9 +499,12 @@ fn body(name: &str) -> Option<Vec<Step>> {
         // Knocked out and shoved hard backwards (north, away from the player): falling, then lying still.
         "fall" => {
             s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for mut v in w.query::<&mut crate::vitals::Vitals>().iter_mut(w) {
+                    v.out = 1e9;
+                }
+            })));
             s.push(each(None, |rd, b, rng| {
-                b.felt.conscious = 0.0;
-                b.felt.out = 1.0;
                 let chest = rd.by_name("chest");
                 let at = rd.middle(chest);
                 rd.push(chest, Vec3::new(0.0, 0.0, -60.0), at);
@@ -528,10 +532,12 @@ fn body(name: &str) -> Option<Vec<Step>> {
         // Legs paralysed: down, rolled onto the front, and dragging themselves away on the elbows.
         "crawl" => {
             s.push(Step::Wait(60));
-            s.push(each(None, |_, b, rng| {
-                b.felt.paralysed_legs = true;
-                b.knock_down(rng);
-            }));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for mut v in w.query::<&mut crate::vitals::Vitals>().iter_mut(w) {
+                    v.paralysed_legs = true;
+                }
+            })));
+            s.push(each(None, |_, b, rng| b.knock_down(rng)));
             s.push(Step::Wait(60 * 12));
             film(&mut s, "crawl", 1, 8, 6, -0.3, -1.8, 1.4);
             s.push(Step::Wait(60 * 10));
@@ -598,7 +604,7 @@ fn body(name: &str) -> Option<Vec<Step>> {
                 let mut q = w.query::<&mut crate::vitals::Vitals>();
                 for mut v in q.iter_mut(w) {
                     v.dead = true;
-                    v.beating = false;
+                    v.brain_damage = 1.0;
                 }
             })));
             s.push(each(None, |_, b, rng| b.knock_down(rng)));
@@ -677,4 +683,178 @@ fn count(w: &mut World) {
     let joints = w.query::<&bevy_rapier3d::prelude::ImpulseJoint>().iter(w).count();
     let at: Vec<Value> = w.query::<&Ragdoll>().iter(w).map(|rd| json!(rd.centre().to_array())).collect();
     log(w, json!({ "event": "count", "people": people, "bodies": bodies, "joints": joints, "at": at }));
+}
+
+// --- wounds: the same shots and blows as the TS game took (medicine, dev/PORT.md) ------------------------------------
+//
+// Each at the same place of a standing person (a bone's head as posed, and an offset, in the TS's space), from the
+// front, on a person made whole again first and posed on the TS person's own breathing clock; the dice seeded as the TS
+// check seeds Math.random (tools: the port's ts-wounds.mjs). Then a minute of their insides' clock, read at the TS's
+// times. What hurt them goes in the log: the injuries, the bleeds, the breaks, the vital signs.
+
+struct Shot {
+    name: &'static str,
+    person: usize,
+    weapon: &'static str,
+    bone: &'static str,
+    offset: [f32; 3],
+    pellets: &'static [[f32; 3]],
+    // Then the medkit: every open wound dressed, worst first.
+    dress: bool,
+}
+
+const PELLETS: [[f32; 3]; 9] = [[-0.03, -0.03, 0.0], [0.0, -0.03, 0.0], [0.03, -0.03, 0.0], [-0.03, 0.0, 0.0], [0.0, 0.0, 0.0], [0.03, 0.0, 0.0],
+    [-0.03, 0.03, 0.0], [0.0, 0.03, 0.0], [0.03, 0.03, 0.0]];
+const SHOTS: [Shot; 15] = [
+    Shot { name: "rifle chest", person: 0, weapon: "rifle", bone: "spine01", offset: [0.03, 0.06, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol belly", person: 1, weapon: "pistol", bone: "spine03", offset: [-0.06, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol neck", person: 2, weapon: "pistol", bone: "neck01", offset: [0.025, -0.03, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol head", person: 3, weapon: "pistol", bone: "head", offset: [0.0, 0.07, 0.0], pellets: &[], dress: false },
+    Shot { name: "rifle thigh", person: 0, weapon: "rifle", bone: "mid-upperleg01.L", offset: [0.0, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "shotgun thigh", person: 1, weapon: "shotgun", bone: "mid-upperleg01.R", offset: [0.0, 0.0, 0.0], pellets: &PELLETS, dress: false },
+    Shot { name: "knife belly", person: 2, weapon: "knife", bone: "spine03", offset: [0.05, 0.02, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat shin", person: 3, weapon: "bat", bone: "mid-lowerleg01.L", offset: [0.0, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat head", person: 0, weapon: "bat", bone: "head", offset: [0.0, 0.06, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol mouth", person: 1, weapon: "pistol", bone: "jaw", offset: [0.0, -0.03, 0.0], pellets: &[], dress: false },
+    Shot { name: "pistol eye", person: 2, weapon: "pistol", bone: "eye.L", offset: [0.0, 0.0, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat mouth", person: 3, weapon: "bat", bone: "jaw", offset: [0.0, -0.02, 0.0], pellets: &[], dress: false },
+    Shot { name: "bat chest", person: 0, weapon: "bat", bone: "spine01", offset: [0.06, 0.04, 0.0], pellets: &[], dress: false },
+    Shot { name: "shotgun thigh dressed", person: 1, weapon: "shotgun", bone: "mid-upperleg01.R", offset: [0.0, 0.0, 0.0], pellets: &PELLETS, dress: true },
+    Shot { name: "knife belly dressed", person: 2, weapon: "knife", bone: "spine03", offset: [0.05, 0.02, 0.0], pellets: &[], dress: true },
+];
+// Each shot's TS people's breathing clocks (npc.clock), as the TS check's line-up seeded them.
+const CLOCKS: [[f32; 4]; 15] = [
+    [9.953437, 1.125917, 9.438391, 1.91038], [9.579623, 0.727354, 6.705976, 7.415471], [1.70114, 7.488001, 7.410059, 9.114563],
+    [1.591377, 2.309687, 1.928463, 5.384727], [7.952396, 9.888322, 1.618743, 2.172264], [6.803715, 5.951882, 1.190528, 4.966309],
+    [5.464768, 9.904354, 2.333751, 8.069235], [5.895665, 5.740893, 3.519757, 4.244878], [9.548464, 4.805066, 7.201037, 3.941357],
+    [8.554673, 7.663012, 8.291871, 4.884174], [7.049819, 2.107716, 6.973362, 5.930157], [7.535425, 5.501478, 2.81213, 5.5396],
+    [3.764198, 1.875085, 8.795955, 2.020388], [9.343004, 9.88456, 3.250806, 1.43631], [0.294337, 8.830086, 6.545365, 2.548188],
+];
+const TIMES: [f32; 8] = [0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0];
+
+// What each weapon puts into a body (weapons.ts ARMS: the hands' job ports them to weapons.rs).
+fn missile(weapon: &str) -> crate::wounds::Missile {
+    use crate::wounds::Missile;
+    let gun = |energy, mass, speed, calibre, channel, soft, hard, pellets| Missile {
+        energy, mass, speed: Some(speed), calibre, channel, soft, hard, pellets: Some(pellets), ..default()
+    };
+    match weapon {
+        "pistol" => gun(480.0, 0.008, 360.0, 0.009, 0.006, 12.0, 110.0, 1),
+        "rifle" => gun(2700.0, 0.0097, 820.0, 0.0078, 0.012, 28.0, 160.0, 1),
+        "shotgun" => gun(170.0, 0.0035, 400.0, 0.0084, 0.005, 9.0, 90.0, 9),
+        _ => Missile { energy: 70.0, mass: 0.2, calibre: 0.02, channel: 0.006, soft: 1.4, hard: 40.0, reach: Some(0.17), blade: true, edges: Some(1),
+            taper: Some(0.04), ..default() },
+    }
+}
+
+fn wounds() -> Vec<Step> {
+    let mut s = Vec::new();
+    for (k, shot) in SHOTS.iter().enumerate() {
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            let who = person_at(w, shot.person);
+            crate::npc::renew(w, who, CLOCKS[k][shot.person]);
+            // The TS's ragdoll, built on the pose, drives the neck from the head's segment, whose turn is its lead bone's
+            // (neck01's share of the neck's flex) spread evenly over the four bones from neck01 to the head (ragdoll.ts):
+            // a person in the TS stands with a third of the stand pose's neck flex, and their head's segment as it was put on
+            // the pose. Phase 2's ragdoll will do the same; here it is done by hand, or the head stands 2 to 4 mm off the TS's
+            // and the mouth drains a few per cent differently.
+            let segments = crate::npc::with(w, who, |npc| (0..npc.person.segments.len()).map(|k| npc.segment_world(k)).collect());
+            w.get_mut::<crate::npc::Hurt>(who).unwrap().segments = segments;
+            {
+                let mut q = w.query::<&mut Person>();
+                let mut p = q.get_mut(w, who).unwrap();
+                let lead = p.posed.local[p.body.by_name["neck01"]];
+                for n in ["neck01", "neck02", "neck03", "head"] {
+                    let i = p.body.by_name[n];
+                    p.posed.local[i] = Quat::IDENTITY.slerp(lead, 0.25);
+                }
+            }
+            w.insert_resource(crate::vitals::Dice(2000 + k as u32));
+            let dir = babylon(0.0, 0.0, 1.0);
+            let result = crate::npc::with(w, who, |npc| {
+                let bone = npc.bone_index(shot.bone);
+                let target = npc.world_of(npc.body().bones[bone].head, bone, None).0 + babylon(shot.offset[0], shot.offset[1], shot.offset[2]);
+                let mut res = Vec::new();
+                match shot.weapon {
+                    "bat" => match npc.surface(target - dir * 0.5, dir, 1.0, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin) {
+                        Some(skin) => crate::wounds::blow(npc, skin.point, dir, 0.79, 15.5, None),
+                        None => res.push(json!("missed")),
+                    },
+                    "knife" => {
+                        let m = crate::wounds::Missile { across: Some(babylon(0.0, -1.0, 0.0)), ..missile("knife") };
+                        let p = crate::wounds::pierce(npc, target - dir * 0.5, dir, &m, 0.5 + 0.17);
+                        res.push(json!({ "stopped": p.stopped, "energy": p.energy }));
+                    }
+                    weapon => {
+                        let pellets: &[[f32; 3]] = if shot.pellets.is_empty() { &[[0.0; 3]] } else { shot.pellets };
+                        for o in pellets {
+                            let p = crate::wounds::pierce(npc, target + babylon(o[0], o[1], o[2]) - dir * 1.5, dir, &missile(weapon), 3.0);
+                            res.push(json!({ "stopped": p.stopped, "energy": (p.energy * 10.0).round() / 10.0, "hit": p.hit }));
+                        }
+                    }
+                }
+                // (The next throw of the dice: the same as the TS's if both threw as many in the shot.)
+                res.push(json!(format!("dice {:.6}", npc.dice.next())));
+                if shot.dress {
+                    for _ in 0..12 {
+                        let Some(w) = crate::dressing::wounds(npc).into_iter().next() else { break };
+                        match crate::dressing::dress(npc, &w) {
+                            Some(d) => res.push(json!(format!("{} {}", npc.hurt.dressings[d].kind, (npc.hurt.dressings[d].capacity * 100.0).round() / 100.0))),
+                            None => {
+                                res.push(json!("none"));
+                                break;
+                            }
+                        }
+                    }
+                }
+                let t = target;
+                json!({ "target": [t.x, t.y, -t.z], "res": res })
+            });
+            log(w, json!({ "event": "shot", "name": shot.name, "person": shot.person, "result": result }));
+        })));
+        let mut at = 0.0;
+        for &t in &TIMES {
+            let frames = ((t - at) * 60.0).round() as u32;
+            at = t;
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                let who = person_at(w, shot.person);
+                for _ in 0..frames {
+                    crate::npc::with(w, who, |npc| npc.update(1.0 / 60.0));
+                }
+                let snap = crate::npc::with(w, who, |npc| snapshot(npc, t)).unwrap();
+                log(w, json!({ "event": "vitals", "name": shot.name, "snap": snap }));
+            })));
+        }
+    }
+    s
+}
+
+// The person standing `i`th in the line (sandbox.rs's order: the old man, the groundskeeper, the young man, the hood).
+fn person_at(w: &mut World, i: usize) -> Entity {
+    let body = crate::sandbox::BODIES[i];
+    let mut q = w.query::<(Entity, &Person)>();
+    q.iter(w).find(|(_, p)| p.body.name == body).unwrap().0
+}
+
+// How the person is doing, as the TS check reads it.
+fn snapshot(npc: &mut crate::npc::Npc, t: f32) -> Value {
+    let r = |x: f32, k: f32| (x * k).round() / k;
+    let log: Vec<String> = npc.hurt.happened.drain(..).map(|h| match h {
+        crate::npc::Happened::Say { kind, .. } => format!("say {kind}"),
+        h => format!("{h:?}").split([' ', '{', '(']).next().unwrap().to_string(),
+    }).collect();
+    let v = &*npc.vitals;
+    let th = &npc.hurt.throat;
+    json!({
+        "t": t, "state": v.state(), "hr": r(v.hr, 10.0), "map": r(v.map, 10.0), "spo2": r(v.spo2, 10.0), "rr": r(v.rr, 10.0), "lost": r(v.full - v.volume, 1e4),
+        "conscious": r(v.conscious(), 1e3), "pain": r(v.pain, 1e3), "breathing": v.breathing, "rhythm": format!("{:?}", v.rhythm).to_lowercase(), "dead": v.dead,
+        "pump": r(v.pump, 1e3), "lungs": [r(v.lungs.l, 1e3), r(v.lungs.r, 1e3)], "airway": r(v.airway, 1e3), "flooded": [r(v.flooded.0, 1e3), r(v.flooded.1, 1e3)],
+        "choked": r(v.choked, 1e3), "throat": { "mouth": r(th.mouth, 100.0), "lungs": [r(th.lungs.0, 100.0), r(th.lungs.1, 100.0)], "stomach": r(th.stomach, 100.0) },
+        "legGone": npc.hurt.leg_gone, "paralysed": { "legs": v.paralysed_legs, "arms": v.paralysed_arms }, "out": r(v.out, 100.0),
+        "injuries": v.injuries.iter().map(|i| json!([i.text, r(i.severity, 1e3)])).collect::<Vec<_>>(),
+        "bleeds": v.bleeds.iter().map(|b| json!([b.name, r(b.rate * 1000.0, 1e5), b.arterial, b.internal,
+            b.into.map(|i| format!("{i:?}").to_lowercase()), b.side.map(|s| format!("{s:?}")), r(b.lost * 1000.0, 100.0), b.dressed])).collect::<Vec<_>>(),
+        "breaks": npc.hurt.bones.breaks.iter().map(|b| json!([b.text, b.r#type, r(b.ratio, 1e3)])).collect::<Vec<_>>(),
+        "log": log,
+    })
 }
