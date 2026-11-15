@@ -56,6 +56,10 @@ are not ported: wounds, blood film and bruises are painted on the GPU (render-to
    (mesh cutting), face/eyes/teeth/hider/dressing's look.
 4. Parity pass against the TS game scenario by scenario, performance (the F2 profiler's numbers), a release build for
    the user's machines (Linux and Windows), then ask the user about dev/BACKLOG.md.
+   Last, once every scenario matches (the user's word, 2026-11-15): delete the Babylon game from this branch (src/,
+   play.html, the Vite configs, package.json, node_modules, the browser-only tools such as tools/rig.mjs and the
+   port-*.mjs checks). It stays on GitHub: main, wip/0.8.19 and gh-pages keep it, and the history has every file. Not
+   before: until then it is the reference every port job reads and the game every check is compared against.
 
 ## The foundation (phase 1), for the jobs after it
 
