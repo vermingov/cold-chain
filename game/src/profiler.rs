@@ -44,6 +44,36 @@ static OPEN: AtomicBool = AtomicBool::new(false);
 static ROWS: Mutex<Vec<(&'static str, u64, u32)>> = Mutex::new(Vec::new());
 static INNER: AtomicU64 = AtomicU64::new(0);
 static RENDER: AtomicU64 = AtomicU64::new(0);
+// The draw calls the render world's phases make this frame: the main picture's opaque, alpha-masked and blended passes,
+// and the shadow maps (each multidraw batch set, batchable bin, unbatchable mesh or sorted item is a call).
+static DRAWS: [AtomicU64; 4] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+const PASSES: [&str; 4] = ["draw calls: opaque", "draw calls: alpha masked", "draw calls: blended", "draw calls: shadow maps"];
+
+fn binned<B: bevy::render::render_phase::BinnedPhaseItem>(p: &bevy::render::render_phase::ViewBinnedRenderPhases<B>) -> u64 {
+    p.0.values()
+        .map(|b| (b.multidrawable_meshes.len() + b.batchable_meshes.len() + b.unbatchable_meshes.values().map(|u| u.entities.len()).sum::<usize>() + b.non_mesh_items.len()) as u64)
+        .sum()
+}
+
+fn count_draws(
+    opaque: Option<Res<bevy::render::render_phase::ViewBinnedRenderPhases<bevy::core_pipeline::core_3d::Opaque3d>>>,
+    mask: Option<Res<bevy::render::render_phase::ViewBinnedRenderPhases<bevy::core_pipeline::core_3d::AlphaMask3d>>>,
+    blended: Option<Res<bevy::render::render_phase::ViewSortedRenderPhases<bevy::core_pipeline::core_3d::Transparent3d>>>,
+    shadow: Option<Res<bevy::render::render_phase::ViewBinnedRenderPhases<bevy::pbr::Shadow>>>,
+) {
+    if !OPEN.load(Ordering::Relaxed) {
+        return;
+    }
+    let n = [
+        opaque.map_or(0, |p| binned(&p)),
+        mask.map_or(0, |p| binned(&p)),
+        blended.map_or(0, |p| p.0.values().map(|v| v.items.len() as u64).sum()),
+        shadow.map_or(0, |p| binned(&p)),
+    ];
+    for (d, n) in DRAWS.iter().zip(n) {
+        d.store(n, Ordering::Relaxed);
+    }
+}
 
 fn add(name: &'static str, ns: u64) {
     let mut rows = ROWS.lock().unwrap();
@@ -191,6 +221,7 @@ struct Profiler {
     wait: f32,
     wait_max: f32,
     calls: f32,
+    meshes: f32,
     all_frames: u64,
     all_ms: f64,
     preset: String,
@@ -209,7 +240,7 @@ impl Default for Profiler {
             open: false, shown: None, rows: HashMap::new(), draws: HashMap::new(), gap: 16.7, slot: 0, drawn: 0.0, text: String::new(),
             said: (String::new(), 0.0), t0: None, started: String::new(), machine: Value::Null, samples: Vec::new(), spikes: Vec::new(),
             totals: HashMap::new(), hist: vec![0; 501], times: Vec::with_capacity(1024), second_at: 0.0, n: 0, spent: 0.0, cpu: 0.0, wait: 0.0,
-            wait_max: 0.0, calls: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, ask_open: false, quiet: false, save_in: None,
+            wait_max: 0.0, calls: 0.0, meshes: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, ask_open: false, quiet: false, save_in: None,
         }
     }
 }
@@ -387,6 +418,12 @@ fn tick(
     for (name, n) in draws {
         p.draws.entry(name).or_default().now = n;
     }
+    let mut calls = 0.0;
+    for (d, name) in DRAWS.iter().zip(PASSES) {
+        let n = d.load(Ordering::Relaxed) as f32;
+        calls += n;
+        p.draws.entry(name.to_string()).or_default().now = n;
+    }
     // A spike against the frame rate it is running at: over 50 ms on a slow machine is every frame.
     if dt > 50f32.max(2.5 * p.gap) {
         let t = since(now);
@@ -405,7 +442,7 @@ fn tick(
         let mut top: Vec<(&'static str, f32)> = rows.iter().map(|r| (r.0, r.1 as f32 / 1e6)).filter(|r| r.1 >= 0.5).collect();
         top.sort_by(|a, b| b.1.total_cmp(&a.1));
         let top: Vec<String> = top.iter().take(6).map(|(n, ms)| format!("{n} {}", r2(*ms))).collect();
-        p.spikes.push(json!({ "t": t, "ms": r2(dt), "cpu": r2(busy), "waiting": r2((dt - busy).max(0.0)), "compiles": 0, "draws": total as u32, "top": top, "before": before }));
+        p.spikes.push(json!({ "t": t, "ms": r2(dt), "cpu": r2(busy), "waiting": r2((dt - busy).max(0.0)), "compiles": 0, "draws": DRAWS.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>(), "top": top, "before": before }));
         if p.spikes.len() > 300 {
             let (i, _) = p.spikes.iter().enumerate().min_by(|a, b| a.1["ms"].as_f64().unwrap_or(0.0).total_cmp(&b.1["ms"].as_f64().unwrap_or(0.0))).unwrap();
             p.spikes.remove(i);
@@ -424,7 +461,8 @@ fn tick(
     p.cpu += busy;
     p.wait += (dt - busy).max(0.0);
     p.wait_max = p.wait_max.max(dt - busy);
-    p.calls += total;
+    p.calls += calls;
+    p.meshes += total;
     if graphics.name() != p.preset {
         p.preset = graphics.name().to_string();
         notes.note(now, format!("quality {} (F3)", p.preset));
@@ -479,7 +517,7 @@ fn sample(p: &mut Profiler, t: f64, people: usize, graphics: &Graphics) {
         "t": t, "frames": p.n, "fps": (1000.0 * n / p.spent.max(1e-3)).round(),
         "ms": [r2(p.spent / n), r2(at(0.95)), r2(at(1.0))],
         "cpu": r2(p.cpu / n), "waiting": r2(p.wait / n), "gpu": Value::Null,
-        "draws": (p.calls / n).round(), "meshes": (p.calls / n).round(), "people": people,
+        "draws": (p.calls / n).round(), "meshes": (p.meshes / n).round(), "people": people,
         "scale": (100.0 / graphics.level).round(), "preset": graphics.name(), "systems": systems,
     }));
     if p.samples.len() > 1800 {
@@ -491,7 +529,7 @@ fn sample(p: &mut Profiler, t: f64, people: usize, graphics: &Graphics) {
         r.max = 0.0;
     }
     p.times.clear();
-    (p.n, p.spent, p.cpu, p.wait, p.wait_max, p.calls) = (0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    (p.n, p.spent, p.cpu, p.wait, p.wait_max, p.calls, p.meshes) = (0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 }
 
 // Worked out on saving: where the time went over the whole session, and its worst moments.
@@ -613,11 +651,15 @@ fn draw(p: &mut Profiler, now: f64) {
         out.push(String::new());
         out.push(line("render world (its own thread, alongside)", r));
     }
-    let mut draws: Vec<(&String, &Row)> = p.draws.iter().filter(|r| r.1.avg >= 0.5).collect();
-    draws.sort_by(|a, b| b.1.avg.total_cmp(&a.1.avg));
-    let total: f32 = p.draws.values().map(|r| r.avg).sum();
+    let calls: f32 = PASSES.iter().filter_map(|n| p.draws.get(*n)).map(|r| r.avg).sum();
     out.push(String::new());
-    out.push(format!("meshes in view by source ({}; each a draw call before batching)", total.round()));
+    out.push(format!("draw calls ({})", calls.round()));
+    out.extend(PASSES.iter().filter_map(|n| p.draws.get(*n).map(|r| format!("{:<42.42} {:>6.0} {:>6.0}", n, r.avg, worst(r)))));
+    let mut draws: Vec<(&String, &Row)> = p.draws.iter().filter(|r| r.1.avg >= 0.5 && !r.0.starts_with("draw calls")).collect();
+    draws.sort_by(|a, b| b.1.avg.total_cmp(&a.1.avg));
+    let total: f32 = draws.iter().map(|r| r.1.avg).sum();
+    out.push(String::new());
+    out.push(format!("meshes in view by source ({}; what the opaque and blended calls draw)", total.round()));
     out.extend(draws.iter().take(16).map(|(n, r)| format!("{:<42.42} {:>6.0} {:>6.0}", n, r.avg, worst(r))));
     p.text = out.join("\n");
 }
@@ -645,6 +687,7 @@ pub fn plugin(app: &mut App) {
         s.add_systems(run_render);
         render.add_schedule(s);
         render.update_schedule = Some(TimedRender.intern());
+        render.add_systems(bevy::render::Render, count_draws.after(bevy::render::RenderSystems::PhaseSort).before(bevy::render::RenderSystems::Render));
     }
     app.init_resource::<Notes>().init_resource::<Profiler>().add_systems(Update, keys).add_systems(Last, tick);
 }

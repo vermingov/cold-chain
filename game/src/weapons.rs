@@ -1017,6 +1017,8 @@ fn fire(cx: &mut Cx, key: &'static str) {
     // one round hole 2 to 2.5 cm across and goes in as a single heavy missile, wrecking everything along a wide track
     // (dev/research/wounds.md). Further off, the pellets go their own ways.
     let near = if gun.pellets > 1 { cx.person(from, ahead, 1.4) } else { None };
+    // (Timed for the log: the TS spent 110 to 360 ms of a frame on one shotgun blast.)
+    let started = std::time::Instant::now();
     match near {
         Some((_, t)) if t + 0.5 < 1.3 => {
             let off = t + 0.5;
@@ -1033,6 +1035,8 @@ fn fire(cx: &mut Cx, key: &'static str) {
             }
         }
     }
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    cx.weapons.log.push(json!({ "shot": key, "pellets": gun.pellets, "ms": (ms * 100.0).round() / 100.0 }));
     cx.sound.play(gun.sound, Play::default());
     // The flash at the muzzle, one frame (muzzle.rs), and the light it throws, going by the clock.
     let hand = cx.hand.world(&cx.eye());
