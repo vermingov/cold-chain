@@ -12,7 +12,7 @@ import { gradePicture } from '../picture.ts';
 import { graphics } from './graphics.ts';
 import { Npc } from './npc.ts';
 import { Blood } from './blood.ts';
-import { Weapons } from './weapons.ts';
+import { Weapons, HELD_GROUP } from './weapons.ts';
 import { buildArsenal } from './arsenal.ts';
 import { HALL, buildMap, ground, solids, land, covered, screened } from './map.ts';
 import { Thuds } from './thuds.ts';
@@ -63,6 +63,10 @@ export async function openSandbox(engine, canvas, hud) {
     player.spawn(0, -4, { toward: [0, 1.4, 2] });
     const camera = player.camera;
     camera.minZ = 0.02;
+    // The held thing and the arms (weapons.ts HELD_GROUP) are drawn after the room with the depth cleared, so they go
+    // over a wall stood against. Not in the shadow maps: cleared there, the arms' depth took the place of whatever was
+    // nearer the lamp, and the shadow of someone between the lamp and the player had a hole the shape of the arms in it.
+    for (const s of lights.shadows) s.getShadowMap().setRenderingAutoClearDepthStencil(HELD_GROUP, false);
     const picture = gradePicture(scene, camera, { exposure: 1.6 });
     const quality = graphics(engine, picture, lights.shadows, document.getElementById('over'));
 

@@ -169,7 +169,8 @@ export class Npc {
         const boxes = this._boxes(skinned, index);
         for (const p of this.person.header.parts) {
             // (The skin under the clothes is not drawn but is still where the body begins.)
-            const kind = p.kind === 'skin' ? 'skin' : p.kind === 'cloth' ? 'cloth' : eyes && p.kind === 'eyes' ? 'eye' : null;
+            // (With `eyes`, the tongue as well: a wound in it is drawn on it, throat.ts.)
+            const kind = p.kind === 'skin' ? 'skin' : p.kind === 'cloth' ? 'cloth' : eyes && p.kind === 'eyes' ? 'eye' : eyes && p.kind === 'tongue' ? 'tongue' : null;
             if (!kind) continue;
             if (!slabFor(this._partBox(p, skinned), o, d, far * scale)) continue;
             const end = p.indexStart + p.indexCount;

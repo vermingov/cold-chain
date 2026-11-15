@@ -69,6 +69,9 @@ export class Throat {
     declare pool: BABYLON.Mesh | null;  // its surface, drawn (_pool)
     declare poolAt: BABYLON.Matrix;
     declare coat: number;            // 0 to 1: how much blood is on the tongue and teeth
+    declare tears: { owner: any; rest: BABYLON.Vector3; normal: BABYLON.Vector3; size: number }[];   // wounds in the tongue
+    declare tearCard: BABYLON.Mesh | null;
+    declare tearAt: Float32Array;
     declare coated: { kind: string; m: BABYLON.PBRMaterial }[] | null;
     declare nausea: number;
     declare heaves: number;          // retches still to come before the vomit
@@ -101,6 +104,9 @@ export class Throat {
         this.poolAt = new M();
         this.coat = 0;
         this.coated = null;
+        this.tears = [];
+        this.tearCard = null;
+        this.tearAt = new Float32Array(16 * 6);
         this.nausea = 0;
         this.heaves = 0;
         this.heaveT = 0;
@@ -276,6 +282,72 @@ export class Throat {
         }
         this._pool();
         this._coat(dt);
+        if (this.tears.length) this._tears();
+    }
+
+    // A shot or blade through the tongue (`hit`, its crossing of it, npc.surface): torn open there, raw red, ragged, its
+    // bleeding into the mouth (wounds.ts's crossing of it). Drawn on a card lying on the tongue, as the tongue's own
+    // texture has no sheet to paint it in. A bullet tears muscle wider than itself, and bruises round that (the card is
+    // twice the bullet across: an estimate).
+    tear(hit, size: number) {
+        if (this.tears.length >= 6 || !hit.restNormal) return;
+        this.tears.push({ owner: hit.owner, rest: hit.rest.clone(), normal: hit.restNormal.clone(), size: Math.max(0.014, size * 2) });
+        this.npc.vitals.injure('Tongue torn through', 4);
+    }
+
+    _tears() {
+        const npc = this.npc;
+        if (!this.tearCard) {
+            const scene = npc.world.scene;
+            const card = BABYLON.MeshBuilder.CreatePlane('tongueTear', { size: 1 }, scene);
+            // The torn hole painted once: a dark track in the middle, raw red muscle round it, its edge ragged.
+            const tex = new BABYLON.DynamicTexture('tongueTear', { width: 128, height: 128 }, scene, true);
+            const g = tex.getContext() as CanvasRenderingContext2D;
+            g.clearRect(0, 0, 128, 128);
+            // (Each edge a ring of radii, roughened and then smoothed with its neighbours: torn, not toothed.)
+            const blob = (r: number, rough: number, fill: string) => {
+                const n = 48, rr = Array.from({ length: n }, () => 1 - rough * Math.random());
+                const soft = rr.map((x, k) => (rr[(k + n - 1) % n] + x * 2 + rr[(k + 1) % n]) / 4);
+                g.beginPath();
+                for (let k = 0; k <= n; k++) {
+                    const a = (k / n) * Math.PI * 2;
+                    g.lineTo(64 + Math.cos(a) * r * soft[k % n], 64 + Math.sin(a) * r * soft[k % n]);
+                }
+                g.fillStyle = fill;
+                g.fill();
+            };
+            blob(62, 0.45, 'rgba(90,10,10,0.6)');
+            blob(44, 0.5, 'rgb(150,22,18)');
+            blob(24, 0.55, 'rgb(35,2,2)');
+            tex.hasAlpha = true;
+            tex.update();
+            const m = new BABYLON.PBRMaterial('tongueTear', scene);
+            m.albedoTexture = tex;
+            m.useAlphaFromAlbedoTexture = true;
+            m.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+            m.metallic = 0;
+            m.roughness = 0.25;
+            m.environmentIntensity = 0;
+            m.maxSimultaneousLights = 8;
+            m.backFaceCulling = false;
+            m.twoSidedLighting = true;
+            m.zOffset = -2;
+            card.material = m;
+            card.isPickable = false;
+            card.alwaysSelectAsActiveMesh = true;
+            card.thinInstanceSetBuffer('matrix', this.tearAt, 16, false);
+            this.tearCard = card;
+        }
+        const buf = this.tearAt;
+        this.tears.forEach((t, k) => {
+            const { at, normal } = npc.worldOf(t.rest, t.owner, t.normal);
+            const side = V3.Cross(normal, Math.abs(normal.y) < 0.9 ? V3.Up() : V3.Right()).normalize().scaleInPlace(t.size);
+            const across = V3.Cross(normal, side);
+            at.addInPlace(normal.scale(0.0005));
+            M.FromValues(side.x, side.y, side.z, 0, across.x, across.y, across.z, 0, normal.x, normal.y, normal.z, 0, at.x, at.y, at.z, 1).copyToArray(buf, k * 16);
+        });
+        this.tearCard.thinInstanceCount = this.tears.length;
+        this.tearCard.thinInstanceBufferUpdated('matrix');
     }
 
     // Blood in the mouth wets the tongue and teeth red, at once, and stays on them a while after it has gone (wiped off
@@ -307,7 +379,9 @@ export class Throat {
     // when full. (A plane cuts an ellipsoid in an ellipse: in the unit sphere the ellipsoid is a scaling of, the plane is
     // still a plane, the cap under it has a volume in closed form and the cut is a circle.)
     _pool() {
-        if (this.mouth < 0.3 || !this.centre?.owner) { this.pool?.setEnabled(false); return; }
+        // (Under a couple of millilitres, or running out of a mouth turned down or to the side, it is a wetting, not a pool:
+        // the coat on the tongue and teeth.)
+        if (this.mouth < 2 || this.toLips > 0.2 || !this.centre?.owner) { this.pool?.setEnabled(false); return; }
         const npc = this.npc, o = this.centre.owner;
         if (!this.pool) {
             const scene = npc.world.scene;
@@ -338,9 +412,10 @@ export class Throat {
         // Up, in the unit sphere's frame, and how far along it the surface lies (t, -1 to 1) for the share filled: the cap
         // under it holds (1 + t)^2 (2 - t) / 4 of the sphere.
         const gx = _ax.y, gy = _ay.y, gz = _az.y, L = Math.hypot(gx, gy, gz) || 1;
-        // (The tongue fills the floor of the mouth and the blood lies over it: a few millilitres already stand above the
-        // ellipsoid's lowest part, and a full mouth reaches the teeth.)
-        const nx = gx / L, ny = gy / L, nz = gz / L, F = 0.15 + 0.7 * Math.min(1, this.mouth / HOLDS);
+        // (The tongue fills most of the ellipsoid, and the rest of it is out in the cheeks: a full mouth, up to the teeth,
+        // fills about two fifths of it, and the first few millilitres lie deepest, in the throat; fitted by eye to a
+        // mouth open on the back.)
+        const nx = gx / L, ny = gy / L, nz = gz / L, F = 0.4 * Math.pow(Math.min(1, this.mouth / HOLDS), 1.2);
         let lo = -1, hi = 1;
         for (let k = 0; k < 18; k++) { const t = (lo + hi) / 2; if ((1 + t) * (1 + t) * (2 - t) / 4 < F) lo = t; else hi = t; }
         const t = (lo + hi) / 2, rho = Math.sqrt(Math.max(0, 1 - t * t));

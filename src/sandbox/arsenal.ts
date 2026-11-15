@@ -68,6 +68,7 @@ export async function buildArsenal(world, weapons) {
             // every caster on its list each frame, seen or not (35 meshes three times over).
             for (const mesh of meshes) {
                 mesh.isPickable = true;
+                mesh.renderingGroupId = 0;      // (cloned from the one in the hand, which is drawn over the room)
                 mesh.metadata = { ...(mesh.metadata ?? {}), arsenal: p.key };
             }
             hung.push(p.key);

@@ -12,10 +12,10 @@
 // is wherever that leaves it, and the elbow is found between the wrist and
 // a shoulder that hangs beside and below the eye.
 //
-// But which way a handle lies is the arm's to say first (`slack`): a tool
-// that turned to face wherever it was being moved would ask of a wrist
-// what no wrist does. A hand holds a pen one way, and it is the arm that
-// moves.
+// The whole arm is posed in the eye's own frame, the shoulder turning with
+// the look up and down as well as round, as a shooter's arms are drawn: the
+// thing held is (weapons.ts), and with the shoulder left level a look at the
+// floor brought the shoulders and upper arms up across the view.
 
 import * as BABYLON from '@babylonjs/core';
 const Q = BABYLON.Quaternion;
@@ -37,7 +37,6 @@ const ELBOW_HANGS = { out: 0.5, down: 1, forward: -0.3 };
 const KEEPS = { clear: 0.045, eye: 0.38, swings: 0.15, most: 1.8, eases: 0.2 };
 const REACH = 0.985;            // of the arm's whole length: it is never drawn quite straight
 const LEANS = 0.6;              // a shoulder that leans in goes this far down for each metre forward
-const SLACK_OUT = 0.22;         // metres out to its side that an elbow stands, for which way a held tool lies
 const WEB = 0.014;              // metres out on the back of the hand from the bones that a handle rests on the web of the thumb
 // What it wears: a glove, skin tight, its cuff running `cuff` up the forearm.
 const WORN = { glove: 0.0006, cuff: 0.045 };
@@ -222,28 +221,15 @@ export class Arm {
         this.grasp = this._grasp();
     }
 
-    // Which way the handle of a tool lies in the hand when the wrist is
-    // slack, for a tool whose point is at `point` of the world: the forearm
-    // runs from where the elbow hangs to about there, and the hand goes on
-    // from the forearm the way it was made. (The elbow is taken to stand out
-    // from the body: cutting close in, a hand holds the handle off to its
-    // own side, not back at its face.)
-    slack(point) {
-        const ahead = this.camera.getDirection(V3.Forward()), out = new V3(ahead.z, 0, -ahead.x).normalize().scale(this.side === 'R' ? SLACK_OUT : -SLACK_OUT);
-        const { fore, wrist } = this.bones, elbow = this._shoulder().add(out).add(new V3(0, -this.lengths[0], 0)), turn = Q.Identity();
-        Q.FromUnitVectorsToRef(this._out(wrist.head.subtract(fore.head).normalize()), point.subtract(elbow).normalize(), turn);
-        return this._out(this.grasp.along).applyRotationQuaternion(turn);
-    }
-
     // Every bone to its pose, the fingers closed and the arm as straight as
-    // it was made, and the person standing where the eye is: facing the way
-    // it looks, their shoulder where a shoulder would be.
+    // it was made, and the person turned as the eye is (their x to its right,
+    // y up, z ahead), their shoulder where a shoulder would be.
     _stand() {
-        const person = this.person, ahead = this.camera.getDirection(V3.Forward());
+        const person = this.person;
         // Posed again only when the fingers change: the whole skeleton goes through apply(), and reach() sets every bone
         // it moves (the arm's four) outright, so from one frame to the next nothing else would differ.
         if (person.pose !== this.fingers) person.apply(this.fingers, { ground: null });
-        person.root.rotation.y = Math.atan2(ahead.x, ahead.z);
+        (person.root.rotationQuaternion ??= Q.Identity()).copyFrom(this.camera.absoluteRotation);
         person.root.position.copyFrom(this._shoulder().subtract(this._out(this.bones.upper.head)));
     }
 
@@ -344,21 +330,20 @@ export class Arm {
     }
 
     // Where the shoulder hangs in the world: `shift` from where it hangs square to the eye (m: out to its own side, up,
-    // forward), as a body turned to bring one shoulder forward has it.
+    // forward, in the eye's frame), as a body turned to bring one shoulder forward has it.
     _shoulder() {
-        const ahead = this.camera.getDirection(V3.Forward()), level = new V3(ahead.x, 0, ahead.z).normalize();
-        const right = new V3(level.z, 0, -level.x), sign = this.side === 'R' ? 1 : -1, s = this.shift;
-        return this.camera.globalPosition.add(right.scale(sign * (SHOULDER.out + s.x))).add(level.scale(SHOULDER.forward + s.z)).add(new V3(0, s.y - SHOULDER.down, 0));
+        const sign = this.side === 'R' ? 1 : -1, s = this.shift;
+        return V3.TransformCoordinates(new V3(sign * (SHOULDER.out + s.x), s.y - SHOULDER.down, SHOULDER.forward + s.z), this.camera.getWorldMatrix());
     }
 
     // A vector of the person's own frame, as it lies in the world.
     _out(v) {
-        return v.applyRotationQuaternion(Q.RotationAxis(V3.Up(), this.person.root.rotation.y));
+        return v.applyRotationQuaternion(this.person.root.rotationQuaternion);
     }
 
     // A grip of the world in the person's own frame: where, and turned how.
     _in(at, along, back) {
-        const home = Q.RotationAxis(V3.Up(), -this.person.root.rotation.y);
+        const home = Q.Inverse(this.person.root.rotationQuaternion);
         const x = along.applyRotationQuaternion(home), y = back.applyRotationQuaternion(home);
         return { at: at.subtract(this.person.root.position).applyRotationQuaternion(home), rotation: Q.RotationQuaternionFromAxis(x, y, V3.Cross(x, y)) };
     }

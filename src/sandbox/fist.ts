@@ -9,7 +9,7 @@
 // back off it; a miss carries it on to the end of the arm and is pulled back slower.
 
 import * as BABYLON from '@babylonjs/core';
-import { Arm, worn, plain } from '../table/arm.ts';
+import { Arm, plain } from '../table/arm.ts';
 const V3 = BABYLON.Vector3;
 
 // The knuckles, in the eye's frame (x right, y up, z ahead), m.
@@ -18,8 +18,12 @@ const COCKED = new V3(0.14, -0.09, 0.2);    // drawn back beside the jaw, at the
 const MISS = new V3(0.02, -0.04, 0.6);      // the arm's end, nothing met
 const HANGS = new V3(0.3, -1, -0.15);       // the way the elbow is off the line from shoulder to fist: down, a little out
 const SPEED = 7;                             // m/s at the hand, the most
-// What the player wears on it: a canvas work jacket, its sleeve down to a cuff short of the wrist, standing off the skin.
-const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, off: 0.007, cuff: 0.03 };
+// What the player wears on it: a canvas work jacket. Its sleeve hangs `loose` m off the skin (upper arm, forearm) and
+// ends `cuff` m short of the wrist in a hem `band` m long and `hem` m proud of the sleeve, its edge turned in `turn` m
+// thick; above the hem the cloth gathers in shallow folds `fold` m deep. It is made `around` corners round, a ring every
+// `step` m.
+const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, loose: [0.011, 0.008], cuff: 0.03, band: 0.035, hem: 0.003, turn: 0.004,
+    fold: 0.0025, around: 32, step: 0.008 };
 
 type Key = { at: BABYLON.Vector3; t: number; turn: number; ease: (u: number) => number; arc?: number };
 const smooth = (u: number) => u * u * (3 - 2 * u);
@@ -154,15 +158,17 @@ export function ownArm(people, body: string, side: 'R' | 'L', camera: BABYLON.Ca
 }
 
 // The person's own mesh cut down to one arm's skin, in its own material (their clothes are not the player's: the
-// sleeve is sleeve()'s). Cut at the shoulder, which is behind the eye.
+// sleeve is sleeve()'s). Only the hand and the wrist, and the forearm as far into the sleeve as can be seen up it: the
+// rest is under the sleeve, and came out through it where the forearm turned.
 function armOnly(person, side: string) {
-    const ARM = new RegExp(`^(upperarm|lowerarm|wrist|metacarpal|finger).*\\.${side}$`);
-    const { arrays } = person.lib.bodies.get(person.bodyName);
+    const ARM = new RegExp(`^(lowerarm|wrist|metacarpal|finger).*\\.${side}$`), wrist = person.byName[`wrist.${side}`].head;
+    const { arrays } = person.lib.bodies.get(person.bodyName), P = arrays.position;
     const names = person.header.bones.map((b) => b.name), mine = new Uint8Array(person.header.vertexCount);
     for (let i = 0; i < mine.length; i++) {
         let k = 0;
         for (let j = 1; j < 4; j++) if (arrays.weights[i * 4 + j] > arrays.weights[i * 4 + k]) k = j;
-        mine[i] = ARM.test(names[arrays.joints[i * 4 + k]]) ? 1 : 0;
+        const name = names[arrays.joints[i * 4 + k]];
+        mine[i] = ARM.test(name) && (!name.startsWith('lowerarm') || Math.hypot(P[i * 3] - wrist.x, P[i * 3 + 1] - wrist.y, P[i * 3 + 2] - wrist.z) < SLEEVE.cuff + 0.05) ? 1 : 0;
     }
     const mesh = person.mesh as BABYLON.Mesh, index = arrays.index, kept: number[] = [], parts: number[][] = [];
     person.header.parts.forEach((p, k) => {
@@ -180,19 +186,124 @@ function armOnly(person, side: string) {
     return mesh;
 }
 
-// The player's sleeve, made as the table's glove is (arm.ts's worn()): the skin of the upper arm and the forearm down to
-// a cuff short of the wrist, pushed out off it the thickness of a jacket and what is under it, on the arm's bones.
+// The player's sleeve, made round the arm as it was made: a tube along the bones from high on the upper arm (behind the
+// eye) to the cuff, each ring of it laid round the arm's own skin there (out to the furthest of that skin each way
+// round, as cloth lies across the hollows of an arm, not into them) and the rings eased into each other, so it is
+// smooth however coarse the skin under it. The cuff's edge is turned in, so it has a thickness and is not seen into.
+// Each corner hangs on the bones the skin nearest it hangs on, and so bends at the elbow and turns with the forearm as
+// the skin does; but only on the arm's own bones: the arm is posed alone, the shoulder and chest left as made, and a
+// sleeve made of the skin itself, partly on the collarbone over the shoulder, was stretched out into grey flaps
+// across the view when the arm came up.
 function sleeve(arm: Arm) {
-    const person = arm.person, { arrays } = person.lib.bodies.get(person.bodyName), names = person.header.bones.map((b) => b.name);
-    const wrist = arm.bones.wrist.head, P = arrays.position, W = arrays.weights, upper = new RegExp(`^(upperarm|lowerarm).*\\.${arm.side}$`);
-    const on = (i: number) => {
+    const person = arm.person, { arrays } = person.lib.bodies.get(person.bodyName), names: string[] = person.header.bones.map((b) => b.name);
+    const P = arrays.position, J = arrays.joints, W = arrays.weights, n = SLEEVE.around, side = arm.side;
+    const bone = (name: string) => person.byName[`${name}.${side}`], at = (i: number) => new V3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+    const own = new RegExp(`^(upperarm|lowerarm)\\d+\\.${side}$`), keeps = new RegExp(`^(upperarm|lowerarm)\\d+\\.${side}$|^wrist\\.${side}$`);
+    const skin: number[] = [];
+    for (let i = 0; i < person.header.vertexCount; i++) {
         let k = 0;
         for (let j = 1; j < 4; j++) if (W[i * 4 + j] > W[i * 4 + k]) k = j;
-        return upper.test(names[arrays.joints[i * 4 + k]])
-            && Math.hypot(P[i * 3] - wrist.x, P[i * 3 + 1] - wrist.y, P[i * 3 + 2] - wrist.z) > SLEEVE.cuff;
+        if (own.test(names[J[i * 4 + k]])) skin.push(i);
+    }
+
+    // The line it runs along: a fifth of the way down the upper arm, the elbow, and the cuff short of the wrist.
+    const elbow = bone('lowerarm01').head, wrist = bone('wrist').head;
+    const top = V3.Lerp(bone('upperarm01').head, elbow, 0.2), end = wrist.add(elbow.subtract(wrist).normalize().scale(SLEEVE.cuff));
+    const upper = V3.Distance(top, elbow), length = upper + V3.Distance(elbow, end), count = Math.ceil(length / SLEEVE.step);
+    const d1 = elbow.subtract(top).normalize(), d2 = end.subtract(elbow).normalize();
+    // Each ring: its centre (the skin's middle there), the way the arm runs, two ways across it, and how far out the skin
+    // reaches each way round from the centre.
+    const rings: { c: BABYLON.Vector3; d: BABYLON.Vector3; u: BABYLON.Vector3; v: BABYLON.Vector3; s: number; reach: number[] }[] = [];
+    let u = V3.Cross(d1, V3.Forward()).normalize();
+    for (let k = 0; k <= count; k++) {
+        const s = (k / count) * length, bend = Math.min(1, Math.max(0, (s - upper + 0.03) / 0.06));
+        const c = s < upper ? top.add(d1.scale(s)) : elbow.add(d2.scale(s - upper));
+        const d = V3.Lerp(d1, d2, bend * bend * (3 - 2 * bend)).normalize();
+        u = u.subtract(d.scale(V3.Dot(u, d))).normalize();
+        const v = V3.Cross(d, u), near = skin.map(at).filter((p) => Math.abs(V3.Dot(p.subtract(c), d)) < 0.012).map((p) => { const r = p.subtract(c); return r.subtract(d.scale(V3.Dot(r, d))); });
+        const mid = near.reduce((m, r) => m.addInPlace(r), V3.Zero()).scale(1 / Math.max(1, near.length));
+        const reach = Array.from({ length: n }, (_, i) => {
+            const w = u.scale(Math.cos((2 * Math.PI * i) / n)).add(v.scale(Math.sin((2 * Math.PI * i) / n)));
+            return near.reduce((most, r) => Math.max(most, V3.Dot(r.subtract(mid), w)), 0);
+        });
+        rings.push({ c: c.add(mid), d, u, v, s, reach });
+    }
+    // Eased: each ring and each way round toward its neighbours, a few times over.
+    for (let pass = 0; pass < 4; pass++) {
+        const was = rings.map((r) => ({ c: r.c.clone(), reach: r.reach.slice() }));
+        rings.forEach((r, k) => {
+            const a = was[Math.max(0, k - 1)], b = was[Math.min(rings.length - 1, k + 1)], me = was[k];
+            r.c = a.c.add(me.c.scale(2)).add(b.c).scale(0.25);
+            r.reach = me.reach.map((x, i) => (a.reach[i] + b.reach[i] + me.reach[(i + n - 1) % n] + me.reach[(i + 1) % n] + 4 * x) / 8);
+        });
+    }
+
+    // The cloth: loose off the skin, the hem standing proud over its last few centimetres, folds gathered above it.
+    const hemAt = length - SLEEVE.band, smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const out = (r: (typeof rings)[0], i: number) => {
+        const a = (2 * Math.PI * i) / n, s = r.s;
+        const folds = SLEEVE.fold * smooth(upper, upper + 0.06, s) * (1 - smooth(hemAt - 0.02, hemAt, s)) * Math.sin((2 * Math.PI * s) / 0.04 + 1.3 * Math.sin(2 * a + s * 25));
+        return r.reach[i] + SLEEVE.loose[0] + (SLEEVE.loose[1] - SLEEVE.loose[0]) * smooth(upper - 0.05, upper + 0.05, s) + SLEEVE.hem * smooth(hemAt - 0.004, hemAt, s) + folds;
     };
-    const mesh = worn(person, 'sleeve', (three: number[]) => three.every(on), SLEEVE.off, plain(person.scene, 'sleeve', SLEEVE));
-    (mesh.material as BABYLON.PBRMaterial).environmentIntensity = 0.6;
+    const round = (r: (typeof rings)[0], i: number, radius: number, ahead = 0) => {
+        const a = (2 * Math.PI * i) / n;
+        return r.c.add(r.d.scale(ahead)).add(r.u.scale(Math.cos(a) * radius)).add(r.v.scale(Math.sin(a) * radius));
+    };
+    const loops: BABYLON.Vector3[][] = rings.map((r) => Array.from({ length: n }, (_, i) => round(r, i, out(r, i))));
+    // Over the edge in a half round and back inside the hem, `turn` in from its outside.
+    const last = rings[rings.length - 1], lip = SLEEVE.turn / 2;
+    for (let t = 1; t <= 4; t++) {
+        const q = (t / 4) * Math.PI;
+        loops.push(Array.from({ length: n }, (_, i) => round(last, i, out(last, i) - lip * (1 - Math.cos(q)), lip * Math.sin(q))));
+    }
+    for (const back of [0.008, 0.025]) {
+        const r = rings[Math.max(0, Math.round((length - back) / (length / count)))];
+        loops.push(Array.from({ length: n }, (_, i) => round(r, i, out(last, i) - SLEEVE.turn)));
+    }
+
+    const positions: number[] = [], indices: number[] = [], joints: number[] = [], weights: number[] = [];
+    loops.forEach((loop, k) => {
+        for (const p of loop) {
+            positions.push(p.x, p.y, p.z);
+            // On the bones of the nearest skin, whatever of it hangs on the shoulder or the chest given to the upper arm.
+            let best = skin[0], far = Infinity;
+            for (const i of skin) { const f = (P[i * 3] - p.x) ** 2 + (P[i * 3 + 1] - p.y) ** 2 + (P[i * 3 + 2] - p.z) ** 2; if (f < far) { far = f; best = i; } }
+            for (let j = 0; j < 4; j++) {
+                const b = J[best * 4 + j];
+                joints.push(keeps.test(names[b]) ? b : bone('upperarm01').index);
+                weights.push(W[best * 4 + j] / 255);
+            }
+        }
+        if (k === 0) return;
+        const a = (k - 1) * n, b = k * n;
+        for (let i = 0; i < n; i++) {
+            const j = (i + 1) % n;
+            indices.push(a + i, b + i, b + j, a + i, b + j, a + j);
+        }
+    });
+    const normals: number[] = [];
+    BABYLON.VertexData.ComputeNormals(positions, indices, normals);
+    // (Wound the way the body's skin is, so that its outside is the side drawn.)
+    const probe = loops[1][0].subtract(rings[1].c);
+    if (normals[n * 3] * probe.x + normals[n * 3 + 1] * probe.y + normals[n * 3 + 2] * probe.z < 0) {
+        for (let t = 0; t < indices.length; t += 3) [indices[t + 1], indices[t + 2]] = [indices[t + 2], indices[t + 1]];
+        BABYLON.VertexData.ComputeNormals(positions, indices, normals);
+    }
+
+    const data = new BABYLON.VertexData(), mesh = new BABYLON.Mesh('sleeve', person.scene);
+    Object.assign(data, { positions, indices, normals, matricesIndices: joints, matricesWeights: weights });
+    data.applyToMesh(mesh);
+    mesh.parent = person.body;
+    mesh.position.copyFrom(person.mesh.position);
+    mesh.skeleton = person.skeleton;
+    mesh.numBoneInfluencers = 4;
+    mesh.alwaysSelectAsActiveMesh = true;       // the skinned bounds lie
+    mesh.isPickable = false;
+    mesh.receiveShadows = true;
+    const material = plain(person.scene, 'sleeve', SLEEVE);
+    material.backFaceCulling = true;
+    material.environmentIntensity = 0.6;
+    mesh.material = material;
     return mesh;
 }
 

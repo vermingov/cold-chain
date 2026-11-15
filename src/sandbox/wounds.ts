@@ -171,13 +171,16 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         const out = npc.face.eyes.pierced(h, m, dir, Math.min(stopAt, far) - h.t, stopAt > h.t + 0.04);
         if (h === viaEye && viaEye.t < enter.t) lid = out;
     }
-    v.bleed({ name: 'wound', rate: 0.00025 * (m.channel / 0.006) * Math.min(1, deep / 0.05 + 0.3), clots: 0.02, source: { mark: enter } });
+    // In through an open mouth the way in is the back of the throat, and it bleeds into the mouth.
+    const inMouth = npc.throat?.crossed(origin, dir, enter.t - 0.08, enter.t - 0.035);
+    v.bleed({ name: 'wound', rate: 0.00025 * (m.channel / 0.006) * Math.min(1, deep / 0.05 + 0.3), clots: 0.02, source: { mark: enter }, ...(inMouth ? { internal: true, into: 'mouth' as const } : {}) });
     // Through the mouth: the tongue, palate and cheeks are full of vessels (the lingual and facial arteries' branches)
     // and bleed into it (throat.ts).
-    if (npc.throat?.crossed(origin, dir, enter.t, Math.min(stopAt, far))) {
+    if (npc.throat?.crossed(origin, dir, enter.t - 0.08, Math.min(stopAt, far))) {
         v.bleed({ name: 'mouth', rate: 0.0009 * Math.min(2, m.channel / 0.006), internal: true, clots: 0.005, into: 'mouth' });
         v.injure('Wound through the mouth', 4);
     }
+    for (const h of surface) if (h.kind === 'tongue' && h.t < Math.min(stopAt, far)) npc.throat?.tear(h, m.calibre);
     v.pain = Math.min(1, v.pain + 0.25 + (bones ? 0.25 : 0));
     const region = regionOf(npc, enter);
     v.injure(woundText(m, region, deep, stopAt === Infinity), 1 + Math.min(3, deep * 20));
@@ -200,7 +203,7 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     // neck (on the head's segment too) is not: its skin bleeds as skin, and what lies under it by the vessels met.
     const face = (h) => h && !/^neck/.test(h.owner?.bone?.name ?? '');
     if (npc.ragdoll.nearest(enter.point).seg?.name === 'head' && !lid) {
-        if (face(enter)) v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
+        if (face(enter) && !inMouth) v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
         if (face(exitHit)) v.bleed({ name: 'scalp', rate: 0.002, clots: 0.003, source: { mark: exitHit } });
     }
     // At the moment it is made a wound holds its blood: a blade fills the track it cuts until it is drawn out, and a

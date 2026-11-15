@@ -41,6 +41,8 @@ const SLIDE: Record<string, number> = { pistol: 0.024, deagle: 0.032 };
 // (rad): a pistol, held out at arm's length, flips most; a rifle's stock in the shoulder takes it.
 // (The grip of each model is weapons.json's; z runs along its bore or blade, y toward its top or back.)
 const AIMED = 15;
+// The rendering group the held thing and the arms are drawn in (load()).
+export const HELD_GROUP = 1;
 // A long gun's firing hand: on a pistol grip raked back some 20 degrees, the index finger along to the trigger.
 // Its other hand reaches the forend because the body turns that shoulder forward and in, as a rifleman stands.
 const FORWARD = [-0.06, 0, 0.12];
@@ -376,6 +378,10 @@ export class Weapons {
             node.setEnabled(false);
             this.models.set(key, node);
         }
+        // What is in the hands and the arms holding it are drawn after the room, over it (the depth cleared between:
+        // sandbox.ts), as shooters draw theirs: stood at a wall, a gun held out in front went into it.
+        const arms = this.hands ? Object.values(this.hands.arms).flatMap((a) => a.meshes) : [];
+        for (const mesh of [...this.hand.getChildMeshes(), ...arms]) mesh.renderingGroupId = HELD_GROUP;
         this.select(this.slot);
     }
 
@@ -885,7 +891,7 @@ export class Weapons {
             for (const m of node.getChildMeshes()) m.setEnabled(true);  // (the one in the hand is hidden as it leaves it)
             node.position.copyFrom(camera.globalPosition.add(ahead.scale(0.4)).add(up.scale(speed > 10 ? 0.1 : -0.3)));
             const meshes = node.getChildMeshes();
-            for (const m of meshes) this.world.shadows?.addShadowCaster(m);
+            for (const m of meshes) { m.renderingGroupId = 0; this.world.shadows?.addShadowCaster(m); }   // (out of the hand, in the room)
             // The physics on a sphere the size of the body (64 mm across, 400 g) that carries the model with it.
             const ball = BABYLON.MeshBuilder.CreateSphere('grenade', { diameter: 0.064, segments: 6 }, scene);
             ball.isVisible = false;
