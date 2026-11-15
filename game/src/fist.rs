@@ -417,5 +417,5 @@ pub fn punch(
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Fists>().add_systems(Update, punch.after(crate::weapons::animate));
+    app.init_resource::<Fists>().add_systems(Update, crate::profiler::timed("fists", punch).after(crate::weapons::animate));
 }

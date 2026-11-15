@@ -129,6 +129,6 @@ fn put(
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(crate::Loading::Done), make).add_systems(
         Update,
-        put.run_if(resource_exists::<Arms>).after(crate::weapons::animate).after(crate::fist::punch),
+        crate::profiler::timed("arms", put).run_if(resource_exists::<Arms>).after(crate::weapons::animate).after(crate::fist::punch),
     );
 }

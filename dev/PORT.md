@@ -169,3 +169,33 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
   scenario may drain into its log.
 - Takes are the manifests' (assets/sounds, assets/cries); the room is 'cold' and the room tone 'room-sandbox' is driven
   at 0.35 from the start, as sandbox.ts did. Footsteps (player.ts onStep) are sound.rs's `steps`.
+
+## The hands (weapons.rs, muzzle.rs, arm.rs, hands.rs, fist.rs, profiler.rs), for the jobs that plug into them
+- Everything a weapon does to a person goes through two functions in weapons.rs, `pierce(log, label, person, origin,
+  dir, &Missile, far) -> Pierced { hit, stopped, at, energy, enter }` and `blow(log, label, person, point, dir, mass,
+  speed, Option<Tool>)`, shaped as wounds.ts's. Until wounds.rs lands they only find the segment met and log it
+  (`Weapons::log`, which the `arsenal-use` scenario writes out) and a missile stops where it went in: replace their
+  bodies with calls into wounds.rs (`Missile` carries wounds.ts's fields; `Tool` its blow tools). The fists' blow is
+  logged in fist.rs `punch` the same way. A cut's crossings are logged as "slash" (npc.slash) when the swing ends.
+- `weapons::surface(person, origin, dir, far) -> Option<Crossing>` stands in for npc.surface (the first skin or clothes
+  a line crosses): the segments' capsules for now. The person's own hit test (medicine) replaces it.
+- `weapons::segment_ends(segment)` is where a segment is: its `rest` until the ragdoll moves people. The body job makes
+  it read the live segment.
+- `// port: needs body` marks where the ragdoll plugs in: taking hold of a person (`take_hold`: knockDown, the
+  segment's rigid body, then the same spring `pull` gives a thing, every fixed step before SyncBackend), the
+  grenade's blast impulses (`explode`), a thrown thing landing on someone (`flying`). Grabbing and dragging *things*
+  (casings, thrown props) works now.
+- `// port: needs medicine`: the Medic (bandage, medkit: dressing.ts) beyond holding them; `// port: needs blood`:
+  what a bloody blade sheds (weapons.ts `_shed`, blood.spray). The blade's blood (`Weapons::blades`) and its stain are here.
+- Input goes through `Weapons::queue` (`Act::Press(0|2)`, `Release`, `Select(i)`, `Reload`, `Take`, `PutBack`), which a
+  scenario can push to as the mouse and keys do.
+- The arms are the sexton's arm (People's body with its mid bones), posed by `Arm::reach` (arm.ts), put on the grips
+  each frame by hands.rs from `weapons::Holds`; the fists pose them themselves.
+- Not ported: the TS drew the held thing and the arms in a rendering group of their own over the room (depth cleared),
+  so a gun held out at a wall did not go into it; here they are drawn in the room. A shot still never starts beyond a
+  wall (`before_wall`). The AK's magazine and the shotgun's barrels are not cut out of their meshes (weapons.ts
+  `split`), so they stay put through a reload.
+- Profiler (F2): `profiler::timed("row name", system)` in place of a system gives it a row of its own; every main
+  schedule has a row for the rest of its systems, and the render world one for its own thread. `Notes::note(now, what)`
+  is the TS's `world.note`. F4 saves `coldchain-profile-<version>-<time>.json` in ~/Downloads (or the working directory)
+  in the TS's format; `node tools/profile-report.mjs` reads it.

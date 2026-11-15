@@ -196,6 +196,9 @@ struct Profiler {
     preset: String,
     level: f32,
     last: Option<Instant>,
+    // A scenario's asks: open it (as F2), save the log into a folder (as F4).
+    ask_open: bool,
+    save_in: Option<std::path::PathBuf>,
 }
 
 impl Default for Profiler {
@@ -204,7 +207,7 @@ impl Default for Profiler {
             open: false, shown: None, rows: HashMap::new(), draws: HashMap::new(), gap: 16.7, slot: 0, drawn: 0.0, text: String::new(),
             said: (String::new(), 0.0), t0: None, started: String::new(), machine: Value::Null, samples: Vec::new(), spikes: Vec::new(),
             totals: HashMap::new(), hist: vec![0; 501], times: Vec::with_capacity(1024), second_at: 0.0, n: 0, spent: 0.0, cpu: 0.0, wait: 0.0,
-            wait_max: 0.0, calls: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None,
+            wait_max: 0.0, calls: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, ask_open: false, save_in: None,
         }
     }
 }
@@ -245,10 +248,12 @@ fn keys(
     windows: Query<&Window>,
 ) {
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    if keys.just_pressed(KeyCode::F4) && p.open {
-        save(&mut p, &notes, time.elapsed_secs_f64());
+    if (keys.just_pressed(KeyCode::F4) || p.save_in.is_some()) && p.open {
+        let dir = p.save_in.take();
+        save(&mut p, &notes, time.elapsed_secs_f64(), dir);
     }
-    if !keys.just_pressed(KeyCode::F2) {
+    let ask = std::mem::take(&mut p.ask_open) && !p.open;
+    if !keys.just_pressed(KeyCode::F2) && !ask {
         return;
     }
     if shift && p.open {
@@ -558,7 +563,7 @@ fn summary(p: &Profiler) -> Value {
 }
 
 // The log as a file: the summary and the machine laid out to be read, then a spike, an event or a sample a line.
-fn save(p: &mut Profiler, notes: &Notes, now: f64) {
+fn save(p: &mut Profiler, notes: &Notes, now: f64, dir: Option<std::path::PathBuf>) {
     let version = env!("CARGO_PKG_VERSION");
     let name = format!("coldchain-profile-{version}-{}.json", stamp().1);
     let lines = |list: &[Value]| format!("[\n{}\n]", list.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",\n"));
@@ -568,7 +573,7 @@ fn save(p: &mut Profiler, notes: &Notes, now: f64) {
     let head = serde_json::to_string_pretty(&head).unwrap();
     let json = format!("{},\n  \"spikes\": {},\n  \"events\": {},\n  \"samples\": {}\n}}\n", &head[..head.len() - 2], lines(&p.spikes), lines(&events), lines(&p.samples));
     // Where a browser would have put it: the Downloads folder, if there is one.
-    let dir = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads")).filter(|d| d.is_dir()).unwrap_or_else(|| ".".into());
+    let dir = dir.unwrap_or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads")).filter(|d| d.is_dir()).unwrap_or_else(|| ".".into()));
     let path = dir.join(&name);
     p.said = match std::fs::write(&path, json) {
         Ok(()) => (format!(", saved {}", path.display()), now),
@@ -610,6 +615,15 @@ fn draw(p: &mut Profiler, now: f64) {
     out.push(format!("meshes in view by source ({}; each a draw call before batching)", total.round()));
     out.extend(draws.iter().take(16).map(|(n, r)| format!("{:<42.42} {:>6.0} {:>6.0}", n, r.avg, worst(r))));
     p.text = out.join("\n");
+}
+
+// For a scenario: the profiler opened, as F2 opens it; its log saved into `dir`, as F4 saves it.
+pub fn open(world: &mut World) {
+    world.resource_mut::<Profiler>().ask_open = true;
+}
+
+pub fn save_in(world: &mut World, dir: std::path::PathBuf) {
+    world.resource_mut::<Profiler>().save_in = Some(dir);
 }
 
 pub fn plugin(app: &mut App) {

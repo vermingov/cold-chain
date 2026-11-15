@@ -851,7 +851,7 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(Sound::new())
         .add_systems(Startup, (load, mix).chain())
         .add_systems(Update, steps)
-        .add_systems(PostUpdate, (listen, render).chain().after(bevy::transform::TransformSystems::Propagate));
+        .add_systems(PostUpdate, (crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));
 }
 
 #[test]

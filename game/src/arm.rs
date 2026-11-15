@@ -502,12 +502,20 @@ fn sleeve(body: &Body, side: char) -> Mesh {
             t.swap(1, 2);
         }
     }
+    // How the sleeve faces, for the log: the share of the tube's corners whose normal points away from the arm's line.
+    let radial: Vec<Vec3> = (0..rings.len()).flat_map(|k| (0..n).map(move |i| (k, i))).map(|(k, i)| loops[k][i] - rings[k].c).collect();
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, bevy::mesh::VertexAttributeValues::Uint16x4(joints))
         .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights)
         .with_inserted_indices(Indices::U32(indices));
-    mesh.compute_smooth_normals();
+    // (Weighted by area: the smooth normals normalise each face's own first, and a face of no area, which the turned-in
+    // hem can make, gave NaN to every corner round it.)
+    mesh.compute_area_weighted_normals();
+    if let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
+        let out = radial.iter().enumerate().filter(|(i, r)| Vec3::from(normals[*i]).dot(**r) > 0.0).count();
+        info!("sleeve {side}: {} corners, {:.0}% of the tube's facing out", normals.len(), 100.0 * out as f32 / radial.len() as f32);
+    }
     mesh
 }
 

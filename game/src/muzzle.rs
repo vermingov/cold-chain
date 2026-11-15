@@ -606,5 +606,5 @@ fn update(
 
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(crate::Loading::Done), setup.after(crate::weapons::spawn_models))
-        .add_systems(Update, update.run_if(resource_exists::<Muzzle>).after(crate::weapons::act));
+        .add_systems(Update, crate::profiler::timed("weapons: flash and smoke", update).run_if(resource_exists::<Muzzle>).after(crate::weapons::act));
 }

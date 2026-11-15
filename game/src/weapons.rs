@@ -13,6 +13,9 @@ use std::collections::HashMap;
 
 use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::input::mouse::AccumulatedMouseScroll;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldAssetRoot;
 use bevy_rapier3d::prelude::*;
@@ -24,7 +27,7 @@ use crate::map::WORLD;
 use crate::models::Models;
 use crate::person::Person;
 use crate::player::Player;
-use crate::profiler::Notes;
+use crate::profiler::{timed, Notes};
 use crate::rng::Rng;
 use crate::sound::{Play, Sound};
 use crate::{babylon_quat, Loading};
@@ -2036,9 +2039,8 @@ fn lobbing(t: f32, h: &Held, pos: &mut Vec3, base: &mut Vec3, left: &mut Option<
 
 // Parts of a model that move in the hands, by their glTF node names: a pistol's slide and magazine, the M4's magazine and
 // charging handle, the bolt rifle's bolt, the grenade's pin.
-// shortcut: the AK's magazine and the shotgun's barrels are loose pieces of one mesh each, which the TS cut out by their
-// bounds (weapons.ts SPLIT); not cut here, they stay put while the hands go through the reload. Port `split` if the
-// reload looks wrong without them.
+// The AK's magazine and the shotgun's barrels are loose pieces of one mesh each, cut out by `split` into meshes of their own
+// named so.
 fn parts_of(key: &str) -> &'static [(&'static str, fn(&str) -> bool)] {
     match key {
         "pistol" => &[("slide", |n| n.contains("slide")), ("mag", |n| n.contains("magazine"))],
@@ -2047,6 +2049,8 @@ fn parts_of(key: &str) -> &'static [(&'static str, fn(&str) -> bool)] {
         "grenade" => &[("pin", |n| n == "pin")],
         "deagle" => &[("slide", |n| matches!(n, "Slide" | "Bolt" | "Ironsights Back" | "Safety" | "Safety Screw")), ("mag", |n| matches!(n, "Magazine" | "Bullets"))],
         "r22" => &[("mag", |n| n == "mag"), ("handle", |n| n == "handle")],
+        "ak" => &[("mag", |n| n == "mag")],
+        "shotgun" => &[("barrels", |n| n == "barrels")],
         _ => &[],
     }
 }
@@ -2087,14 +2091,19 @@ pub fn spawn_models(
 }
 
 // Each model's moving parts found by name once its scene is in (and its bounds worked out, in the hand's frame).
+#[allow(clippy::too_many_arguments)]
 fn find_parts(
+    mut commands: Commands,
     mut hand: ResMut<Hand>,
     children: Query<&Children>,
     names: Query<&Name>,
     globals: Query<&GlobalTransform>,
     transforms: Query<&Transform>,
     aabbs: Query<&bevy::camera::primitives::Aabb>,
+    mesh3d: Query<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, &ChildOf)>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut tries: Local<u32>,
+    mut cut: Local<Vec<&'static str>>,
 ) {
     if *tries > 600 || hand.entity.is_none() {
         return;
@@ -2112,6 +2121,26 @@ fn find_parts(
         // (A scene not in yet, or its bounds not yet worked out.)
         if all.len() < 2 || !all.iter().any(|&d| aabbs.get(d).is_ok()) {
             continue;
+        }
+        // The pieces two models have only as loose parts of one mesh, cut out first (and found next frame).
+        let keep: Option<(&'static str, fn(Vec3, Vec3) -> bool)> = match key {
+            "ak" => Some(("mag", |lo, _| lo.y < -0.1)),
+            "shotgun" => Some(("barrels", |lo, _| lo.z > 0.06)),
+            _ => None,
+        };
+        if let Some((name, keep)) = keep {
+            if !cut.contains(&key) {
+                cut.push(key);
+                for &d in &all {
+                    let Ok((mesh, material, parent)) = mesh3d.get(d) else { continue };
+                    let Some(m) = meshes.get(&mesh.0) else { continue };
+                    let Some((rest, part)) = split(m, keep) else { continue };
+                    let t = transforms.get(d).copied().unwrap_or_default();
+                    commands.entity(d).insert(Mesh3d(meshes.add(rest)));
+                    commands.spawn((Mesh3d(meshes.add(part)), material.clone(), t, ChildOf(parent.parent()), Name::new(name)));
+                }
+                continue;
+            }
         }
         let mut parts = HashMap::new();
         for &(name, test) in parts_of(key) {
@@ -2153,6 +2182,116 @@ fn find_parts(
     }
 }
 
+// The connected pieces of `mesh` (its triangles joined where their corners meet) that `keep` picks by their bounds in the
+// mesh's own frame, cut out into a mesh of their own: (what is left, the piece). None if it picks nothing.
+fn split(mesh: &Mesh, keep: fn(Vec3, Vec3) -> bool) -> Option<(Mesh, Mesh)> {
+    let Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return None };
+    let index: Vec<u32> = mesh.indices()?.iter().map(|i| i as u32).collect();
+    let mut id: HashMap<[i64; 3], usize> = HashMap::new();
+    let weld: Vec<usize> = p.iter().map(|v| {
+        let k = v.map(|x| (x * 1e4).round() as i64);
+        let n = id.len();
+        *id.entry(k).or_insert(n)
+    }).collect();
+    let mut up: Vec<usize> = (0..id.len()).collect();
+    fn top(up: &mut [usize], mut x: usize) -> usize {
+        while up[x] != x {
+            up[x] = up[up[x]];
+            x = up[x];
+        }
+        x
+    }
+    for t in index.chunks_exact(3) {
+        let a = top(&mut up, weld[t[0] as usize]);
+        let b = top(&mut up, weld[t[1] as usize]);
+        up[b] = a;
+        let c = top(&mut up, weld[t[2] as usize]);
+        up[c] = a;
+    }
+    let mut bounds: HashMap<usize, (Vec3, Vec3)> = HashMap::new();
+    for (i, v) in p.iter().enumerate() {
+        let r = top(&mut up, weld[i]);
+        let v = Vec3::from(*v);
+        let b = bounds.entry(r).or_insert((v, v));
+        b.0 = b.0.min(v);
+        b.1 = b.1.max(v);
+    }
+    let picked: Vec<usize> = bounds.iter().filter(|(_, b)| keep(b.0, b.1)).map(|(r, _)| *r).collect();
+    if picked.is_empty() {
+        return None;
+    }
+    let (mut mine, mut rest) = (Vec::new(), Vec::new());
+    for t in index.chunks_exact(3) {
+        let r = top(&mut up, weld[t[0] as usize]);
+        if picked.contains(&r) { mine.extend_from_slice(t) } else { rest.extend_from_slice(t) }
+    }
+    let mut a = mesh.clone();
+    a.insert_indices(bevy::mesh::Indices::U32(rest));
+    let mut b = mesh.clone();
+    b.insert_indices(bevy::mesh::Indices::U32(mine));
+    Some((a, b))
+}
+
+// What is in the hands and the arms holding it, drawn over the room (held.wesl; the TS's HELD_GROUP): the same material,
+// its depth put in front of anything in the room.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct OverRoom {}
+
+impl MaterialExtension for OverRoom {
+    fn vertex_shader() -> ShaderRef {
+        "embedded://cold_chain/held.wesl".into()
+    }
+}
+
+pub type HeldMaterial = ExtendedMaterial<StandardMaterial, OverRoom>;
+
+// Whether a mesh is a blade's (the knife's blade is a mesh of its own; the estoc is one mesh with its hilt, which would
+// redden too, so its blood is not drawn).
+fn is_blade(e: Entity, names: &Query<&Name>, parents: &Query<&ChildOf>) -> bool {
+    names.get(e).is_ok_and(|n| n.contains("blade")) || parents.get(e).is_ok_and(|c| names.get(c.parent()).is_ok_and(|n| n.contains("blade")))
+}
+
+// Every mesh that comes in under the hand or the arms put on its material over the room (a blade's a material of its own,
+// for the blood on it).
+#[allow(clippy::too_many_arguments)]
+fn over_room(
+    mut commands: Commands,
+    hand: Res<Hand>,
+    arms: Option<Res<crate::hands::Arms>>,
+    added: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Added<MeshMaterial3d<StandardMaterial>>>,
+    parents: Query<&ChildOf>,
+    names: Query<&Name>,
+    standard: Res<Assets<StandardMaterial>>,
+    mut held: ResMut<Assets<HeldMaterial>>,
+    mut cache: Local<HashMap<AssetId<StandardMaterial>, Handle<HeldMaterial>>>,
+) {
+    let roots: Vec<Entity> = hand.entity.into_iter().chain(arms.iter().flat_map(|a| [a.r.root, a.l.root])).collect();
+    for (e, m) in &added {
+        let mut at = e;
+        let mut under = false;
+        for _ in 0..16 {
+            if roots.contains(&at) {
+                under = true;
+                break;
+            }
+            match parents.get(at) {
+                Ok(c) => at = c.parent(),
+                Err(_) => break,
+            }
+        }
+        if !under {
+            continue;
+        }
+        let Some(base) = standard.get(&m.0).cloned() else { continue };
+        let h = if is_blade(e, &names, &parents) {
+            held.add(ExtendedMaterial { base, extension: OverRoom {} })
+        } else {
+            cache.entry(m.0.id()).or_insert_with(|| held.add(ExtendedMaterial { base, extension: OverRoom {} })).clone()
+        };
+        commands.entity(e).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(h));
+    }
+}
+
 // The blade reddened by the blood on it, wet and glossy, going dull and brown as it dries.
 // port: needs blood. What leaves the blade (weapons.ts _shed: drops cast off it as it swings, at its tip's speed) is
 // blood.spray's; until it lands the blood stays on.
@@ -2162,9 +2301,9 @@ fn stain(
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     names: Query<&Name>,
-    mesh_materials: Query<&MeshMaterial3d<StandardMaterial>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut own: Local<HashMap<Entity, (Handle<StandardMaterial>, Color, f32, f32)>>,
+    mesh_materials: Query<&MeshMaterial3d<HeldMaterial>>,
+    mut materials: ResMut<Assets<HeldMaterial>>,
+    mut own: Local<HashMap<Entity, (Color, f32, f32)>>,
 ) {
     let key = weapons.arm().key;
     let Some(&(wet, _, age)) = weapons.blades.get(key) else { return };
@@ -2172,55 +2311,29 @@ fn stain(
     let cover = (wet / 0.03).min(1.0);
     let dry = (age / DRIES).min(1.0);
     let blood = Color::linear_rgb(0.3, 0.02, 0.018).mix(&Color::linear_rgb(0.17, 0.07, 0.05), dry);
-    // The meshes of its blade (the knife's blade is a mesh of its own; the estoc is one mesh with its hilt, which would
-    // redden too, so its blood is not drawn), each given a material of its own the first time.
     for m in children.iter_descendants(root) {
-        let blade = names.get(m).is_ok_and(|n| n.contains("blade")) || parents.get(m).is_ok_and(|c| names.get(c.parent()).is_ok_and(|n| n.contains("blade")));
-        let Ok(mat) = mesh_materials.get(m) else { continue };
-        if !blade {
+        if !is_blade(m, &names, &parents) {
             continue;
         }
-        let entry = own.entry(m).or_insert_with(|| {
-            let base = materials.get(&mat.0).cloned().unwrap_or_default();
-            (mat.0.clone(), base.base_color, base.metallic, base.perceptual_roughness)
-        });
-        if let Some(mut m) = materials.get_mut(&entry.0) {
-            m.base_color = entry.1.mix(&blood, cover);
-            m.metallic = entry.2 * (1.0 - cover);
-            m.perceptual_roughness = entry.3 + (0.15 + 0.55 * dry - entry.3) * cover;
-        }
-    }
-}
-
-// (A blade's meshes put on their own materials: done once, outside `stain`, which only reads which they wear.)
-fn own_blades(hand: Res<Hand>, children: Query<&Children>, parents: Query<&ChildOf>, names: Query<&Name>, mut q: Query<&mut MeshMaterial3d<StandardMaterial>>,
-              mut materials: ResMut<Assets<StandardMaterial>>, mut done: Local<Vec<Entity>>) {
-    for a in ARMS.iter().filter(|a| a.kind == Kind::Blade) {
-        let Some(&root) = hand.models.get(a.key) else { continue };
-        for m in children.iter_descendants(root) {
-            if done.contains(&m) {
-                continue;
-            }
-            let blade = names.get(m).is_ok_and(|n| n.contains("blade")) || parents.get(m).is_ok_and(|c| names.get(c.parent()).is_ok_and(|n| n.contains("blade")));
-            let Ok(mut mat) = q.get_mut(m) else { continue };
-            done.push(m);
-            if blade {
-                if let Some(base) = materials.get(&mat.0).cloned() {
-                    mat.0 = materials.add(base);
-                }
-            }
-        }
+        let Ok(mat) = mesh_materials.get(m) else { continue };
+        let Some(mut x) = materials.get_mut(&mat.0) else { continue };
+        let (c, metal, rough) = *own.entry(m).or_insert((x.base.base_color, x.base.metallic, x.base.perceptual_roughness));
+        x.base.base_color = c.mix(&blood, cover);
+        x.base.metallic = metal * (1.0 - cover);
+        x.base.perceptual_roughness = rough + (0.15 + 0.55 * dry - rough) * cover;
     }
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Weapons>()
+    bevy::asset::embedded_asset!(app, "held.wesl");
+    app.add_plugins(MaterialPlugin::<HeldMaterial>::default())
+        .init_resource::<Weapons>()
         .init_resource::<WeaponModels>()
         .init_resource::<Hand>()
         .init_resource::<Holds>()
         .add_systems(Startup, load)
         .add_systems(OnEnter(Loading::Done), spawn_models)
-        .add_systems(Update, (input, act, animate, sight, flying, find_parts, own_blades, stain).chain().after(crate::player::walk).run_if(resource_exists::<crate::muzzle::Muzzle>))
+        .add_systems(Update, (input, timed("weapons", act), timed("weapons: the hand's pose", animate), timed("weapons: sight", sight), flying, find_parts, over_room, stain).chain().after(crate::player::walk).run_if(resource_exists::<crate::muzzle::Muzzle>))
         .add_systems(FixedUpdate, pull.before(PhysicsSet::SyncBackend));
 }
 
@@ -2285,6 +2398,8 @@ fn report(what: String) -> crate::scenario::Step {
 pub fn scenario() -> Vec<crate::scenario::Step> {
     use crate::scenario::Step;
     let mut s = Vec::new();
+    // F2 open throughout, its log saved at the end (profiler.rs).
+    s.push(Step::Do(Box::new(crate::profiler::open)));
     // Everything off the slots first: each is taken from the board.
     s.push(Step::Do(Box::new(|w: &mut World| {
         let mut wp = w.resource_mut::<Weapons>();
@@ -2333,12 +2448,12 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(push(vec![Act::Press(0)]));
                 s.push(Step::Wait(if a.gun.as_ref().unwrap().auto { 20 } else { 2 }));
                 s.push(push(vec![Act::Release(0)]));
-                s.push(Step::Wait(70));
+                s.push(Step::Wait(40));
                 s.push(report(format!("{key}: fired at the wall")));
                 at_person(&mut s);
                 s.push(Step::Wait(8));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
-                s.push(Step::Wait(70));
+                s.push(Step::Wait(40));
                 s.push(report(format!("{key}: fired at a person")));
                 s.push(push(vec![Act::Reload]));
                 s.push(Step::Wait(10));
@@ -2347,14 +2462,19 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(Step::Wait(30));
                 s.push(Step::Shot(format!("fp_{key}_reloading")));
                 s.push(level(4.0));
-                s.push(Step::Wait(170));
-                s.push(report(format!("{key}: reloaded")));
+                // (The whole reload heard through for the pistol only: the rest are put down part way through.)
+                if key == "pistol" {
+                    s.push(Step::Wait(70));
+                    s.push(report(format!("{key}: reloaded")));
+                } else {
+                    s.push(report(format!("{key}: part of a reload")));
+                }
             }
             Kind::Blade | Kind::Blunt => {
                 s.push(stand(10.0, -4.0, [11.0, 1.4, -4.0], 1.65));
                 s.push(Step::Wait(4));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
-                s.push(Step::Wait(70));
+                s.push(Step::Wait(40));
                 s.push(report(format!("{key}: swung at the wall")));
                 at_person(&mut s);
                 s.push(Step::Wait(8));
@@ -2368,7 +2488,7 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(report(format!("{key}: {} at a person", if a.kind == Kind::Blade { "stab" } else { "blow" })));
                 if a.kind == Kind::Blade || a.down.is_some() {
                     s.push(push(vec![Act::Press(2), Act::Release(2)]));
-                    s.push(Step::Wait(75));
+                    s.push(Step::Wait(50));
                     s.push(report(format!("{key}: {} at a person", if a.kind == Kind::Blade { "cut" } else { "down" })));
                 }
             }
@@ -2403,13 +2523,13 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(stand(0.0, -4.0, [11.0, 1.4, -4.0], 1.65));
                 s.push(Step::Wait(4));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
-                s.push(Step::Wait(90));
+                s.push(Step::Wait(50));
                 s.push(report("throw: at the wall".into()));
                 s.push(push(vec![Act::Press(2), Act::Release(2)]));
                 at_person(&mut s);
                 s.push(Step::Wait(4));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
-                s.push(Step::Wait(90));
+                s.push(Step::Wait(50));
                 s.push(report("throw: the next thing, at a person".into()));
             }
             Kind::Grenade => {
@@ -2428,5 +2548,10 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
             Kind::Dress => {}
         }
     }
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        let dir = w.resource::<crate::scenario::Out>().0.clone();
+        crate::profiler::save_in(w, dir);
+    })));
+    s.push(Step::Wait(2));
     s
 }
