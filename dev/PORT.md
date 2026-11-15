@@ -44,6 +44,19 @@ port of the TS (same numbers, same comments explaining why) unless Bevy gives a 
 browser workarounds (canvas painting and texture uploads by tiles, getImageData, willReadFrequently, Firefox notes)
 are not ported: wounds, blood film and bruises are painted on the GPU (render-to-texture or compute) instead.
 
+## Performance (the user's word, 2026-11-15: optimise along the way where feasible)
+The Babylon game lagged; every job fixes its own part of that as it ports, without changing how anything looks or
+behaves, and measures it (scenario timings, the F2 profiler's rows). What the F2 logs and profiles found:
+- A shotgun blast was 110-360 ms of JS: each bone break rebuilt its meshes and made new vertex buffers (bones `_draw`),
+  `trace`/`surface` were recomputed for each of nine pellets though the body had not moved, every pellet hit built its
+  own audio chain. One redraw per person per frame, buffers updated in place, per-blast caches, merged sounds.
+- Painting wounds, film and bruises on the CPU and uploading them (170-220 ms stalls): on the GPU now.
+- The X-ray insides were ~224 submeshes a person (1055 draw calls): merge by material.
+- The first-person arms cost 29 ms a frame on a laptop (spikes to 394 ms).
+- Shader compiles on first use froze frames (the first head shot): precompile every pipeline variant at load (warm.rs).
+- Laptops were GPU-bound: keep the F3 presets and the adaptive scale honest; count draw calls by source in F2.
+Allocate nothing per frame in hot paths; per-person work in parallel where Bevy's systems allow it.
+
 ## Order of work
 1. **Foundation**: done (2026-11-15, commits on bevy-port up to "Bevy port, phase 1"). What it left and what the
    next jobs need to know is under "The foundation" below.
