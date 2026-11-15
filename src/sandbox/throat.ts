@@ -40,7 +40,7 @@ const EMPTIES = 1.2;        // seconds the stomach takes to empty in one vomit
 const ramp = (x: number, a: number, b: number) => Math.max(0, Math.min(1, (x - a) / (b - a)));
 
 // Scratch: one matrix and vectors, reused every frame.
-const _m = new M(), _n = new M(), _down = new V3(0, -1, 0);
+const _m = new M(), _n = new M(), _down = new V3(0, -1, 0), _side = new V3();
 const AXIS = { fwd: new V3(0, 0, 1), up: new V3(0, 1, 0), right: new V3(1, 0, 0) };
 
 type Outlet = { hit: any; at: BABYLON.Vector3; out: BABYLON.Vector3 };
@@ -144,7 +144,9 @@ export class Throat {
     _lungward(ml: number, side?: 'L' | 'R') {
         if (side) { this.lungs[side] += ml; return; }
         const chest = this.npc.ragdoll.byName.get('chest')?.node;
-        const tilt = chest ? -chest.getDirectionToRef(AXIS.right, this.right).y : 0;
+        // (getDirectionToRef returns the node, not the vector: reading .y off it made both lungs NaN for good.)
+        chest?.getDirectionToRef(AXIS.right, _side);
+        const tilt = chest ? -_side.y : 0;
         const r = Math.max(0.1, Math.min(0.9, 0.58 + 0.4 * tilt));
         this.lungs.R += ml * r;
         this.lungs.L += ml * (1 - r);
@@ -220,7 +222,9 @@ export class Throat {
         const wet = this.lungs.L + this.lungs.R;
         if (breathing && reflex > 0.3 && wet > 2 && (this.coughIn -= dt) < 0) {
             this.coughIn = 1.2 + 4 * Math.exp(-wet / 30) * (0.6 + Math.random() * 0.8);
-            this._cough(reflex);
+            // With the cord cut in the neck the belly's muscles that drive a cough are paralysed: what is left is the
+            // diaphragm's and the neck's, a weak one (how weak is an estimate).
+            this._cough(reflex * (v.paralysed.arms ? 0.4 : 1));
         }
         const s = this.spoiled;
         v.flooded.L = s.L;

@@ -280,16 +280,9 @@ function vessel(npc, hit, m) {
     const r = tube.points[hit.at].r;
     // A blade or a bullet that only grazed it opens it partly.
     const through = hit.miss < -r ? 1 : 0.5;
-    if (tube.kind === 'cord') {
-        const owner = tube.points[hit.at].owner.bone.name;
-        v.paralysed.legs = true;
-        if (owner === 'neck01') {
-            v.paralysed.arms = true;
-            v.breathing = false;
-            v.injure('Spinal cord severed at the neck: cannot breathe', 11);
-        } else v.injure('Spinal cord severed: legs paralysed', 9);
-        return;
-    }
+    // Cut at the vertebra nearest the cut: from C4 up the diaphragm stops with it, below that the person still breathes
+    // on the diaphragm (bones.cord).
+    if (tube.kind === 'cord') { npc.bones.cord(npc.bones.levelAt(hit.where), 'severed'); return; }
     const arterial = tube.kind === 'artery';
     const inTrunk = /aorta|vena cava|iliac|subclavian/.test(tube.name);
     const name = cap(tube.name);

@@ -772,16 +772,27 @@ export class Bones {
         if ((br.type === 'burst' && br.ratio > 1.3) || br.type === 'comminuted') this.cord(br.level);
     }
 
-    // The spinal cord crushed at `level` ('C4', 'T9'...): nothing below it moves, and from the fourth neck vertebra up
-    // the diaphragm stops (its nerve leaves at C3 to C5).
-    cord(level: string) {
+    // The level ('C6') of the vertebra nearest `point`: where a bullet cut the cord, say.
+    levelAt(point: BABYLON.Vector3) {
+        let best = 'T1', near = Infinity;
+        for (const part of this.npc.insides.parts) {
+            if (!/vertebra$|^atlas$|^axis$/.test(part.name)) continue;
+            const d = V3.Distance(V3.TransformCoordinates(V3.FromArray(part.source.centre), this.npc.restToWorld(part.owner)), point);
+            if (d < near) { near = d; best = levelOf(part.name); }
+        }
+        return best;
+    }
+
+    // The spinal cord crushed (or `how` else) at `level` ('C4', 'T9'...): nothing below it moves, and from the fourth
+    // neck vertebra up the diaphragm stops (its nerve leaves at C3 to C5).
+    cord(level: string, how = 'crushed') {
         const v = this.npc.vitals, n = Number(level.slice(1));
         v.paralysed.legs = true;
         if (level[0] === 'C') {
             v.paralysed.arms = true;
             if (n <= 4) v.breathing = false;
         }
-        v.injure(level[0] === 'C' && n <= 4 ? `Spinal cord crushed at ${level}: cannot breathe` : `Spinal cord crushed at ${level}: paralysed below it`, 10);
+        v.injure(level[0] === 'C' && n <= 4 ? `Spinal cord ${how} at ${level}: cannot breathe` : `Spinal cord ${how} at ${level}: paralysed below it`, 10);
     }
 
     // --- what a break looks like ---------------------------------------------------------------
