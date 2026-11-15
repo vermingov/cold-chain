@@ -116,7 +116,8 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         if (stopAt < Infinity) break;
         if (s.enter > t && !spend(Math.min(s.enter, limit), m.soft)) break;
         if (t >= limit) { stopAt = limit; break; }
-        const length = Math.min(s.leave, limit) - Math.max(s.enter, t);
+        // (All of the part the line crossed, though it began inside one already walked: the windpipe within a lung's span.)
+        const length = Math.max(0, Math.min(s.leave, limit) - s.enter);
         const kind = s.part.kind;
         if (kind === 'bone' || kind === 'skull' || kind === 'cartilage') {
             const at = energy, point = origin.add(dir.scale(Math.max(t, s.enter)));

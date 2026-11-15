@@ -98,8 +98,12 @@ export class Insides {
                 groups.get(owner).push(i);
             }
             for (const [owner, tris] of groups) {
+                const clusters = cluster(position, index, tris);
+                // (And the box round all of them: a line misses most parts, and is then tried against none of their boxes.)
+                const lo = new V3(Infinity, Infinity, Infinity), hi = new V3(-Infinity, -Infinity, -Infinity);
+                for (const c of clusters) { lo.minimizeInPlace(c.lo); hi.maximizeInPlace(c.hi); }
                 this.parts.push({ name: p.name, kind: p.kind, source: p, owner, half: groups.size > 1 ? (owner === byName[p.bone] ? 'upper' : 'lower') : null,
-                    clusters: cluster(position, index, tris) });
+                    clusters, lo, hi });
             }
         }
         this.tubes = data.header.tubes.map((t) => ({
@@ -138,6 +142,7 @@ export class Insides {
             const { inv } = transform(part.owner);
             V3.TransformCoordinatesToRef(origin, inv, o);
             V3.TransformNormalToRef(dir, inv, d);
+            if (!slab(o, d, part.lo, part.hi, far)) continue;
             const ts = [];
             for (const c of part.clusters) {
                 if (!slab(o, d, c.lo, c.hi, far)) continue;
@@ -163,10 +168,11 @@ export class Insides {
 
         const vessels = [];
         for (const tube of this.tubes) {
-            let best = null;
+            let best = null, b = null;
             for (let i = 0; i + 1 < tube.points.length; i++) {
-                const a = V3.TransformCoordinates(tube.points[i].rest, transform(tube.points[i].owner).m);
-                const b = V3.TransformCoordinates(tube.points[i + 1].rest, transform(tube.points[i + 1].owner).m);
+                // (Each point moved into the world once: it ends one piece of the tube and starts the next.)
+                const a = b ?? V3.TransformCoordinates(tube.points[i].rest, transform(tube.points[i].owner).m);
+                b = V3.TransformCoordinates(tube.points[i + 1].rest, transform(tube.points[i + 1].owner).m);
                 const { t, distance } = rayToSegment(origin, dir, a, b);
                 const miss = distance - tube.points[i].r - reach;
                 if (t > 0 && t < far && miss < 0 && (!best || miss < best.miss)) best = { tube, at: i, t, miss, where: V3.Lerp(a, b, 0.5) };
@@ -311,17 +317,18 @@ function cluster(position, index, tris) {
     return out;
 }
 
-// Whether the line meets the box before `far`.
+// Whether the line meets the box before `far`. (Each axis written out: it is asked of every box of every part for each
+// line, thousands of times a shot.)
 function slab(o, d, lo, hi, far) {
-    let t0 = 0, t1 = far;
-    for (const k of ['x', 'y', 'z']) {
-        const inv = 1 / d[k];
-        let a = (lo[k] - o[k]) * inv, b = (hi[k] - o[k]) * inv;
-        if (a > b) [a, b] = [b, a];
-        t0 = Math.max(t0, a); t1 = Math.min(t1, b);
-        if (t0 > t1) return false;
-    }
-    return true;
+    let t0 = 0, t1 = far, a = (lo.x - o.x) / d.x, b = (hi.x - o.x) / d.x;
+    t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+    if (t0 > t1) return false;
+    a = (lo.y - o.y) / d.y; b = (hi.y - o.y) / d.y;
+    t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+    if (t0 > t1) return false;
+    a = (lo.z - o.z) / d.z; b = (hi.z - o.z) / d.z;
+    t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+    return !(t0 > t1);
 }
 
 // Möller and Trumbore: how far along the line the triangle at `i` is met, or -1.

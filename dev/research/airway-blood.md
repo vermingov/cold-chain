@@ -78,7 +78,8 @@ a lung, *estimate*), most of the mouth thrown out as a spray, needs the person a
 ## 5. Retching and vomiting
 
 Blood is a gastric irritant and a large amount swallowed or bled into the stomach brings on vomiting; no source gives a
-volume (the game: nausea builds past 60 ml, *estimate*). Vomiting comes after a few retches (the belly's muscles and
+volume (the game: nausea builds past 30 ml, *estimate*; a pistol hole in the stomach bleeds some 70 ml into it before it
+clots, so past 60 ml it never made anyone sick). Vomiting comes after a few retches (the belly's muscles and
 the diaphragm squeeze against a shut glottis), then the stomach empties up the oesophagus and out of the mouth with
 force. Unconscious people still vomit or regurgitate, and what does not leave the mouth is aspirated: the classic
 death of the drunk lying on his back.

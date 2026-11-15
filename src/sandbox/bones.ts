@@ -33,7 +33,7 @@
 
 import * as BABYLON from '@babylonjs/core';
 import { midOf } from './ragdoll.ts';
-import { region, crack, bone, jag, type Cut, type Tri } from './shards.ts';
+import { region, crossed, crack, bone, jag, type Cut, type Tri } from './shards.ts';
 import { Teeth } from './teeth.ts';
 const V3 = BABYLON.Vector3, Q = BABYLON.Quaternion;
 const AXIS = BABYLON.PhysicsConstraintAxis, LIMIT = BABYLON.PhysicsConstraintAxisLimitMode;
@@ -177,7 +177,7 @@ const RAD = Math.PI / 180;
 export type Break = {
     part: string; key: string; side: 'L' | 'R' | ''; type: string; how: string; ratio: number; where: string; end: number; s: number; hit: number;
     at: BABYLON.Vector3; dir: BABYLON.Vector3; owner: any; open: boolean; seg: any; count: number; level: string; text: string;
-    place?: string; cut?: Cut; through?: boolean; wound?: any; out?: BABYLON.Vector3; tris?: (Tri & { bare?: boolean })[]; lines?: [Cut, (p: BABYLON.Vector3) => boolean][]; meshes?: BABYLON.Mesh[];
+    place?: string; cut?: Cut; through?: boolean; wound?: any; out?: BABYLON.Vector3; tris?: (Tri & { bare?: boolean })[]; lines?: [Cut, (p: BABYLON.Vector3) => boolean][];
 };
 
 // A bone's kind, from its name (tools/anatomy.py keeps the source's names): what BONES has it under.
@@ -232,6 +232,8 @@ export class Bones {
     declare _vy: Map<any, number>;
     declare _born: number;
     declare _observer: BABYLON.Observer<BABYLON.Scene>;
+    declare _drawer: BABYLON.Observer<BABYLON.Scene>;
+    declare _stale: boolean;
 
     constructor(npc) {
         this.npc = npc;
@@ -253,6 +255,8 @@ export class Bones {
         this._vy = new Map();
         this._born = npc.world.frame;
         this._observer = npc.world.scene.onAfterPhysicsObservable.add(() => this.update());
+        this._stale = false;
+        this._drawer = npc.world.scene.onBeforeRenderObservable.add(() => { if (this._stale) this._drawAll(); });
     }
 
     // --- strength --------------------------------------------------------------------------
@@ -822,17 +826,27 @@ export class Bones {
         }
         br.tris = tris;
         br.lines = [[look.cut, look.near], ...look.lines];
-        this._redraw(br);
+        this._stale = true;
     }
 
-    // A break's meshes made again from its triangles: the bone, any of it out through the skin, and the lines.
-    _redraw(br: Break) {
-        for (const m of br.meshes ?? []) { m.dispose(); this.meshes = this.meshes.filter((k) => k !== m); }
-        const npc = this.npc, still = br.tris.filter((t) => !t.move);
-        const bare = br.tris.filter((t) => t.move && t.bare);
-        br.meshes = [bone(npc, br.tris.filter((t) => !t.bare)), bone(npc, bare, (p) => clamp(1 + br.cut(p) / 0.015, 0, 1)),
-            ...br.lines.map(([cut, near]) => crack(npc, still, cut, near))].filter(Boolean);
-        this.meshes.push(...br.meshes);
+    // The person's breaks made again from their triangles, all together, three meshes for all of them: the bone in the
+    // x-ray, any of it out through the skin, and the lines. Once a frame, before it is drawn, when a break has changed
+    // (`_stale`): a shotgun's blast breaks a bone a pellet, and each break drawn as it came made two to four meshes of
+    // its own and sent them to the card.
+    _drawAll() {
+        this._stale = false;
+        for (const m of this.meshes) m.dispose();
+        const npc = this.npc, kept: Tri[] = [], bare: Tri[] = [], lines: Tri[] = [], red = new Map<Tri, Cut>();
+        for (const br of this.breaks) {
+            if (!br.tris) continue;
+            const still = br.tris.filter((t) => !t.move);
+            for (const t of br.tris) {
+                if (!t.bare) kept.push(t);
+                else if (t.move) { bare.push(t); red.set(t, br.cut); }
+            }
+            for (const [cut, near] of br.lines) for (const t of crossed(still, cut, near)) lines.push(t);
+        }
+        this.meshes = [bone(npc, kept), bone(npc, bare, (p, t) => clamp(1 + red.get(t)(p) / 0.015, 0, 1)), crack(npc, lines)].filter(Boolean);
     }
 
     // How a break looks, in the person's rest space: the bone it takes out of the x-ray (`take`), the surface it broke
@@ -1202,7 +1216,7 @@ export class Bones {
         const out = (p: BABYLON.Vector3) => { const k = br.cut(p); return k <= 0 && k > -length; };
         br.tris.push(...region(npc, br.part, out, null, () => '').map((t) => Object.assign(t, { owner: ax.near })));
         for (const t of br.tris) if (out(t.centre)) Object.assign(t, { move, turn, bare: true });
-        this._redraw(br);
+        this._stale = true;
         const v = npc.vitals;
         br.open = true;
         v.pain = Math.min(1, v.pain + 0.3);
@@ -1213,6 +1227,7 @@ export class Bones {
 
     dispose() {
         this.npc.world.scene.onAfterPhysicsObservable.remove(this._observer);
+        this.npc.world.scene.onBeforeRenderObservable.remove(this._drawer);
         for (const m of this.meshes) m.dispose();
         this.teeth.dispose();
     }

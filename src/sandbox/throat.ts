@@ -33,7 +33,7 @@ const SWALLOW = 20;         // ml in one swallow (a man's natural sip of water i
 const DRAWN = 0.2;          // 1/s: share of the blood pooled at the back of the throat each breath draws in, unconscious, at 14 a minute
 const SPOILS = 120;         // ml of blood in one lung's airways that take away two thirds of what it can do (airway-blood.md sec. 2)
 const CLEARS = 0.3;         // share of the blood in a lung's large airways one cough brings up
-const SICK = 60;            // ml in the stomach before it starts to turn it
+const SICK = 30;            // ml in the stomach before it starts to turn it (a pistol hole in it bleeds some 70 ml into it before clotting)
 const HEAVE = 0.7;          // seconds a retch takes
 const EMPTIES = 1.2;        // seconds the stomach takes to empty in one vomit
 

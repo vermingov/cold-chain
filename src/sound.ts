@@ -109,6 +109,7 @@ export class Sound {
     declare placed: Set<Place>;
     declare ear: number[] | null;
     declare screened: ((a: number[], b: number[]) => boolean) | null;
+    declare together: Map<string, { at: number[]; power: number; loud: (gain: number) => void; playing: any }> | null;
 
     constructor() {
         this.context = new AudioContext({ latencyHint: 'interactive' });
@@ -135,6 +136,7 @@ export class Sound {
         this.placed = new Set();
         this.ear = null;
         this.screened = null;       // whether something solid stands between two places (the map says)
+        this.together = null;       // what has been asked for this moment, by name (shot)
         this.limiter.connect(context.destination);
         this.rooms = new Map();
         this.room('none');
@@ -252,7 +254,16 @@ export class Sound {
     // With `most` (seconds) it is one strike instead (`hits`), cut off at most that long after it: a footstep.
     // With `at` ([x, y, z]) it is heard from there; with `follow` (a function giving [x, y, z]) from wherever that is
     // each frame until it ends: a voice from a head that falls or is dragged, not from where it was when it began.
+    // The same recording asked for again in the same moment from within a metre of where it is already sounding is that
+    // one sound made louder (as loud as the two together, by their power), not another: a shotgun's nine pellets into one
+    // body are one blow to the ear, and each sound with a place is a chain of nodes and a panner of its own.
     shot(name, { gain = 1, rate = 1, most = 0, at = null, follow = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number } {
+        const same = at && !follow && !most ? this.together?.get(name) : null;
+        if (same && Math.hypot(same.at[0] - at[0], same.at[1] - at[1], same.at[2] - at[2]) < 1) {
+            same.power += gain * gain;
+            same.loud(Math.sqrt(same.power));
+            return same.playing;
+        }
         const takes = this.takes.get(name), take = takes[Math.floor(Math.random() * takes.length)];
         const place = at || follow ? this.place(follow ? follow() : at, follow) : null, into = place ? place.input : this.out;
         if (most && take.hits.length) {
@@ -266,9 +277,15 @@ export class Sound {
         // It rings on after it has gone quiet, as far as the next one or the end.
         const until = Math.min(to + BURST.rings, which + 1 < take.bursts.length ? take.bursts[which + 1][0] : take.buffer.duration);
         const r = rate * (0.96 + Math.random() * 0.08);
-        this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, place);
+        const loud = this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, place);
         // What is playing, for whoever wants to follow it (a face mouthing its own voice).
-        return { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from };
+        const playing = { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from };
+        if (at && !follow) {
+            // (The moment is this task: what it asks for is forgotten once it is over.)
+            if (!this.together) { this.together = new Map(); queueMicrotask(() => { this.together = null; }); }
+            if (!this.together.has(name)) this.together.set(name, { at, power: gain * gain, loud, playing });
+        }
+        return playing;
     }
 
     // A stream no longer wanted: it falls silent and is no longer kept going.
@@ -291,16 +308,22 @@ export class Sound {
         source.buffer = buffer;
         source.playbackRate.value = rate;
         const lasts = length / rate;
-        level.gain.setValueAtTime(0, when);
-        level.gain.linearRampToValueAtTime(gain, when + fadeIn);
-        level.gain.setValueAtTime(gain, when + Math.max(fadeIn, lasts - fadeOut));
-        level.gain.linearRampToValueAtTime(0, when + lasts);
+        // (Returned: how to make it as loud as `to` instead, from the start, before it has begun.)
+        const loud = (to: number) => {
+            level.gain.cancelScheduledValues(0);
+            level.gain.setValueAtTime(0, when);
+            level.gain.linearRampToValueAtTime(to, when + fadeIn);
+            level.gain.setValueAtTime(to, when + Math.max(fadeIn, lasts - fadeOut));
+            level.gain.linearRampToValueAtTime(0, when + lasts);
+        };
+        loud(gain);
         source.connect(level).connect(into);
         source.start(when, from, length);
         source.onended = () => {
             level.disconnect();
             if (owned) this.release(owned);
         };
+        return loud;
     }
 }
 

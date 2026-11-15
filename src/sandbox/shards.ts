@@ -66,30 +66,34 @@ function split(p: BABYLON.Vector3[], n: BABYLON.Vector3[], l: string[], owner, l
     split([mp, p[b], p[c]], [mn, n[b], n[c]], [ml, l[b], l[c]], owner, label, out);
 }
 
-// The triangles `cut` passes through, `near` enough: the line a break makes on the bone, dark as on a film.
-export function crack(npc, tris: Tri[], cut: Cut, near: (p: BABYLON.Vector3) => boolean = () => true) {
-    const crossed = tris.filter((t) => {
+// The triangles `cut` passes through, `near` enough: the line a break makes on the bone.
+export function crossed(tris: Tri[], cut: Cut, near: (p: BABYLON.Vector3) => boolean = () => true) {
+    return tris.filter((t) => {
         if (!near(t.centre)) return false;
         const k = t.p.map(cut);
         return Math.min(...k) <= 0 && Math.max(...k) >= 0;
     });
-    return crossed.length ? sheet(npc, 'fracture_line', crossed, lineMaterial(npc.world.scene), { lift: 0.0007 }) : null;
+}
+
+// Those triangles drawn dark, as the line is on a film.
+export function crack(npc, tris: Tri[]) {
+    return tris.length ? sheet(npc, 'fracture_line', tris, lineMaterial(npc.world.scene), { lift: 0.0007 }) : null;
 }
 
 // Triangles drawn as bone, each carried by its own bone and put where its `move` (and its normals where its `turn`)
 // sends it: in the x-ray as hurt bone, or with `bare` outside it, always seen, as wet bone that is red where it broke
 // (`bare(p)` 1 there, down to 0 away from it).
-export function bone(npc, tris: Tri[], bare: ((p: BABYLON.Vector3) => number) | null = null) {
+export function bone(npc, tris: Tri[], bare: ((p: BABYLON.Vector3, t: Tri) => number) | null = null) {
     if (!tris.length) return null;
     if (!bare) return sheet(npc, 'fracture_bone', tris, npc.insides.material('bone', true));
     // Bone under a film of blood, going to raw red marrow and clot at the break.
-    const colour = (p) => { const red = bare(p); return [0.72 - 0.4 * red, 0.6 - 0.56 * red, 0.5 - 0.47 * red, 1]; };
+    const colour = (p, t) => { const red = bare(p, t); return [0.72 - 0.4 * red, 0.6 - 0.56 * red, 0.5 - 0.47 * red, 1]; };
     return sheet(npc, 'bone_out', tris, bareMaterial(npc.world.scene), { colour, xray: false });
 }
 
 // Triangles as a mesh of their own, skinned as the x-ray is (each wholly to its triangle's bone) and lifted `lift`
 // metres along their normals; in the x-ray (shown and hidden with it), or always.
-function sheet(npc, name: string, tris: Tri[], material: BABYLON.Material, { lift = 0, colour = null, xray = true }: { lift?: number; colour?: (p) => number[]; xray?: boolean } = {}) {
+function sheet(npc, name: string, tris: Tri[], material: BABYLON.Material, { lift = 0, colour = null, xray = true }: { lift?: number; colour?: (p, t: Tri) => number[]; xray?: boolean } = {}) {
     const n = tris.length * 3;
     const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), bones = new Float32Array(n * 4), weights = new Float32Array(n * 4);
     const colours = colour ? new Float32Array(n * 4) : null;
@@ -104,7 +108,7 @@ function sheet(npc, name: string, tris: Tri[], material: BABYLON.Material, { lif
             nor[o * 3] = facing.x; nor[o * 3 + 1] = facing.y; nor[o * 3 + 2] = facing.z;
             bones[o * 4] = t.owner.index;
             weights[o * 4] = 1;
-            if (colours) colours.set(colour(t.p[j]), o * 4);
+            if (colours) colours.set(colour(t.p[j], t), o * 4);
         }
     });
     const { person, insides } = npc;

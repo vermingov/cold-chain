@@ -54,6 +54,8 @@ export class Npc {
     declare _skinnedAt: number;
     declare _boxed: Float32Array | null;
     declare _boxedAt: number;
+    declare _parted: Map<any, number[]>;
+    declare _partedAt: number;
     declare _restPos: Float32Array;
     declare _uv: Float32Array;
     declare down: boolean;
@@ -117,6 +119,8 @@ export class Npc {
         this._skinnedAt = -1;
         this._boxed = null;
         this._boxedAt = -1;
+        this._parted = new Map();
+        this._partedAt = -1;
         person.apply(P.stand(this.clock));
         this.ragdoll = new Ragdoll(person, { mass, bit });
         this.behaviour = new Behaviour(this);
@@ -166,7 +170,7 @@ export class Npc {
             // (The skin under the clothes is not drawn but is still where the body begins.)
             const kind = p.kind === 'skin' ? 'skin' : p.kind === 'cloth' ? 'cloth' : eyes && p.kind === 'eyes' ? 'eye' : null;
             if (!kind) continue;
-            if (!slabFor(p, skinned, o, d, far * scale)) continue;
+            if (!slabFor(this._partBox(p, skinned), o, d, far * scale)) continue;
             const end = p.indexStart + p.indexCount;
             for (let start = p.indexStart; start < end;) {
                 // Only the runs of triangles whose box the line crosses: the same crossings as trying every triangle.
@@ -227,6 +231,21 @@ export class Npc {
         }
         this._boxedAt = this._skinnedAt;
         return b;
+    }
+
+    // The box round part `p`'s skinned corners (every seventh: near enough, with slabFor's margin), made once a frame
+    // like the runs' boxes: each of those sixty lines round an exit's lips made every part's box again.
+    _partBox(p, skinned: Float32Array) {
+        if (this._partedAt !== this._skinnedAt) { this._parted.clear(); this._partedAt = this._skinnedAt; }
+        let box = this._parted.get(p);
+        if (!box) {
+            box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+            for (let v = p.vertexStart; v < p.vertexStart + p.vertexCount; v += 7) {
+                for (let k = 0; k < 3; k++) { const x = skinned[v * 3 + k]; if (x < box[k]) box[k] = x; if (x > box[k + 3]) box[k + 3] = x; }
+            }
+            this._parted.set(p, box);
+        }
+        return box;
     }
 
     _describe(h, origin, dir, index, skinned) {
@@ -568,8 +587,8 @@ export class Npc {
     }
 }
 
-// Whether the line meets part `p`'s corners' box at all (skinned corners, so the box is made fresh: cheap next to the
-// triangles it saves).
+// Whether the line meets a part's box (_partBox, its skinned corners this frame) at all: cheap next to the triangles it
+// saves.
 const RUN = 96;     // indices: 32 triangles, which lie together in the mesh (MakeHuman's faces are in order over the body)
 
 // Whether the line o + t d, 0 < t < far, meets the box at `k` in `b` (a hair larger, for rounding).
@@ -588,16 +607,12 @@ function boxCrossed(b: Float32Array, k: number, o, d, far: number) {
     return true;
 }
 
-function slabFor(p, skinned, o, d, far) {
-    let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-    for (let v = p.vertexStart; v < p.vertexStart + p.vertexCount; v += 7) {
-        for (let k = 0; k < 3; k++) { const x = skinned[v * 3 + k]; if (x < lo[k]) lo[k] = x; if (x > hi[k]) hi[k] = x; }
-    }
+function slabFor(box: number[], o, d, far) {
     let t0 = 0, t1 = far;
     for (let k = 0; k < 3; k++) {
         const dk = [d.x, d.y, d.z][k], ok = [o.x, o.y, o.z][k];
         const inv = 1 / dk;
-        let a = (lo[k] - 0.05 - ok) * inv, b = (hi[k] + 0.05 - ok) * inv;
+        let a = (box[k] - 0.05 - ok) * inv, b = (box[k + 3] + 0.05 - ok) * inv;
         if (a > b) [a, b] = [b, a];
         t0 = Math.max(t0, a); t1 = Math.min(t1, b);
         if (t0 > t1) return false;
