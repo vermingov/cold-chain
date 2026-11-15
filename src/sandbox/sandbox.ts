@@ -77,6 +77,7 @@ export async function openSandbox(engine, canvas, hud) {
         ground,     // the height of what is under (x, z), no higher than `below` (map.ts)
         shadows: { addShadowCaster: (m) => lights.shadows.forEach((s) => s.addShadowCaster(m)) },
         sound: null,
+        note: (what: string) => {},     // what the player did, for the F2 profiler's log (profiler.ts puts its own here)
     };
     blood.bodies = () => world.npcs;
     const thuds = new Thuds(world, physics.getPhysicsPlugin() as unknown as BABYLON.HavokPlugin);
@@ -94,7 +95,7 @@ export async function openSandbox(engine, canvas, hud) {
         thuds.listen(npc);
         npc.label = `${CALLED[body]} (${number})`;
         const injure = npc.vitals.injure.bind(npc.vitals);
-        npc.vitals.injure = (text, severity) => { lastHurt = npc; injure(text, severity); };
+        npc.vitals.injure = (text, severity) => { lastHurt = npc; world.note(`${npc.label}: ${text}`); injure(text, severity); };
         npc.insides.mesh.setEnabled(seeing);
         world.npcs.push(npc);
         return npc;
@@ -138,13 +139,16 @@ export async function openSandbox(engine, canvas, hud) {
             const at = up ? pick.pickedPoint : camera.globalPosition.add(camera.getDirection(V3.Forward()).scale(2));
             if (!up) at.y = ground(at.x, at.z, camera.globalPosition.y);
             const yaw = Math.atan2(camera.globalPosition.x - at.x, camera.globalPosition.z - at.z);
+            world.note('a person spawned (N)');
             await spawn(BODIES[made % BODIES.length], at, yaw);
         }
         if (e.code === 'KeyX') {
             seeing = !seeing;
+            world.note(`X-ray ${seeing ? 'on' : 'off'} (X)`);
             for (const npc of world.npcs) see(npc, seeing);
         }
         if (e.code === 'KeyK') {
+            world.note('room reset (K)');
             weapons._letGo();  // a hand on someone or their bowel would pull on a disposed body next frame
             for (const npc of world.npcs) npc.dispose();
             world.npcs.length = 0;

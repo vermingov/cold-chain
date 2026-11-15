@@ -478,6 +478,7 @@ export class Weapons {
     _press(button) {
         const arm = this.arm;
         if (this.busy > 0 || this.reloading > 0) return;
+        if (arm.kind !== 'gun') this.world.note(`${arm.key}, ${button === 0 ? 'left' : 'right'} button`);
         if (arm.kind === 'gun' && button === 0) this._fire();
         else if (arm.kind === 'blade') this._swing(button === 0 ? 'stab' : 'cut');
         else if (arm.kind === 'blunt' && button === 0) this._swing('blow');
@@ -528,6 +529,7 @@ export class Weapons {
     _fire() {
         const { key, gun } = this.arm;
         if (this.ammo.get(key) <= 0) { this._reload(); return; }
+        this.world.note(`shot ${key}`);
         this.ammo.set(key, this.ammo.get(key) - 1);
         this.busy = gun.every;
         this.recoil = 1;
@@ -910,6 +912,7 @@ export class Weapons {
     _explode(g) {
         const { scene, sound, player } = this.world;
         const at = g.ball.position.clone();
+        this.world.note('grenade went off');
         g.agg.dispose();
         g.node.dispose();  // its clones wear the grenade model's own materials, still drawn on the wall and in the hand
         g.ball.dispose();
