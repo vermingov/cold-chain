@@ -124,6 +124,9 @@ fn met(
             } else {
                 "limb-slap"
             };
+            if std::env::var("THUDS").is_ok() {
+                info!("thud {} {} against {:?} speed {speed:.2} impulse {impulse:.2}", rd.segs[k].def.name, take, other.map(|o| people.get(o.0).unwrap().1.segs[o.1].def.name.clone()));
+            }
             heard.write(Heard { name: take, at: point, gain: if trunk { loud } else { loud * 0.8 } });
             // Into something standing, hard: the wall gives nothing and the part takes it as a blow, at the speed it was
             // going toward the wall before the step, broad and flat over the whole part ('wall'). (From below is a

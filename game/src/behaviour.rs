@@ -469,7 +469,6 @@ impl Behaviour {
             let (hip, knee, ankle) = (b("upperleg01"), b("lowerleg01"), b("foot"));
             let mut leg = Leg { a: hip.distance(knee), b: knee.distance(ankle), out: if s == 'L' { -1.0 } else { 1.0 }, ..default() };
             [leg.flex, leg.abduct, leg.knee, leg.shin] = leg_angles(ankle - hip, &leg);
-            info!("leg {s}: a {} b {} rest {} knee {} hip {} ankle {}", leg.a, leg.b, (ankle - hip).length(), leg.knee / RAD, hip, ankle);
             self.leg[i(s)] = leg;
         }
         let foot = rd.by_name("footL");
@@ -818,7 +817,7 @@ impl Behaviour {
         let bent = face * pitch(get(&pose, "spineFlex") * RAD);
         let kp = 30.0 * (1.0 - 0.3 * daze);
         let kd = 9.0 * (1.0 - 0.3 * daze) * if self.settle > 0.0 { 2.0 } else { 1.0 };
-        if !down.is_empty() && std::env::var("NOSWAY").is_err() {
+        if !down.is_empty() {
             let floor = self.floor;
             let down = down.clone();
             let hull = hull.clone();
@@ -885,11 +884,6 @@ impl Behaviour {
                 st.closing = true;
                 self.steps -= 1;
             }
-        }
-        if (self.clock * 4.0).floor() != ((self.clock - dt) * 4.0).floor() {
-            let fl = rd.by_name("footL");
-            let fr = rd.by_name("footR");
-            info!("stand {:.2}: com {:.3?} vel {:.3?} centre {:.3?} past {:.3} heading {:.3} pelvis {:.3} | L {:.3?} {:.3} | R {:.3?} {:.3}", self.t, self.com, self.vel, centre, past, self.heading, heading_of(rd.segs[pelvis].now.rotation), rd.segs[fl].now.translation, heading_of(rd.segs[fl].now.rotation), rd.segs[fr].now.translation, heading_of(rd.segs[fr].now.rotation));
         }
         if self.step.is_some() {
             self.stepping(dt, rd, &mut pose, f, xi, r);

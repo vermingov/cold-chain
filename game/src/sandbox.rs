@@ -84,43 +84,35 @@ fn line_up(mut spawner: Spawner) {
     spawner.line_up();
 }
 
-// N: another person standing where the eye is looking (on the floor, a ledge, the ramp). K: the room cleared and new
-// people lined up. (X, their insides, is anatomy.rs's.)
-fn keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    players: Query<&Player>,
-    context: ReadRapierContext,
-    map: Res<Map>,
-    people: Query<(Entity, Option<&Ragdoll>), With<Person>>,
-    mut spawner: Spawner,
-) {
-    if keys.just_pressed(KeyCode::KeyN) {
-        let Some(eye) = players.iter().next().map(|p| p.eye()) else { return };
-        let (from, ahead) = (eye.translation, eye.forward().as_vec3());
-        // (What the hall is built of only: the people and loose things are not stood on.)
-        let solid = QueryFilter::new().groups(CollisionGroups::new(Group::ALL, crate::map::WORLD));
-        let hit = context.single().ok().and_then(|c| c.cast_ray_and_get_normal(from, ahead, 30.0, true, solid));
-        let at = match hit {
-            Some((_, h)) if h.normal.y > 0.7 => h.point,
-            _ => {
-                let mut at = from + ahead * 2.0;
-                at.y = map.ground(at.x, at.z, from.y);
-                at
-            }
-        };
-        // Facing the eye (the TS's yaw: its z is ours turned round).
-        let yaw = (from.x - at.x).atan2(-(from.z - at.z));
-        let body = BODIES[spawner.made.0 as usize % BODIES.len()];
-        spawner.spawn(body, at, yaw);
-    }
-    if keys.just_pressed(KeyCode::KeyK) {
-        clear(&mut spawner.commands, &people);
-        spawner.line_up();
-    }
+// N: another person standing where the eye is looking (on the floor, a ledge, the ramp).
+pub fn spawn_looked_at(players: Query<&Player>, context: ReadRapierContext, map: Res<Map>, mut spawner: Spawner) {
+    let Some(eye) = players.iter().next().map(|p| p.eye()) else { return };
+    let (from, ahead) = (eye.translation, eye.forward().as_vec3());
+    // (What the hall is built of only: the people and loose things are not stood on.)
+    let solid = QueryFilter::new().groups(CollisionGroups::new(Group::ALL, crate::map::WORLD));
+    let hit = context.single().ok().and_then(|c| c.cast_ray_and_get_normal(from, ahead, 30.0, true, solid));
+    let at = match hit {
+        Some((_, h)) if h.normal.y > 0.7 => h.point,
+        _ => {
+            let mut at = from + ahead * 2.0;
+            at.y = map.ground(at.x, at.z, from.y);
+            at
+        }
+    };
+    // Facing the eye (the TS's yaw: its z is ours turned round).
+    let yaw = (from.x - at.x).atan2(-(from.z - at.z));
+    let body = BODIES[spawner.made.0 as usize % BODIES.len()];
+    spawner.spawn(body, at, yaw);
+}
+
+// K: the room cleared and new people lined up.
+pub fn reset(people: Query<(Entity, Option<&Ragdoll>), With<Person>>, mut spawner: Spawner) {
+    clear(&mut spawner.commands, &people);
+    spawner.line_up();
 }
 
 // Everyone gone, their bodies and joints with them.
-pub fn clear(commands: &mut Commands, people: &Query<(Entity, Option<&Ragdoll>), With<Person>>) {
+fn clear(commands: &mut Commands, people: &Query<(Entity, Option<&Ragdoll>), With<Person>>) {
     for (e, rd) in people {
         for part in rd.into_iter().flat_map(|rd| rd.entities()) {
             commands.entity(part).despawn();
@@ -130,5 +122,8 @@ pub fn clear(commands: &mut Commands, people: &Query<(Entity, Option<&Ragdoll>),
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Made>().add_systems(Startup, line_up).add_systems(Update, keys);
+    use bevy::input::common_conditions::input_just_pressed;
+    app.init_resource::<Made>()
+        .add_systems(Startup, line_up)
+        .add_systems(Update, (spawn_looked_at.run_if(input_just_pressed(KeyCode::KeyN)), reset.run_if(input_just_pressed(KeyCode::KeyK))));
 }

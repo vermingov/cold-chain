@@ -1258,20 +1258,21 @@ pub fn send(mut ragdolls: Query<&mut Ragdoll>, mut joints: Query<&mut ImpulseJoi
     }
 }
 
-// Rapier's solver for bodies held together by twenty joints each, standing on two feet: its joints warm-started from the
-// last step's impulses like its contacts (off by default; without it, standing, a shin's twist went 6 degrees past its
-// 5-degree limit in a second under the foot's grip on the floor and the feet turned out and slid), and more passes
-// than its four.
+// Rapier's solver for bodies held together by twenty joints each, standing on two feet. Havok solved a ragdoll's chain
+// of joints stiffly; Rapier's iterative solver, at its four passes and with joints started from nothing each step,
+// did not: standing, the knee sagged 8 degrees past its muscle's aim and the ankle 4, a shin's twist went 6 degrees past
+// its 5-degree limit in a second, and the legs, straightening against the sag, pushed the feet back along the floor at
+// 2 to 10 cm/s until the person stepped and walked off. Its joints are warm-started from the last step's impulses like
+// its contacts (off by default), and given sixteen passes: at eight the feet still crept 2.5 cm/s, at twelve the knee
+// still sagged 3 degrees, at sixteen it is within 2 and four people stood ten seconds within 2.5 to 10 cm of where
+// they were made (stand scenario).
 fn solver(mut contexts: Query<&mut RapierContextSimulation, Added<RapierContextSimulation>>) {
     for mut c in &mut contexts {
         c.integration_parameters.warmstart_joints = true;
-        c.integration_parameters.num_solver_iterations = std::env::var("PASSES").ok().and_then(|p| p.parse().ok()).unwrap_or(SOLVER_PASSES);
-        if std::env::var("COULOMB").is_ok() {
-            c.integration_parameters.friction_model = bevy_rapier3d::rapier::dynamics::FrictionModel::Coulomb;
-        }
+        c.integration_parameters.num_solver_iterations = SOLVER_PASSES;
     }
 }
-const SOLVER_PASSES: usize = 8;
+const SOLVER_PASSES: usize = 16;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, solver).configure_sets(FixedUpdate, (Steps::Push, Steps::Give).chain().before(PhysicsSet::SyncBackend))

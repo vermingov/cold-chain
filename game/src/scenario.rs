@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use serde_json::{json, Value};
@@ -324,10 +325,18 @@ struct Jitter {
     // Per person (by entity): each segment's last two angular velocities, and the seconds measured.
     last: std::collections::HashMap<Entity, Vec<(Option<Vec3>, Option<Vec3>)>>,
     bins: std::collections::BTreeMap<(Entity, u32), Acc>,
+    // Rapier's own time for its steps (ms), and how many.
+    step_ms: f64,
+    steps: u32,
 }
 
-fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Query<(Entity, &Ragdoll, &Behaviour)>) {
+fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Query<(Entity, &Ragdoll, &Behaviour)>,
+          sims: Query<&bevy_rapier3d::prelude::RapierContextSimulation>) {
     let Some(started) = runner.started else { return };
+    for sim in &sims {
+        j.step_ms += sim.step_stats().step_time_ms;
+        j.steps += 1;
+    }
     let second = ((runner.frame - started) / 60) as u32;
     let _ = time;
     for (e, rd, b) in &people {
@@ -413,7 +422,8 @@ fn timeline(w: &mut World) {
         Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "hf": (mean * 100.0).round() / 100.0 }))
     }).collect();
     let at: Vec<Value> = people.iter().map(|e| json!(chests.get(e).map(|c| c.to_array()))).collect();
-    log(w, json!({ "event": "timeline", "seconds": rows, "chests": at }));
+    let ms = j.step_ms / j.steps.max(1) as f64;
+    log(w, json!({ "event": "timeline", "seconds": rows, "chests": at, "physics_ms_per_step": (ms * 100.0).round() / 100.0 }));
 }
 
 // What is heard (thuds.rs), into the log while sound.rs is not there to play it.
@@ -485,7 +495,7 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(situation("standing", |_, t, st, _| t >= 1 && st == Doing::Stand));
             s.push(Step::Do(Box::new(drift)));
         }
-        // Shoved hard from behind while out cold: falling, then lying still.
+        // Knocked out and shoved hard backwards (north, away from the player): falling, then lying still.
         "fall" => {
             s.push(Step::Wait(60));
             s.push(each(None, |rd, b, rng| {
@@ -501,13 +511,13 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.extend(view("fall_still", 0.0, -1.0, [0.0, 0.2, 3.0], 1.65));
             s.push(situation("lying still after the fall", |_, t, st, _| t >= 6 && st == Doing::Down));
         }
-        // Shoved over, awake: down, then up again (onto all fours, a knee, a foot, up).
+        // Shoved over from behind, awake: down on the front, then up again (onto all fours, a knee, a foot, up).
         "getup" => {
             s.push(Step::Wait(60));
             s.push(each(None, |rd, b, rng| {
                 let chest = rd.by_name("chest");
                 let at = rd.middle(chest);
-                rd.push(chest, Vec3::new(0.0, 0.0, -60.0), at);
+                rd.push(chest, Vec3::new(0.0, 0.0, 60.0), at);
                 b.knock_down(rng);
             }));
             film(&mut s, "getup", 2, 16, 45, -2.6, 1.8, 1.5);
@@ -597,6 +607,23 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.extend(view("dead_still", 0.0, -1.0, [0.0, 0.2, 3.0], 1.65));
             s.push(situation("dead lying still", |_, t, _, _| t >= 4));
         }
+        // K and N: the room cleared and lined up again (every body and joint of the old people gone), then two more made
+        // where the eye looks, one on the floor ahead and one up on the ledge.
+        "keys" => {
+            s.push(Step::Wait(30));
+            s.push(Step::Do(Box::new(count)));
+            s.push(Step::Do(Box::new(|w: &mut World| { let _ = w.run_system_once(crate::sandbox::reset); })));
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(count)));
+            s.extend(view("keys_reset", 0.0, -2.0, [0.0, 1.0, 2.2], 1.65));
+            s.extend(view("keys_aim_floor", 0.0, -3.0, [-2.0, 0.0, -0.5], 1.65));
+            s.push(Step::Do(Box::new(|w: &mut World| { let _ = w.run_system_once(crate::sandbox::spawn_looked_at); })));
+            s.extend(view("keys_aim_ledge", 5.0, -2.0, [9.0, 1.0, -2.0], 1.65));
+            s.push(Step::Do(Box::new(|w: &mut World| { let _ = w.run_system_once(crate::sandbox::spawn_looked_at); })));
+            s.push(Step::Wait(120));
+            s.push(Step::Do(Box::new(count)));
+            s.extend(view("keys_made", 3.0, -5.0, [3.0, 0.8, -1.0], 1.65));
+        }
         // Every joint of the first person: where it is, where its muscle aims, its range, standing a moment.
         "joints" => {
             for _ in 0..4 {
@@ -641,4 +668,13 @@ fn joints(w: &mut World) {
         json!({ "seg": s.def.name, "now": deg(rd.angles(k)), "aim": deg(t), "f": f.round(), "lo": deg(s.lo), "hi": deg(s.hi), "y": (s.now.translation.y * 100.0).round() / 100.0 })
     }).collect();
     log(w, json!({ "event": "joints", "rows": rows }));
+}
+
+// How many people there are, and how many rigid bodies and joints in all, into the log.
+fn count(w: &mut World) {
+    let people = w.query::<&Person>().iter(w).count();
+    let bodies = w.query::<&bevy_rapier3d::prelude::RigidBody>().iter(w).count();
+    let joints = w.query::<&bevy_rapier3d::prelude::ImpulseJoint>().iter(w).count();
+    let at: Vec<Value> = w.query::<&Ragdoll>().iter(w).map(|rd| json!(rd.centre().to_array())).collect();
+    log(w, json!({ "event": "count", "people": people, "bodies": bodies, "joints": joints, "at": at }));
 }
