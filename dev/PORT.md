@@ -267,3 +267,37 @@ bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the break
 `stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
 `jitter` of its situation as the TS's jitter.mjs measured it, and Rapier's time a step), `keys` (K and N), `joints` (every
 joint's angles and aims, standing).
+
+## Blood (phase 3, branch port/blood)
+
+blood.rs (drops, streams, marks on the room), floor.rs (the floor's pools), soak.rs (the clothes' stains) and fluid.rs
+(blood's numbers; fluid.wesl its colour, `blood_over`, and the noises the TS's shaders used) are the TS's blood.ts,
+floor.ts, soak.ts and fluid.ts, number for number. The floor's flow and the clothes' wicking run on the GPU as compute
+shaders (floor.wesl, soak.wesl) on buffers the materials' textures are written from; the CPU keeps only what it must ask
+(a copy of the floor's depths and each person's cloth, brought back a few times a second by Bevy's readback).
+
+### What it takes from medicine
+`blood::take` (First, before `npc::forget`, so blood from anything pushed during the last frame, a scenario's `Do` step
+included, is taken): `Spray`, `Stream` (keyed by person and bleed, each bleed keeping its own aim off the skin's normal,
+npc.ts `_aims`; throat.rs's vomit is `bleed: None`), `Soak` (into soak.rs), `Spatter` (npc.ts `spatter`, ported here).
+Not taken here: `Welling`, `Runs`, `Blot` (skin's: film.rs, runs.rs), `Bled`, `Edge`, `Charge` (cut's).
+
+### For the skin (film.rs, runs.rs): the hand-over
+- Drops that land on bare skin are pushed onto the person's `Hurt::happened` as medicine's own `Blot { hit, r, wet }` and
+  (over 0.008 ml) `Runs { hit, ml, from: None }`, in Update (`blood::Bleeding`): read them after it (PostUpdate) as you
+  read medicine's. Bodies lying in blood push `Blot` the same way. Drops on clothes go into soak.rs; nothing for you.
+- What runs off the skin comes back through the `Blood` resource: `blood.drip(at, ml, fluid::across(ml))` (a drop let go
+  at a chin, a fingertip, the low end of a run), `blood.run(at, litres_per_s, dt)` (a flow with nowhere to go: gathers into
+  drips, or into the floor below 4 cm), `blood.fill(at, litres)` (straight into the pool under `at`), and
+  `blood.bead(at, normal, along, r, h, hang)` once a frame for each bead drawn running on skin (runs.ts's beads were drawn
+  by blood.ts; at most 400).
+- A run reaching clothes: `soak.add(rest, ml) -> bool` on the person's `soak::Soak` component (false: no cloth there);
+  `soak.fullness(rest)` (0 dry, 1 full, more standing; marks.ts asked it).
+- The clothes' material is soak.rs's: every cloth part of every person is given its own
+  `ExtendedMaterial<StandardMaterial, soak::Cloth>` (cloth.wesl, with its own vertex stage passing the rest position on)
+  the frame after they are made. Holes in the clothes (hider.ts) belong in that material too: extend `Cloth` and
+  cloth.wesl rather than giving the clothes a second material.
+
+### For cut (dismember.rs, viscera.rs)
+dismember.ts sprayed from a fresh stump (`blood.spray`) and ran from a stump's end (`blood.run`); viscera.ts dripped
+(`blood.drip`): the same calls on the `Blood` resource. Rapier bodies are not used: the drops are blood.rs's own.

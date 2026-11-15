@@ -951,7 +951,7 @@ pub fn renew(world: &mut World, who: Entity, clock: f32) {
 }
 
 // What hurt did is there for the frame it happened in, for whatever draws, plays or moves it to take; then it goes.
-fn forget(mut people: Query<&mut Hurt>) {
+pub fn forget(mut people: Query<&mut Hurt>) {
     for mut h in &mut people {
         h.happened.clear();
     }

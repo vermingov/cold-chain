@@ -159,6 +159,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
         "wounds" => s = wounds(),
+        "blood" => s = crate::blood::scenario(),
         _ => return body(name),
     }
     Some(s)

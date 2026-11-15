@@ -11,6 +11,7 @@
 mod anatomy;
 mod arsenal;
 mod behaviour;
+mod blood;
 mod bones;
 mod bruise;
 mod dressing;
@@ -31,6 +32,7 @@ mod ragdoll;
 mod rng;
 mod sandbox;
 mod scenario;
+mod soak;
 mod solids;
 mod sound;
 mod surfaces;
@@ -143,7 +145,7 @@ fn main() -> AppExit {
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
     // Blood out of the body: drops, streams, the floor's pools, the clothes' stains (phase 3, port/blood).
-    .add_plugins((fluid::plugin, floor::plugin));
+    .add_plugins((fluid::plugin, floor::plugin, soak::plugin, blood::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {
