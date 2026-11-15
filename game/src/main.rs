@@ -29,6 +29,7 @@ mod ragdoll;
 mod rng;
 mod sandbox;
 mod scenario;
+mod shards;
 mod solids;
 mod sound;
 mod surfaces;
@@ -139,7 +140,9 @@ fn main() -> AppExit {
         hud::plugin,
     ))
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
-    .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin));
+    .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
+    // The body opened: broken bones drawn, limbs cut off, bellies opened (phase 3, port/cut).
+    .add_plugins(shards::plugin);
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

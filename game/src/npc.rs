@@ -118,7 +118,8 @@ pub enum Happened {
     Broke { segment: String },
     // A break to draw (bones.rs `_draw`, shards.rs), and a broken end out through the skin (`_through`), by its index.
     Drawn { break_index: usize, calibre: f32 },
-    Through { break_index: usize },
+    // Through: the near half's end swung out by `turn` about `pivot`, then moved `shift` (rest space), its last `piece` m.
+    Through { break_index: usize, pivot: Vec3, turn: Quat, shift: Vec3, piece: f32 },
     // A tooth given way (teeth.rs: its stump and the piece that falls, thrown with the TS's seven throws a piece).
     Tooth { tooth: usize, how: &'static str, dir: Vec3, pieces: u32, throws: Vec<f32> },
     // dismember.ts edge / charge, viscera.ts bled / blown: what mesh cutting does with a wound (phase 3).
