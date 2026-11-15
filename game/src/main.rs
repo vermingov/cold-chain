@@ -11,14 +11,18 @@
 mod anatomy;
 mod arm;
 mod arsenal;
+mod bones;
+mod bruise;
 mod dressing;
 mod fist;
+mod eyes;
 mod graphics;
 mod hands;
 mod hud;
 mod map;
 mod models;
 mod muzzle;
+mod npc;
 mod person;
 mod picture;
 mod player;
@@ -31,8 +35,11 @@ mod scenario;
 mod solids;
 mod sound;
 mod surfaces;
+mod teeth;
+mod throat;
 mod vitals;
 mod weapons;
+mod wounds;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -125,6 +132,7 @@ fn main() -> AppExit {
         sound::plugin,
         person::plugin,
         anatomy::plugin,
+        npc::plugin,
         weapons::plugin,
         map::plugin,
         player::plugin,

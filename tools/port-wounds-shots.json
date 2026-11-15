@@ -1,0 +1,348 @@
+[
+{
+"name": "rifle chest",
+"person": 0,
+"weapon": "rifle",
+"bone": "spine01",
+"offset": [
+0.03,
+0.06,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "pistol belly",
+"person": 1,
+"weapon": "pistol",
+"bone": "spine03",
+"offset": [
+-0.06,
+0,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "pistol neck",
+"person": 2,
+"weapon": "pistol",
+"bone": "neck01",
+"offset": [
+0.025,
+-0.03,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "pistol head",
+"person": 3,
+"weapon": "pistol",
+"bone": "head",
+"offset": [
+0,
+0.07,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "rifle thigh",
+"person": 0,
+"weapon": "rifle",
+"bone": "mid-upperleg01.L",
+"offset": [
+0,
+0,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "shotgun thigh",
+"person": 1,
+"weapon": "shotgun",
+"bone": "mid-upperleg01.R",
+"offset": [
+0,
+0,
+0
+],
+"dir": [
+0,
+0,
+1
+],
+"pellets": [
+[
+-0.03,
+-0.03,
+0
+],
+[
+0,
+-0.03,
+0
+],
+[
+0.03,
+-0.03,
+0
+],
+[
+-0.03,
+0,
+0
+],
+[
+0,
+0,
+0
+],
+[
+0.03,
+0,
+0
+],
+[
+-0.03,
+0.03,
+0
+],
+[
+0,
+0.03,
+0
+],
+[
+0.03,
+0.03,
+0
+]
+]
+},
+{
+"name": "knife belly",
+"person": 2,
+"weapon": "knife",
+"bone": "spine03",
+"offset": [
+0.05,
+0.02,
+0
+],
+"dir": [
+0,
+0,
+1
+],
+"across": [
+0,
+-1,
+0
+]
+},
+{
+"name": "bat shin",
+"person": 3,
+"weapon": "bat",
+"bone": "mid-lowerleg01.L",
+"offset": [
+0,
+0,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "bat head",
+"person": 0,
+"weapon": "bat",
+"bone": "head",
+"offset": [
+0,
+0.06,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "pistol mouth",
+"person": 1,
+"weapon": "pistol",
+"bone": "jaw",
+"offset": [
+0,
+-0.03,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "pistol eye",
+"person": 2,
+"weapon": "pistol",
+"bone": "eye.L",
+"offset": [
+0,
+0,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "bat mouth",
+"person": 3,
+"weapon": "bat",
+"bone": "jaw",
+"offset": [
+0,
+-0.02,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "bat chest",
+"person": 0,
+"weapon": "bat",
+"bone": "spine01",
+"offset": [
+0.06,
+0.04,
+0
+],
+"dir": [
+0,
+0,
+1
+]
+},
+{
+"name": "shotgun thigh dressed",
+"person": 1,
+"weapon": "shotgun",
+"bone": "mid-upperleg01.R",
+"offset": [
+0,
+0,
+0
+],
+"dir": [
+0,
+0,
+1
+],
+"pellets": [
+[
+-0.03,
+-0.03,
+0
+],
+[
+0,
+-0.03,
+0
+],
+[
+0.03,
+-0.03,
+0
+],
+[
+-0.03,
+0,
+0
+],
+[
+0,
+0,
+0
+],
+[
+0.03,
+0,
+0
+],
+[
+-0.03,
+0.03,
+0
+],
+[
+0,
+0.03,
+0
+],
+[
+0.03,
+0.03,
+0
+]
+],
+"dress": true
+},
+{
+"name": "knife belly dressed",
+"person": 2,
+"weapon": "knife",
+"bone": "spine03",
+"offset": [
+0.05,
+0.02,
+0
+],
+"dir": [
+0,
+0,
+1
+],
+"across": [
+0,
+-1,
+0
+],
+"dress": true
+}
+]

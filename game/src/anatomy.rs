@@ -1,5 +1,4 @@
-// What is inside a person (src/sandbox/anatomy.ts): the reader, and the x-ray. Tracing a line through the parts (what
-// a shot passes through) is phase 2's (dev/PORT.md).
+// What is inside a person (src/sandbox/anatomy.ts): the reader, the x-ray, and what a line through them meets.
 //
 // The parts are tools/anatomy.py's: the skeleton, the organs of the head, chest and belly from BodyParts3D, fitted to
 // each body, every one hung from a bone of its skeleton. They are kept in that bone's rest space and never moved: a
@@ -17,6 +16,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use crate::person::{array, read_file, vec3s, Body, Person, RawArray};
+use crate::npc::Npc;
 
 #[derive(Deserialize, Clone)]
 pub struct Part {
@@ -27,6 +27,15 @@ pub struct Part {
     pub index_start: usize,
     #[serde(rename = "indexCount")]
     pub index_count: usize,
+    // The middle of the part, as the file has it (Babylon's space: `centre()` is Bevy's).
+    #[serde(default)]
+    centre: [f32; 3],
+}
+
+impl Part {
+    pub fn centre(&self) -> Vec3 {
+        crate::babylon(self.centre[0], self.centre[1], self.centre[2])
+    }
 }
 
 #[derive(Deserialize)]
@@ -115,6 +124,8 @@ const LOOKS: &[(&str, [f32; 3])] = &[
 #[derive(Resource, Default)]
 pub struct Anatomy {
     pub bodies: HashMap<String, Insides>,
+    // Each body's parts sorted for tracing lines through (`Traced`), made with its x-ray.
+    pub traced: HashMap<String, std::sync::Arc<Traced>>,
     looks: Vec<Handle<StandardMaterial>>,
     meshes: HashMap<String, Vec<(usize, Handle<Mesh>)>>,
 }
@@ -154,6 +165,10 @@ impl Anatomy {
     // space, hidden until X.
     pub fn build(&mut self, commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, body: &Body,
                  skin: SkinnedMesh, space: Entity) -> Entity {
+        if !self.traced.contains_key(&body.name) {
+            let traced = Traced::new(&self.bodies[&body.name], body);
+            self.traced.insert(body.name.clone(), std::sync::Arc::new(traced));
+        }
         let made = match self.meshes.get(&body.name) {
             Some(m) => m.clone(),
             None => {
@@ -254,4 +269,289 @@ fn see(
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Anatomy>().init_resource::<Seeing>().add_systems(Update, (toggle, see).chain());
+}
+
+// --- what a line through them meets ---------------------------------------------------------------------------------
+
+const CLUSTER: usize = 48; // triangles to a box of the coarse tree each part's triangles are sorted into
+
+// A box of a part's triangles (offsets into the index), in rest space.
+pub struct Cluster {
+    pub lo: Vec3,
+    pub hi: Vec3,
+    pub tris: Vec<u32>,
+}
+
+// A part as it is traced: the triangles of one part carried by one bone (a long bone is two, its halves on the bone and
+// its mid bone: `half`), sorted into clusters, and the box round all of them.
+pub struct TracedPart {
+    pub name: String,
+    pub kind: String,
+    // The part in the file (Insides::parts), and the bone that carries this piece of it.
+    pub source: usize,
+    pub owner: usize,
+    pub half: Option<&'static str>,
+    pub clusters: Vec<Cluster>,
+    pub lo: Vec3,
+    pub hi: Vec3,
+}
+
+pub struct TracedTube {
+    pub name: String,
+    pub kind: String,
+    // Each point at rest, its radius, and the bone that carries it.
+    pub points: Vec<(Vec3, f32, usize)>,
+}
+
+// One body's insides sorted for tracing, shared by everyone of that body: the parts are kept in their bone's rest space
+// and never moved; a question about the world is turned into each bone's rest space instead.
+pub struct Traced {
+    pub parts: Vec<TracedPart>,
+    pub tubes: Vec<TracedTube>,
+    pub position: Vec<Vec3>,
+    pub index: Vec<u32>,
+    // The file's parts, for their centres.
+    pub source: Vec<Part>,
+}
+
+impl Traced {
+    pub fn new(ins: &Insides, body: &Body) -> Traced {
+        let mut parts = Vec::new();
+        for (k, p) in ins.parts.iter().enumerate() {
+            // The triangles of the part by which bone carries them, in the order the bones are first met (the TS's Map).
+            let mut groups: Vec<(usize, Vec<u32>)> = Vec::new();
+            for i in (p.index_start..p.index_start + p.index_count).step_by(3) {
+                let t = &ins.index[i..i + 3];
+                let mid = (ins.position[t[0] as usize] + ins.position[t[1] as usize] + ins.position[t[2] as usize]) / 3.0;
+                let owner = Insides::owner(body, &p.bone, mid);
+                match groups.iter_mut().find(|g| g.0 == owner) {
+                    Some(g) => g.1.push(i as u32),
+                    None => groups.push((owner, vec![i as u32])),
+                }
+            }
+            let several = groups.len() > 1;
+            for (owner, tris) in groups {
+                let clusters = cluster(&ins.position, &ins.index, tris);
+                // (And the box round all of them: a line misses most parts, and is then tried against none of their boxes.)
+                let lo = clusters.iter().fold(Vec3::INFINITY, |a, c| a.min(c.lo));
+                let hi = clusters.iter().fold(Vec3::NEG_INFINITY, |a, c| a.max(c.hi));
+                let half = several.then(|| if owner == body.by_name[&p.bone] { "upper" } else { "lower" });
+                parts.push(TracedPart { name: p.name.clone(), kind: p.kind.clone(), source: k, owner, half, clusters, lo, hi });
+            }
+        }
+        let tubes = ins.tubes.iter().map(|t| TracedTube {
+            name: t.name.clone(),
+            kind: t.kind.clone(),
+            points: t.points.iter().map(|(p, r, b)| (*p, *r, Insides::owner(body, b, *p))).collect(),
+        }).collect();
+        Traced { parts, tubes, position: ins.position.clone(), index: ins.index.clone(), source: ins.parts.clone() }
+    }
+}
+
+// A stretch of a line inside a part: how far along the line it goes in and comes out.
+#[derive(Clone, Debug)]
+pub struct Span {
+    pub part: usize,
+    pub enter: f32,
+    pub leave: f32,
+}
+
+// A vessel a line comes near: which tube, the piece of it (index of the point it starts at), how far along the line,
+// by how much it is within reach (less than nothing: inside it), and the middle of that piece in the world.
+#[derive(Clone, Debug)]
+pub struct VesselHit {
+    pub tube: usize,
+    pub at: usize,
+    pub t: f32,
+    pub miss: f32,
+    pub r#where: Vec3,
+}
+
+impl Npc<'_> {
+    // Everything the line from `origin` along unit `dir` passes through, nearer than `far`: spans in order, and the
+    // vessels it comes within `reach` of. `only` the parts it says, if given.
+    pub fn trace(&self, origin: Vec3, dir: Vec3, far: f32, reach: f32, only: Option<&dyn Fn(&TracedPart) -> bool>) -> (Vec<Span>, Vec<VesselHit>) {
+        let tr = self.traced.clone();
+        let mats = self.bone_worlds();
+        let mut spans: Vec<Span> = Vec::new();
+        let mut ts: Vec<f32> = Vec::new();
+        for (k, part) in tr.parts.iter().enumerate() {
+            if only.is_some_and(|f| !f(part)) {
+                continue;
+            }
+            let inv = mats[part.owner].inverse();
+            let o = inv.transform_point3(origin);
+            let d = inv.transform_vector3(dir);
+            if !slab(o, d, part.lo, part.hi, far) {
+                continue;
+            }
+            ts.clear();
+            for c in &part.clusters {
+                if !slab(o, d, c.lo, c.hi, far) {
+                    continue;
+                }
+                for &i in &c.tris {
+                    let t = triangle(o, d, &tr.position, &tr.index, i as usize);
+                    if t > 0.0 && t < far {
+                        ts.push(t);
+                    }
+                }
+            }
+            if ts.is_empty() {
+                continue;
+            }
+            ts.sort_by(f32::total_cmp);
+            // In and out of a closed surface in turns; one left over is a way in that never came out before `far`.
+            for j in (0..ts.len()).step_by(2) {
+                spans.push(Span { part: k, enter: ts[j], leave: if j + 1 < ts.len() { ts[j + 1] } else { far.min(ts[j] + 0.01) } });
+            }
+        }
+        // (Stable, as the TS's: spans that start together keep the parts' order.)
+        spans.sort_by(|a, b| a.enter.total_cmp(&b.enter));
+        // A hollow organ (the heart's chambers, the bowel) is crossed many times: one span from its first wall to its last.
+        let mut k = spans.len();
+        while k > 1 {
+            k -= 1;
+            let name = &tr.parts[spans[k].part].name;
+            if let Some(prev) = (0..k).rev().find(|&j| &tr.parts[spans[j].part].name == name) {
+                if spans[k].enter - spans[prev].leave < 0.08 {
+                    spans[prev].leave = spans[prev].leave.max(spans[k].leave);
+                    spans.remove(k);
+                }
+            }
+        }
+
+        let mut vessels = Vec::new();
+        for (ti, tube) in tr.tubes.iter().enumerate() {
+            let mut best: Option<VesselHit> = None;
+            let world = |i: usize| mats[tube.points[i].2].transform_point3(tube.points[i].0);
+            for i in 0..tube.points.len().saturating_sub(1) {
+                let (a, b) = (world(i), world(i + 1));
+                let (t, distance) = ray_to_segment(origin, dir, a, b);
+                let miss = distance - tube.points[i].1 - reach;
+                if t > 0.0 && t < far && miss < 0.0 && best.as_ref().is_none_or(|x| miss < x.miss) {
+                    best = Some(VesselHit { tube: ti, at: i, t, miss, r#where: a.lerp(b, 0.5) });
+                }
+            }
+            vessels.extend(best);
+        }
+        vessels.sort_by(|a, b| a.t.total_cmp(&b.t));
+        (spans, vessels)
+    }
+
+    // Where a point of a tube is now, in the world.
+    pub fn tube_point(&self, tube: usize, i: usize) -> Vec3 {
+        let p = &self.traced.tubes[tube].points[i];
+        self.rest_to_world(p.2).transform_point3(p.0)
+    }
+}
+
+// The triangles `tris` (offsets into `index`) sorted into boxes of about CLUSTER each, by halving the longest side.
+fn cluster(position: &[Vec3], index: &[u32], tris: Vec<u32>) -> Vec<Cluster> {
+    let centre = |i: u32, axis: usize| {
+        let i = i as usize;
+        (position[index[i] as usize][axis] + position[index[i + 1] as usize][axis] + position[index[i + 2] as usize][axis]) / 3.0
+    };
+    let mut out = Vec::new();
+    fn split(list: Vec<u32>, position: &[Vec3], index: &[u32], centre: &dyn Fn(u32, usize) -> f32, out: &mut Vec<Cluster>) {
+        let (mut lo, mut hi) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+        for &i in &list {
+            for k in 0..3 {
+                let p = position[index[i as usize + k] as usize];
+                lo = lo.min(p);
+                hi = hi.max(p);
+            }
+        }
+        if list.len() <= CLUSTER {
+            out.push(Cluster { lo, hi, tris: list });
+            return;
+        }
+        let size = hi - lo;
+        let axis = if size.x > size.y && size.x > size.z { 0 } else if size.y > size.z { 1 } else { 2 };
+        let mut list = list;
+        list.sort_by(|&a, &b| centre(a, axis).total_cmp(&centre(b, axis)));
+        let second = list.split_off(list.len() >> 1);
+        split(list, position, index, centre, out);
+        split(second, position, index, centre, out);
+    }
+    split(tris, position, index, &centre, &mut out);
+    out
+}
+
+// Whether the line meets the box before `far`. (Each axis written out: it is asked of every box of every part for each
+// line, thousands of times a shot.) A direction with a zero part divides to infinities, as the TS's did.
+pub fn slab(o: Vec3, d: Vec3, lo: Vec3, hi: Vec3, far: f32) -> bool {
+    let (mut t0, mut t1) = (0.0f32, far);
+    for k in 0..3 {
+        let a = (lo[k] - o[k]) / d[k];
+        let b = (hi[k] - o[k]) / d[k];
+        // (A ray along a face of the box is 0 / 0 here: in the TS's Math.max and Math.min the NaN poisons every test after
+        // it, and the box counts as crossed.)
+        if a.is_nan() || b.is_nan() {
+            return true;
+        }
+        let (near, far_) = (a.min(b), a.max(b));
+        t0 = t0.max(near);
+        t1 = t1.min(far_);
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
+
+// Möller and Trumbore: how far along the line the triangle at `i` is met, or -1.
+pub fn triangle(o: Vec3, d: Vec3, p: &[Vec3], index: &[u32], i: usize) -> f32 {
+    let a = p[index[i] as usize];
+    let e1 = p[index[i + 1] as usize] - a;
+    let e2 = p[index[i + 2] as usize] - a;
+    let pv = d.cross(e2);
+    let det = e1.dot(pv);
+    if det.abs() < 1e-12 {
+        return -1.0;
+    }
+    let f = 1.0 / det;
+    let s = o - a;
+    let u = f * s.dot(pv);
+    if !(0.0..=1.0).contains(&u) {
+        return -1.0;
+    }
+    let q = s.cross(e1);
+    let v = f * d.dot(q);
+    if v < 0.0 || u + v > 1.0 {
+        return -1.0;
+    }
+    f * e2.dot(q)
+}
+
+// The nearest the line (o, unit d) comes to the segment a-b: how far along the line, and how near.
+pub fn ray_to_segment(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> (f32, f32) {
+    let u = b - a;
+    let w = o - a;
+    let (uu, ud, uw, dw) = (u.dot(u), u.dot(d), u.dot(w), d.dot(w));
+    let den = uu - ud * ud;
+    let s = if den > 1e-9 { (uw - ud * dw) / den } else { 0.0 }.clamp(0.0, 1.0);
+    let p = a + u * s;
+    let t = (p - o).dot(d);
+    (t, (o + d * t - p).length())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segment_and_triangle() {
+        // A line along x past a segment along z one unit up: nearest at t = 2, one away.
+        let (t, d) = ray_to_segment(Vec3::ZERO, Vec3::X, Vec3::new(2.0, 1.0, -1.0), Vec3::new(2.0, 1.0, 1.0));
+        assert!((t - 2.0).abs() < 1e-6 && (d - 1.0).abs() < 1e-6);
+        // Beyond its end the end is nearest.
+        let (t, d) = ray_to_segment(Vec3::ZERO, Vec3::X, Vec3::new(2.0, 0.0, 1.0), Vec3::new(2.0, 0.0, 3.0));
+        assert!((t - 2.0).abs() < 1e-6 && (d - 1.0).abs() < 1e-6);
+        let p = [Vec3::new(1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, -1.0), Vec3::new(1.0, 0.0, 1.0)];
+        assert!((triangle(Vec3::ZERO, Vec3::X, &p, &[0, 1, 2], 0) - 1.0).abs() < 1e-6);
+        assert!(triangle(Vec3::new(0.0, 5.0, 0.0), Vec3::X, &p, &[0, 1, 2], 0) < 0.0);
+        assert!(slab(Vec3::ZERO, Vec3::X, Vec3::new(1.0, -1.0, -1.0), Vec3::new(2.0, 1.0, 1.0), 3.0));
+        assert!(!slab(Vec3::ZERO, Vec3::X, Vec3::new(1.0, -1.0, -1.0), Vec3::new(2.0, 1.0, 1.0), 0.5));
+    }
 }

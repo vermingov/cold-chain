@@ -235,15 +235,15 @@ fn update(
         commands.entity(e).despawn_children();
         let Some((_, p, v)) = shown else { continue };
         commands.spawn((Text::new(p.label.clone()), font(r, 1.35), TextColor(INK), shadow(), ChildOf(e)));
-        let warn_state = v.dead || !v.beating;
+        let warn_state = v.dead || !v.beating();
         commands.spawn((Text::new(v.state()), font(&fonts.italic, 1.1), TextColor(if warn_state { WARN } else { PALE }), shadow(),
                         Node { margin: UiRect::new(px(0), px(0), px(0.1 * REM), px(0.5 * REM)), ..default() }, ChildOf(e)));
         let litres = v.full - v.volume;
         let rows = [
-            ("Heart rate", if v.beating { format!("{} bpm", v.hr.round()) } else { "none".into() }, !v.beating || v.hr > 120.0),
-            ("Blood pressure", if v.beating { format!("{}/{}", v.systolic(), v.diastolic()) } else { "none".into() }, v.map < 65.0),
+            ("Heart rate", if v.beating() { format!("{} bpm", v.hr.round()) } else { "none".into() }, !v.beating() || v.hr > 120.0),
+            ("Blood pressure", if v.beating() { format!("{}/{}", v.systolic(), v.diastolic()) } else { "none".into() }, v.map < 65.0),
             ("Oxygen", format!("{}%", v.spo2.round()), v.spo2 < 90.0),
-            ("Breathing", if v.breathing && v.beating { format!("{} a minute", v.rr.round()) } else { "none".into() }, !v.breathing),
+            ("Breathing", if v.breathing && v.beating() { format!("{} a minute", v.rr.round()) } else { "none".into() }, !v.breathing),
             ("Blood lost", format!("{litres:.2} L of {:.1}", v.full), v.lost() > 0.15),
         ];
         for (name, value, warn) in rows {
@@ -253,7 +253,7 @@ fn update(
                 c.spawn((Text::new(value), font(r, 0.92), TextColor(colour), shadow()));
             });
         }
-        let mut list: Vec<String> = v.injuries.iter().take(8).cloned().collect();
+        let mut list: Vec<String> = v.injuries.iter().take(8).map(|i| i.text.clone()).collect();
         if v.injuries.len() > 8 {
             list.push(format!("and {} more", v.injuries.len() - 8));
         }
