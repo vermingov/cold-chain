@@ -257,7 +257,7 @@ export class Sound {
     // The same recording asked for again in the same moment from within a metre of where it is already sounding is that
     // one sound made louder (as loud as the two together, by their power), not another: a shotgun's nine pellets into one
     // body are one blow to the ear, and each sound with a place is a chain of nodes and a panner of its own.
-    shot(name, { gain = 1, rate = 1, most = 0, at = null, follow = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number } {
+    shot(name, { gain = 1, rate = 1, most = 0, at = null, follow = null } = {}): { buffer: AudioBuffer; from: number; rate: number; start: number; length: number; cut?: () => void } {
         const same = at && !follow && !most ? this.together?.get(name) : null;
         if (same && Math.hypot(same.at[0] - at[0], same.at[1] - at[1], same.at[2] - at[2]) < 1) {
             same.power += gain * gain;
@@ -279,7 +279,7 @@ export class Sound {
         const r = rate * (0.96 + Math.random() * 0.08);
         const loud = this._play(take.buffer, this.context.currentTime, from, until - from, 0.004, 0.05, gain, r, into, place);
         // What is playing, for whoever wants to follow it (a face mouthing its own voice).
-        const playing = { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from };
+        const playing = { buffer: take.buffer, from, rate: r, start: this.context.currentTime, length: until - from, cut: loud.cut };
         if (at && !follow) {
             // (The moment is this task: what it asks for is forgotten once it is over.)
             if (!this.together) { this.together = new Map(); queueMicrotask(() => { this.together = null; }); }
@@ -309,7 +309,7 @@ export class Sound {
         source.playbackRate.value = rate;
         const lasts = length / rate;
         // (Returned: how to make it as loud as `to` instead, from the start, before it has begun.)
-        const loud = (to: number) => {
+        const loud: ((to: number) => void) & { cut?: () => void } = (to: number) => {
             level.gain.cancelScheduledValues(0);
             level.gain.setValueAtTime(0, when);
             level.gain.linearRampToValueAtTime(to, when + fadeIn);
@@ -317,6 +317,14 @@ export class Sound {
             level.gain.linearRampToValueAtTime(0, when + lasts);
         };
         loud(gain);
+        // (And how to cut it off where it is, in 50 ms: a cry stops when the one crying is knocked out or killed.)
+        loud.cut = () => {
+            const now = this.context.currentTime;
+            level.gain.cancelScheduledValues(0);
+            level.gain.setValueAtTime(level.gain.value, now);
+            level.gain.linearRampToValueAtTime(0, now + 0.05);
+            source.stop(now + 0.06);
+        };
         source.connect(level).connect(into);
         source.start(when, from, length);
         source.onended = () => {

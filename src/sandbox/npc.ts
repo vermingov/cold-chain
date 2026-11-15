@@ -75,6 +75,7 @@ export class Npc {
     declare underHiders: Hider[];
     declare skinMaterials: BABYLON.Material[];
     declare _said: { until: number; pain: number; next: number; awake: boolean };
+    declare _saying: { cut?: () => void } | null;    // the cry playing now, to cut off
     declare dismember: Dismember;
     declare viscera: Viscera;
     declare dressings: { dispose(): void }[];
@@ -547,7 +548,7 @@ export class Npc {
         if (!over && now < this._said.until) return;
         this._said.until = now + (kind === 'yell' ? 0.8 : kind === 'scream' || kind === 'cry' ? 3 : 2.2);
         const playing = this.world.sound?.shot(`${kind}-${this.voice}`, { follow: () => this.ragdoll.byName.get('head').node.position.asArray(), gain });
-        if (playing) this.face.speak(playing, this.world.sound.now, kind);
+        if (playing) { this.face.speak(playing, this.world.sound.now, kind); this._saying = playing; }
         this._crying = kind === 'cry' || (this._crying && kind !== 'scream' && kind !== 'yell');
     }
 
@@ -556,6 +557,9 @@ export class Npc {
     _speak(dt) {
         const v = this.vitals, said = this._said;
         const awake = v.conscious > 0.35 && v.beating && !v.dead;
+        // Knocked out or killed mid-cry, the cry stops there (a recording plays two or three seconds: it went on screaming
+        // after the shot that put them down).
+        if (said.awake && !awake) { this._saying?.cut?.(); this._saying = null; }
         if (said.awake && !awake && (v.dead || !v.beating)) this.say('dying', 0.8, true);
         said.awake = awake;
         const hurt = v.pain - said.pain;
