@@ -174,16 +174,23 @@ fn update(
     let on = arsenal.and_then(|a| a.look(eye.translation, eye.forward().as_vec3()));
     let text = on.map(|k| {
         let verb = if weapons.slots.contains(&Some(k)) { "Hold" } else if weapons.slots.contains(&None) { "Take" } else { "Swap for" };
-        format!("{verb} the {}", arm(k).name)
+        ("E".to_string(), format!("{verb} the {}", arm(k).name))
     });
-    let p = text.clone().unwrap_or_default();
+    // (Else what the bandage or the medkit can do here: "Hold left click: Dress the wound", or how far a dressing is on.)
+    let text = text.or_else(|| {
+        let m = &weapons.medic.prompt;
+        (!m.is_empty()).then(|| m.split_once(": ").map_or((String::new(), m.clone()), |(k, t)| (k.to_string(), t.to_string())))
+    });
+    let p = text.as_ref().map(|(k, t)| format!("{k}|{t}")).unwrap_or_default();
     if p != last.1 {
         last.1 = p;
         for e in &prompt {
             commands.entity(e).despawn_children();
-            if let Some(t) = &text {
+            if let Some((k, t)) = &text {
                 commands.spawn((Node { align_items: AlignItems::Baseline, ..default() }, ChildOf(e))).with_children(|c| {
-                    c.spawn((Text::new("E"), font(r, 0.8), TextColor(FAINT), shadow(), Node { margin: UiRect::right(px(0.35 * REM)), ..default() }));
+                    if !k.is_empty() {
+                        c.spawn((Text::new(k.clone()), font(r, 0.8), TextColor(FAINT), shadow(), Node { margin: UiRect::right(px(0.35 * REM)), ..default() }));
+                    }
                     c.spawn((Text::new(t.clone()), font(r, 1.1), TextColor(INK), shadow()));
                 });
             }

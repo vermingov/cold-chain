@@ -420,14 +420,9 @@ fn update(
     let dt = time.delta_secs();
     let eye = eye.single().copied().unwrap_or_default();
     // Last frame's flame drawn: gone.
-    if let Some((e, frames)) = m.shown {
-        if frames >= 1 {
-            if let Ok(mut v) = vis.get_mut(e) {
-                *v = Visibility::Hidden;
-            }
-            m.shown = None;
-        } else {
-            m.shown = Some((e, frames + 1));
+    if let Some((e, _)) = m.shown.take() {
+        if let Ok(mut v) = vis.get_mut(e) {
+            *v = Visibility::Hidden;
         }
     }
     let quad = quad.get_or_insert_with(|| meshes.add(Rectangle::new(1.0, 1.0))).clone();
@@ -437,11 +432,6 @@ fn update(
     if let Some((key, tip, at, ahead, _)) = m.asked.take() {
         let look = look(key);
         let k = if m.flames.contains_key(key) { key } else { "pistol" };
-        if let Some(old) = m.shown.take() {
-            if let Ok(mut v) = vis.get_mut(old.0) {
-                *v = Visibility::Hidden;
-            }
-        }
         let e = m.flames[k];
         // Each shot its own take, size and (but for the birdcage, whose slots are where they are) turn about the bore.
         let roll = if look.slots { 0.0 } else { m.dice() * std::f32::consts::TAU };

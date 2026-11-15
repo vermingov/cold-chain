@@ -426,6 +426,51 @@ pub struct Weapons {
     pub log: Vec<Value>,
     // Where on the screen (0 to 1 across and down) the gun's bore meets whatever is first along it (`sight`).
     pub sight: Option<Vec2>,
+    pub medic: Medic,
+}
+
+// An open wound a dressing can go on (dressing.ts wounds()): whose, where, which way its surface faces, the first of the
+// person's bleeds under it (which says it is the same wound from one frame to the next), how much it bleeds.
+#[derive(Clone)]
+pub struct Wound {
+    pub person: Entity,
+    pub at: Vec3,
+    pub normal: Option<Vec3>,
+    pub first: usize,
+    pub flow: f32,
+}
+
+// port: needs medicine. A person's open wounds, worst first (dressing.ts wounds: their bleeds grouped by where they are,
+// those dressed left out), and a dressing put on one (dress). None until vitals.rs has bleeds.
+pub fn wounds(_person: &Person) -> Vec<Wound> {
+    Vec::new()
+}
+
+fn dress(log: &mut Vec<Value>, label: &str, w: &Wound) {
+    log.push(json!({ "dress": label, "at": w.at.to_array() }));
+}
+
+// The player putting dressings on (dressing.ts Medic): the bandage on the wound looked at, the medkit on every open wound
+// of the person looked at, worst first, one after another while the button is held.
+#[derive(Default)]
+pub struct Medic {
+    // The wound being dressed (whose, its first bleed) and how long it has been worked on.
+    job: Option<(Entity, usize, f32)>,
+    pub prompt: String,
+    pub clock: f32,
+    // The gauze heard going round, at the wound, while a dressing is being put on; whom the medkit was last unzipped for.
+    wrap: Option<crate::sound::Stream>,
+    opened: Option<Entity>,
+}
+
+const SECONDS: f32 = 4.0; // to put one on: a game's few seconds for what takes a minute with pressure held
+const REACH: f32 = 1.9; // metres from the eye to a wound that can be reached (one on the floor, kneeling down to it)
+
+impl Medic {
+    // How far through the one being put on, 0 to 1, or None.
+    pub fn working(&self) -> Option<f32> {
+        self.job.map(|j| j.2 / SECONDS)
+    }
 }
 
 struct Grab {
@@ -461,6 +506,7 @@ impl Default for Weapons {
             blades: HashMap::new(),
             log: Vec::new(),
             sight: None,
+            medic: Medic::default(),
         }
     }
 }
@@ -1566,6 +1612,91 @@ pub fn act(mut cx: Cx) {
     if let Some(b) = cx.weapons.blades.get_mut(a.key) {
         b.2 += dt;
     }
+    medic(&mut cx, dt);
+}
+
+fn medic(cx: &mut Cx, dt: f32) {
+    let working = cx.weapons.medic.job.is_some_and(|j| j.2 > 1.0);
+    if let Some(w) = &cx.weapons.medic.wrap {
+        w.drive(if working { 0.45 } else { 0.0 }, 1.0);
+    }
+    let a = cx.weapons.arm();
+    if a.kind != Kind::Dress {
+        cx.weapons.medic.job = None;
+        cx.weapons.medic.prompt.clear();
+        return;
+    }
+    let eye = cx.eye();
+    let (at, ahead) = (eye.translation, eye.forward().as_vec3());
+    let medkit = a.key == "medkit";
+    // The worst open wound of whoever is in front of the eye (medkit), or the open wound nearest the middle of the view,
+    // within reach and facing the eye (bandage).
+    let found: Option<(Wound, usize)> = if medkit {
+        cx.person(at, ahead, REACH).and_then(|(who, _)| {
+            let list = wounds(cx.people.get(who).unwrap().1);
+            list.first().cloned().map(|w| (w, list.len()))
+        })
+    } else {
+        let mut best: Option<(Wound, f32)> = None;
+        for (_, p) in &cx.people {
+            let centre = p.segments.iter().find(|s| s.name == "pelvis").map_or(Vec3::ZERO, |s| s.rest.translation);
+            if at.distance(centre) > REACH + 1.2 {
+                continue;
+            }
+            for w in wounds(p) {
+                let to = w.at - at;
+                let t = to.dot(ahead);
+                if t < 0.1 || t > REACH || w.normal.is_some_and(|n| n.dot(ahead) > 0.3) {
+                    continue;
+                }
+                let off = (to - ahead * t).length() / t;
+                if off < 0.09 && best.as_ref().is_none_or(|b| off < b.1) {
+                    best = Some((w, off));
+                }
+            }
+        }
+        best.map(|(w, _)| (w, 1))
+    };
+    let Some((wound, n)) = found else {
+        cx.weapons.medic.job = None;
+        cx.weapons.medic.prompt.clear();
+        return;
+    };
+    cx.weapons.medic.prompt = format!("Hold left click: {}", if medkit && n > 1 { format!("Dress all {n} wounds") } else if medkit { "Dress the wound".into() } else { "Dress the wound".into() });
+    if !cx.weapons.firing {
+        cx.weapons.medic.job = None;
+        return;
+    }
+    // The same wound as last frame is the one its first bleed is still in.
+    if cx.weapons.medic.job.is_none_or(|j| (j.0, j.1) != (wound.person, wound.first)) {
+        cx.weapons.medic.job = Some((wound.person, wound.first, 0.0));
+        if medkit && cx.weapons.medic.opened != Some(wound.person) {
+            cx.weapons.medic.opened = Some(wound.person);
+            cx.sound.play("zip", Play::default().gain(0.7));
+        }
+    }
+    cx.weapons.medic.clock += dt;
+    // The packet torn open in the hands, then the gauze wound on (wrap, above), then taped.
+    let t = cx.weapons.medic.job.unwrap().2;
+    if t < 0.3 && t + dt >= 0.3 {
+        cx.sound.play("gauze-tear", Play::default().gain(0.6));
+    }
+    let t = t + dt;
+    cx.weapons.medic.job.as_mut().unwrap().2 = t;
+    if cx.weapons.medic.wrap.is_none() {
+        cx.weapons.medic.wrap = cx.sound.stream("gauze-wrap", Some(wound.at));
+    }
+    if let Some(w) = &cx.weapons.medic.wrap {
+        w.at(wound.at);
+    }
+    cx.weapons.medic.prompt = format!("Dressing{} {}%", if n > 1 { format!(" ({n} left)") } else { String::new() }, (100.0 * (t / SECONDS).min(1.0)).round());
+    if t < SECONDS {
+        return;
+    }
+    let label = cx.label(wound.person);
+    dress(&mut cx.weapons.log, &label, &wound);
+    cx.sound.play("tape", Play::at(wound.at).gain(0.7));
+    cx.weapons.medic.job = None;
 }
 
 // Where on the screen (0 to 1 across and down) the gun in the hand's bore meets whatever is first along it, a wall or
@@ -1813,8 +1944,23 @@ pub fn animate(
         let t = if weapons.busy > 0.0 { 0.9 - weapons.busy } else { -1.0 };
         model_shown = lobbing(t, &h, &mut pos, base.as_mut().unwrap(), &mut left, parts, &mut moves);
     }
-    // port: needs medicine. A dressing being put on (Medic.working): the roll taken to the wound and wound round it, the
-    // other hand off it; the kit held low, open.
+    // A dressing being put on: the roll taken to the wound and wound round it, the other hand off it; the kit held low, open.
+    if let Some(working) = weapons.medic.working() {
+        let s = (working * 8.0).min(1.0);
+        let t = weapons.medic.clock * 6.0;
+        if key == "bandage" {
+            pos += Vec3::new(-0.08 + t.cos() * 0.05, 0.05 + t.sin() * 0.04, 0.2) * s;
+            turn.x += t.sin() * 0.3 * s;
+            if s > 0.5 {
+                left = None;
+            }
+        } else {
+            pos.y -= 0.1 * s;
+            pos.z += 0.05 * s;
+            turn.x += 0.7 * s;
+            turn.z += t.sin() * 0.05 * s;
+        }
+    }
 
     let q = match base {
         Some(b) => euler(b),
@@ -2451,8 +2597,13 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 s.push(Step::Wait(40));
                 s.push(report(format!("{key}: fired at the wall")));
                 at_person(&mut s);
+                s.push(level(1.0));
                 s.push(Step::Wait(8));
                 s.push(push(vec![Act::Press(0), Act::Release(0)]));
+                // (The flash is drawn in the one frame after the shot.)
+                s.push(Step::Wait(2));
+                s.push(Step::Shot(format!("fp_{key}_flash")));
+                s.push(level(4.0));
                 s.push(Step::Wait(40));
                 s.push(report(format!("{key}: fired at a person")));
                 s.push(push(vec![Act::Reload]));

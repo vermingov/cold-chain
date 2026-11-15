@@ -196,8 +196,10 @@ struct Profiler {
     preset: String,
     level: f32,
     last: Option<Instant>,
-    // A scenario's asks: open it (as F2), save the log into a folder (as F4).
+    // A scenario's asks: open it (as F2, but recording only: its table is not drawn over the pictures), save the log into
+    // a folder (as F4).
     ask_open: bool,
+    quiet: bool,
     save_in: Option<std::path::PathBuf>,
 }
 
@@ -207,7 +209,7 @@ impl Default for Profiler {
             open: false, shown: None, rows: HashMap::new(), draws: HashMap::new(), gap: 16.7, slot: 0, drawn: 0.0, text: String::new(),
             said: (String::new(), 0.0), t0: None, started: String::new(), machine: Value::Null, samples: Vec::new(), spikes: Vec::new(),
             totals: HashMap::new(), hist: vec![0; 501], times: Vec::with_capacity(1024), second_at: 0.0, n: 0, spent: 0.0, cpu: 0.0, wait: 0.0,
-            wait_max: 0.0, calls: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, ask_open: false, save_in: None,
+            wait_max: 0.0, calls: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, ask_open: false, quiet: false, save_in: None,
         }
     }
 }
@@ -285,6 +287,9 @@ fn keys(
         let (n, spent, cpu, wait, wait_max, calls) = (0, 0.0, 0.0, 0.0, 0.0, 0.0);
         (p.n, p.spent, p.cpu, p.wait, p.wait_max, p.calls) = (n, spent, cpu, wait, wait_max, calls);
         p.times.clear();
+        if p.quiet {
+            return;
+        }
         let e = commands
             .spawn((
                 Node { position_type: PositionType::Absolute, left: px(12), top: px(40), padding: UiRect::all(px(8)), ..default() },
@@ -619,7 +624,9 @@ fn draw(p: &mut Profiler, now: f64) {
 
 // For a scenario: the profiler opened, as F2 opens it; its log saved into `dir`, as F4 saves it.
 pub fn open(world: &mut World) {
-    world.resource_mut::<Profiler>().ask_open = true;
+    let mut p = world.resource_mut::<Profiler>();
+    p.ask_open = true;
+    p.quiet = true;
 }
 
 pub fn save_in(world: &mut World, dir: std::path::PathBuf) {
