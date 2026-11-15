@@ -10,7 +10,7 @@
 // film of blood on skin dries in five to ten minutes.
 
 import * as BABYLON from '@babylonjs/core';
-import { GLSL_BLOOD, sendCanvasPart } from './fluid.ts';
+import { GLSL_BLOOD, sendCanvasParts } from './fluid.ts';
 
 const SIZE = 2048;
 const MOST_MM = 0.6;            // the thickest film the sheet holds
@@ -26,7 +26,8 @@ export class Film {
     declare g: CanvasRenderingContext2D;
     declare sent: number;
     declare clock: number;
-    declare dried: number;
+    declare dried: Float32Array;         // when each tile was last dried
+    declare next: number;                // the tile the drying looks at next
     declare painted: number;
     declare lines: Map<string, number[]>;
     declare dirty: Uint8Array;           // tiles painted since last sent
@@ -35,7 +36,7 @@ export class Film {
     declare anyEver: boolean;
 
     constructor(scene: BABYLON.Scene, name: string) {
-        // Kept in memory rather than on the card: what changed is read back off it to be sent (sendCanvasPart), and a canvas
+        // Kept in memory rather than on the card: what changed is read back off it to be sent (sendCanvasParts), and a canvas
         // on the card stalls for that read every time (10 ms a frame in Firefox, the F2 profiler showed).
         const canvas = document.createElement('canvas');
         canvas.width = canvas.height = SIZE;
@@ -49,7 +50,8 @@ export class Film {
         this.texture.update(false);
         this.sent = 0;
         this.clock = 0;
-        this.dried = 0;
+        this.dried = new Float32Array(TILES * TILES);
+        this.next = 0;
         this.painted = -Infinity;
         this.lines = new Map();
         this.dirty = new Uint8Array(TILES * TILES);
@@ -62,7 +64,11 @@ export class Film {
         x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0)); x1 = Math.min(SIZE, Math.ceil(x1)); y1 = Math.min(SIZE, Math.ceil(y1));
         if (x1 <= x0 || y1 <= y0) return;
         for (let ty = Math.floor(y0 / TILE); ty <= Math.floor((y1 - 1) / TILE); ty++)
-            for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x1 - 1) / TILE); tx++) this.dirty[ty * TILES + tx] = this.ever[ty * TILES + tx] = 1;
+            for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x1 - 1) / TILE); tx++) {
+                const t = ty * TILES + tx;
+                if (!this.ever[t]) this.dried[t] = this.clock;
+                this.dirty[t] = this.ever[t] = 1;
+            }
         this.anyDirty = this.anyEver = true;
         this.painted = this.clock;
     }
@@ -137,32 +143,37 @@ export class Film {
         }
     }
 
+    // Each tile dries every 8 s on its own clock, a few tiles a frame: all of them at once, every 8 s, was the whole of
+    // every sheet sent up at once, a 200 ms frame every few seconds in a friend's F2 log.
     _dry() {
-        if (this.anyEver && this.clock - this.dried > 8 && this.clock - this.painted < DRIES * 3) {
-            const k = Math.round(255 * Math.exp(-(this.clock - this.dried) / DRIES));
-            this.dried = this.clock;
-            this.g.globalCompositeOperation = 'multiply';
-            this.g.fillStyle = `rgb(255,${k},255)`;
-            for (let t = 0; t < this.ever.length; t++) if (this.ever[t]) {
-                this.g.fillRect((t % TILES) * TILE, Math.floor(t / TILES) * TILE, TILE, TILE);
-                this.dirty[t] = 1;
-            }
-            this.g.globalCompositeOperation = 'source-over';
-            this.anyDirty = true;
+        if (!this.anyEver || this.clock - this.painted > DRIES * 3) return;
+        const g = this.g;
+        let dried = 0;
+        for (let n = 0; n < this.ever.length && dried < 6; n++) {
+            const t = this.next;
+            this.next = (t + 1) % this.ever.length;
+            if (!this.ever[t] || this.clock - this.dried[t] < 8) continue;
+            if (!dried++) g.globalCompositeOperation = 'multiply';
+            g.fillStyle = `rgb(255,${Math.round(255 * Math.exp(-(this.clock - this.dried[t]) / DRIES))},255)`;
+            g.fillRect((t % TILES) * TILE, Math.floor(t / TILES) * TILE, TILE, TILE);
+            this.dried[t] = this.clock;
+            this.dirty[t] = 1;
         }
+        if (dried) { g.globalCompositeOperation = 'source-over'; this.anyDirty = true; }
     }
 
     _send() {
         if (this.anyDirty && this.clock - this.sent > SENDS) {
-            // Each row's runs of changed tiles, one send a run.
-            const canvas = this.g.canvas as HTMLCanvasElement, d = this.dirty;
+            // Each row's runs of changed tiles, all in one send.
+            const canvas = this.g.canvas as HTMLCanvasElement, d = this.dirty, boxes = [];
             for (let ty = 0; ty < TILES; ty++) for (let tx = 0; tx < TILES;) {
                 if (!d[ty * TILES + tx]) { tx++; continue; }
                 let end = tx;
                 while (end < TILES && d[ty * TILES + end]) d[ty * TILES + end++] = 0;
-                sendCanvasPart(this.texture, canvas, [tx * TILE, ty * TILE, end * TILE, (ty + 1) * TILE]);
+                boxes.push([tx * TILE, ty * TILE, end * TILE, (ty + 1) * TILE]);
                 tx = end;
             }
+            sendCanvasParts(this.texture, canvas, boxes);
             this.anyDirty = false;
             this.sent = this.clock;
         }

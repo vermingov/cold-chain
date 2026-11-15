@@ -81,22 +81,25 @@ export function sendPart(texture: BABYLON.BaseTexture, data: Uint8Array, size: n
     engine._bindTextureDirectly(target, null);
 }
 
-// A part of a canvas sent to the texture it backs, `box` [x0, y0, x1, y1] in pixels, not turned upside down (WebGL 2;
+// Parts of a canvas sent to the texture it backs, each box [x0, y0, x1, y1] in pixels, not turned upside down (WebGL 2;
 // elsewhere the whole canvas, also the right way up).
-// `flip` for a texture sent upside down (DynamicTexture.update's default): the box lands mirrored, its rows reversed.
-// A texture with mipmaps has them made again from what was sent (on the card: far less than sending all of it).
-export function sendCanvasPart(texture: BABYLON.DynamicTexture, canvas: HTMLCanvasElement, box: number[], flip = false) {
+// `flip` for a texture sent upside down (DynamicTexture.update's default): the boxes land mirrored, their rows reversed.
+// A texture with mipmaps has them made again once, after all the boxes (each remake is the whole 2048 sheet: made after
+// every box, a send of forty runs of tiles was forty of them, 170 to 220 ms in Firefox, a friend's F2 log showed).
+export function sendCanvasParts(texture: BABYLON.DynamicTexture, canvas: HTMLCanvasElement, boxes: number[][], flip = false) {
     const engine = texture.getScene().getEngine() as any, gl = engine._gl as WebGL2RenderingContext | undefined;
     const internal = texture.getInternalTexture();
     if (!gl || !internal || engine.webGLVersion < 2) { texture.update(false); return; }
-    // Only the box read off the canvas: handed the canvas itself, the browser takes all of it every time.
-    const w = box[2] - box[0], h = box[3] - box[1];
-    if (w <= 0 || h <= 0) return;
-    const part = canvas.getContext('2d').getImageData(box[0], box[1], w, h).data;
+    const g = canvas.getContext('2d');
     engine._bindTextureDirectly(gl.TEXTURE_2D, internal, true);
     engine._unpackFlipY(flip);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], flip ? canvas.height - box[3] : box[1], w, h, gl.RGBA, gl.UNSIGNED_BYTE, part);
+    for (const box of boxes) {
+        // Only the box read off the canvas: handed the canvas itself, the browser takes all of it every time.
+        const w = box[2] - box[0], h = box[3] - box[1];
+        if (w <= 0 || h <= 0) continue;
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, box[0], flip ? canvas.height - box[3] : box[1], w, h, gl.RGBA, gl.UNSIGNED_BYTE, g.getImageData(box[0], box[1], w, h).data);
+    }
     if (internal.generateMipMaps) gl.generateMipmap(gl.TEXTURE_2D);
     engine._unpackFlipY(false);
     engine._bindTextureDirectly(gl.TEXTURE_2D, null);

@@ -6,7 +6,7 @@
 // using how many texture units a metre of skin takes up where it landed.
 
 import * as BABYLON from '@babylonjs/core';
-import { sendCanvasPart } from './fluid.ts';
+import { sendCanvasParts } from './fluid.ts';
 const V3 = BABYLON.Vector3;
 
 const SIZE = 2048;
@@ -77,14 +77,15 @@ export class Marks {
             for (const t of this._dirty) {
                 const tiles = this._tiles.get(t);
                 if (!tiles) { t.update(); continue; }
-                const canvas = t.getContext().canvas as HTMLCanvasElement;
+                const canvas = t.getContext().canvas as HTMLCanvasElement, boxes = [];
                 for (let ty = 0; ty < TILES; ty++) for (let tx = 0; tx < TILES;) {
                     if (!tiles[ty * TILES + tx]) { tx++; continue; }
                     let end = tx;
                     while (end < TILES && tiles[ty * TILES + end]) tiles[ty * TILES + end++] = 0;
-                    sendCanvasPart(t, canvas, [tx * TILE, ty * TILE, end * TILE, (ty + 1) * TILE], true);
+                    boxes.push([tx * TILE, ty * TILE, end * TILE, (ty + 1) * TILE]);
                     tx = end;
                 }
+                sendCanvasParts(t, canvas, boxes, true);
             }
             this._dirty.clear();
             this._tiles.clear();
