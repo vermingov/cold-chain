@@ -464,12 +464,15 @@ export class Ragdoll {
             seg.lo[1] = -j.twist * RAD;
             seg.hi[1] = j.twist * RAD;
         }
-        // Havok reads the bend as an angle from -180 to 180 degrees about its own zero, which is put in the middle of the
-        // bend's range, as far from both ends of it as it can be. (At the neutral, the shoulder's 175 degrees up in front
-        // lay 5 degrees short of where the angle goes over from 180 to -180: an arm reaching overhead went past it, read
-        // as far out past the range the other way, and the limit and the muscles threw it back round the long way, the
-        // arm flailing at up to 100 rad/s.) `seg.zero` is that middle, in the joint's own angles (angles(), hold(), range()).
-        seg.zero = (seg.lo[0] + seg.hi[0]) / 2;
+        // Havok reads the bend as an angle from -180 to 180 degrees about its own zero, which is turned off the neutral
+        // where a range comes nearer than 35 degrees to where the angle goes over: only the shoulder's, 175 up in front.
+        // (There, 5 degrees short of it, an arm crawling or reaching overhead went past, was read as far out past the range
+        // the other way, and the limit and the muscles threw it back round the long way, the arm flailing at up to 100
+        // rad/s. Not the middle of every range: Havok's twist and side are not measured independently of where the bend's
+        // zero is, and a shoulder zeroed at the middle of its range, 58 degrees up, held a hurt arm across the belly 40
+        // degrees less turned than it was asked and shook it at 5 Hz.) `seg.zero` is in the joint's own angles (angles(),
+        // hold(), range()).
+        seg.zero = Math.max(seg.hi[0] - 145 * RAD, Math.min(seg.lo[0] + 145 * RAD, 0));
         const params = { pivotA: pivot.subtract(parent.head), pivotB: pivot.subtract(seg.head), axisA: hinge, perpAxisA: along.applyRotationQuaternion(Q.RotationAxis(hinge, seg.zero)),
             axisB: hinge.applyRotationQuaternion(seg.unneutral), perpAxisB: along.applyRotationQuaternion(seg.unneutral), collision: false };
         const limits: any[] = [{ axis: AXIS.LINEAR_DISTANCE, minLimit: 0, maxLimit: 0 }];
