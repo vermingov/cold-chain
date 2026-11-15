@@ -56,6 +56,10 @@ are not ported: wounds, blood film and bruises are painted on the GPU (render-to
    (mesh cutting), face/eyes/teeth/hider/dressing's look.
 4. Parity pass against the TS game scenario by scenario, performance (the F2 profiler's numbers), a release build for
    the user's machines (Linux and Windows), then ask the user about dev/BACKLOG.md.
+   Last, once every scenario matches (the user's word, 2026-11-15): delete the Babylon game from this branch (src/,
+   play.html, the Vite configs, package.json, node_modules, the browser-only tools such as tools/rig.mjs and the
+   port-*.mjs checks). It stays on GitHub: main, wip/0.8.19 and gh-pages keep it, and the history has every file. Not
+   before: until then it is the reference every port job reads and the game every check is compared against.
 
 ## The foundation (phase 1), for the jobs after it
 
@@ -179,12 +183,12 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
 - The bandage and medkit: weapons.rs `medic` (the TS's Medic: aim, hold, its sounds and the hands' motion) on
   dressing.rs `wounds` and `dress`.
 - What medicine wants heard (`Happened::Say`, `Cut`, `Sound`) is played by sound.rs `hurts`: a cry follows the head bone.
-- `weapons::segment_ends(segment)` is where a segment is for the cheap tests before npc.surface: its `rest` until the
-  ragdoll moves people (`Hurt::segments`).
-- `// port: needs body` marks where the ragdoll plugs in: taking hold of a person (`take_hold`: knockDown, the
-  segment's rigid body, then the same spring `pull` gives a thing, every fixed step before SyncBackend), the
-  grenade's blast impulses (`explode`), a thrown thing landing on someone (`flying`). Grabbing and dragging *things*
-  (casings, thrown props) works now.
+- Where people are, for the cheap tests before npc.surface: `Cx::ends(who, person, k)` (the ragdoll's segment ends) and
+  `Cx::centre`. Taking hold of a person inserts behaviour.rs `Grabbed` (aimed every frame, removed to let go); a thing
+  is held by weapons.rs's own spring (`pull`). The grenade's blast pushes every segment (`Ragdoll::push`) and knocks
+  down whoever is within 3.5 m; a thrown thing or the grenade touching a segment (Rapier's contacts) lands a blow
+  (`landings`); a `thuds::Slam` is a blow ('wall'). The body's `thuds::Heard` and `thuds::Dragging` are played by
+  sound.rs `bodies`.
 - `// port: needs blood`: what a bloody blade sheds (weapons.ts `_shed`, blood.spray). The blade's blood (`Weapons::blades`) and its stain are here.
 - Input goes through `Weapons::queue` (`Act::Press(0|2)`, `Release`, `Select(i)`, `Reload`, `Take`, `PutBack`), which a
   scenario can push to as the mouse and keys do.
@@ -262,3 +266,54 @@ bat blows; chest, belly, neck, head, mouth, eye, thigh, shin, ribs; two then dre
 standing people, on a person made whole again each time, with the TS people's breathing clocks, and logs a minute of
 vitals. tools/port-wounds.mjs fires the same in the TS game (dev server, rig; Math.random seeded as `Dice`, drawing
 stubbed, no physics stepped); tools/port-wounds-compare.py compares the two logs.
+
+## The body (phase 2, branch port/body)
+
+ragdoll.rs (the bodies), motor.rs, behaviour.rs, thuds.rs and poses.rs's helpers are the TS's, number for number, with
+the reasons in the comments; where Rapier needed something else, the comment says what and why.
+
+### A person's body
+Every person made (`person::spawn`) is given, before the next physics step (behaviour.rs `make`, PreUpdate):
+- `ragdoll::Ragdoll`: `segs[k]` in `person.segments`' order, each with `def` (the fitted `Segment`), `entity` (its
+  Rapier body: a top-level entity, `RigidBody::Dynamic`, the segment's collider, its mass and inertia as ragdoll.ts gave
+  them), and after every step `now` (its world Transform: its bone's head and turn), `vel`, `spin`, `was` (its velocity
+  before the step). Joints: an `ImpulseJoint` on each segment's entity (the TS's per-axis ranges, the shoulder's 30-degree
+  bend zero, ForceBased motors for the muscles), a second free joint beside it whose velocity motors are the tone (Havok's
+  axis friction), and contact-less free joints between the halves of the long bones either side of an elbow or knee
+  (`_apart`). Self-collision is everyone's segments against everyone's but jointed neighbours (collision groups TRUNK,
+  ROOTS, LIMBS; the per-person bit for pieces cut off is dismember.rs's to add).
+  Asking it: `by_name`, `world_point`, `middle`, `com`, `com_velocity`, `lowest`, `nearest(point)`, `outside`,
+  `segment_ends`, `angles(k)` (the joint's angles from its neutral), `cut_off`, `loose`, `push(k, impulse, at)`,
+  `set_tone`, `break_at`, `set_range`, `change` (medicine's `npc::Joint`), `entities()` (to despawn).
+- `behaviour::Behaviour`: `state` (Stand, Fall, Down), `mode`, `will`, `strength`, `wound`, `felt` (the vitals as it read
+  them this frame), `why` (why they last went over). `hit(rd, root, rng, seg, impulse, point, jolt)` is behaviour.hit;
+  `knock_down(rng)` puts them off their feet.
+- The skeleton follows the bodies: each frame `Ragdoll::drive` writes `person.posed` (the pelvis as the frame, every
+  segment's turn on its lead bone, the spine's and the neck's spread over their bones, the bones between left straight,
+  the fingers posed from the pose), so `person.joint`, medicine's `bone_worlds` and the drawn skeleton are the bodies'.
+  Each drawn part has Bevy's `DynamicSkinnedMeshBounds` (its bounds kept from its bones; the x-ray's are not yet).
+
+### Holding and dragging (for the hands)
+`behaviour::Grabbed` on the person is weapons.ts's grab of a body: `Grabbed::at(&ragdoll, point, eye)` takes hold of the
+segment nearest the point (insert it; they go down and writhe, `why` "grabbed"), `grabbed.aim(eye, ahead)` each frame is
+`_hold` (drawn to in front of the eye, as far as it was taken from, at most 2.2 m), and the pull is weapons.ts `step`,
+given every physics step (behaviour.rs `pull`). Let go: remove the component.
+
+### Sounds and slams (thuds.rs)
+`thuds::Heard { name, at, gain }` (a message): the takes a body makes (thuds, `body-fall` from behaviour) for sound.rs to
+play; until it does, the scenarios log them. `thuds::Slam` is a segment slammed into something standing (wounds.rs's
+`blow(.., 'wall')` to take), `thuds::Dragging` (a resource) the 'drag' stream's place and gain.
+
+### Medicine
+behaviour.rs writes `Hurt::segments` and calls `bones().fell` after every step (`landings`), and once a frame
+(PostUpdate, `hurts`) takes `Hit`, `Joint` and `Broke` from `Hurt::happened` and calls `bones().opens` with the ragdoll's
+bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the breaks.
+
+### Physics
+120 Hz, one step a tick, as phase 1 set it. Rapier's solver is given sixteen passes and warm-started joints (ragdoll.rs
+`solver`): at its defaults a standing body's knees sagged and its feet crept along the floor.
+
+### Scenarios
+`stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
+`jitter` of its situation as the TS's jitter.mjs measured it, and Rapier's time a step), `keys` (K and N), `joints` (every
+joint's angles and aims, standing).

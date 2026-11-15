@@ -25,7 +25,9 @@ use serde_json::{json, Value};
 use crate::arsenal::Arsenal;
 use crate::map::WORLD;
 use crate::models::Models;
+use crate::behaviour::{Behaviour, Grabbed};
 use crate::dressing::{self, REACH, SECONDS};
+use crate::ragdoll::Ragdoll;
 use crate::npc::{self, Hurt, Npc};
 use crate::person::Person;
 use crate::vitals::{Dice, Vitals};
@@ -447,8 +449,11 @@ pub struct Weapons {
     pub since: f32,
     later: Vec<(f32, Later)>,
     grab: Option<Grab>,
+    // A person held (their Grabbed), and when each thing in flight last landed a blow.
+    holding: Option<Entity>,
+    struck: HashMap<Entity, f32>,
     grenades: Vec<(Entity, f32)>,
-    thrown: Vec<Entity>,
+    thrown: Vec<(Entity, f32, Option<f32>)>,
     casings: HashMap<&'static str, (Vec<Entity>, usize)>,
     holes: (Vec<Entity>, usize),
     // A blade's blood: ml on it, ml that stays on as a smear, how long since it was in, per blade.
@@ -514,6 +519,8 @@ impl Default for Weapons {
             since: f32::INFINITY,
             later: Vec::new(),
             grab: None,
+            holding: None,
+            struck: HashMap::new(),
             grenades: Vec::new(),
             thrown: Vec::new(),
             casings: HashMap::new(),
@@ -665,8 +672,7 @@ fn load(assets: Res<AssetServer>, mut models: ResMut<WeaponModels>) {
 
 // --- people, as far as a weapon needs them ----------------------------------------------------------------------------
 
-// A segment's two ends in the world (ragdoll.ts segmentEnds) and its thickness.
-// port: needs body. Where each segment is now: until the ragdoll moves them, as the person stands at spawn (`rest`).
+// A segment's two ends as the person was made (`rest`): where a person with no ragdoll yet is (Cx::ends has the live ones).
 pub fn segment_ends(s: &crate::ragdoll::Segment) -> (Vec3, Vec3) {
     (s.rest.translation, s.rest.transform_point(s.end))
 }
@@ -765,17 +771,6 @@ fn blow(cx: &mut Cx, who: Entity, point: Vec3, dir: Vec3, mass: f32, speed: f32,
                                 "speed": speed, "joules": 0.5 * mass * speed * speed, "tool": format!("{tool:?}") }));
 }
 
-// The point of the segments of `person` nearest `p` (ragdoll.ts nearest): which segment.
-fn nearest(person: &Person, p: Vec3) -> usize {
-    let dist = |s: &crate::ragdoll::Segment| {
-        let (a, b) = segment_ends(s);
-        let u = b - a;
-        let k = ((p - a).dot(u) / u.length_squared().max(1e-9)).clamp(0.0, 1.0);
-        p.distance(a + u * k)
-    };
-    (0..person.segments.len()).min_by(|&i, &j| dist(&person.segments[i]).total_cmp(&dist(&person.segments[j]))).unwrap_or(0)
-}
-
 // --- the thing in the hand --------------------------------------------------------------------------------------------
 
 // Where a model's muzzle (or point) and ejection port are in the hand's frame, and which way across a blade its edge is.
@@ -842,6 +837,10 @@ pub struct Cx<'w, 's> {
     pub hurts: Query<'w, 's, (&'static Transform, &'static mut Vitals, &'static mut Hurt), Without<Player>>,
     pub dice: ResMut<'w, Dice>,
     pub frame: Res<'w, FrameCount>,
+    pub ragdolls: Query<'w, 's, &'static mut Ragdoll>,
+    pub behaviours: Query<'w, 's, &'static mut Behaviour>,
+    pub grabbed: Query<'w, 's, &'static mut Grabbed>,
+    pub slams: MessageReader<'w, 's, crate::thuds::Slam>,
 }
 
 struct Wall {
@@ -859,6 +858,26 @@ impl Cx<'_, '_> {
         let traced = hurt.traced.clone();
         let mut npc = Npc { person, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut self.dice, frame: self.frame.0 };
         Some(f(&mut npc))
+    }
+
+    // A person's segment `k` in the world now (its two ends): their ragdoll's, or as they were made.
+    pub fn ends(&self, who: Entity, p: &Person, k: usize) -> (Vec3, Vec3) {
+        match self.ragdolls.get(who) {
+            Ok(rd) => {
+                let [a, b] = rd.segment_ends(k);
+                (a, b)
+            }
+            Err(_) => segment_ends(&p.segments[k]),
+        }
+    }
+
+    // Where a person is as a whole: the middle of their pelvis (ragdoll.ts centre).
+    pub fn centre(&self, who: Entity, p: &Person) -> Vec3 {
+        let k = p.segments.iter().position(|s| s.name == "pelvis").unwrap_or(0);
+        match self.ragdolls.get(who) {
+            Ok(rd) => rd.segs[k].now.translation,
+            Err(_) => p.segments[k].rest.translation,
+        }
     }
 
     fn eye(&self) -> Transform {
@@ -883,8 +902,8 @@ impl Cx<'_, '_> {
     fn person(&self, origin: Vec3, dir: Vec3, far: f32) -> Option<(Entity, f32)> {
         let mut best: Option<(Entity, f32)> = None;
         for (e, p) in &self.people {
-            for s in &p.segments {
-                let (a, b) = segment_ends(s);
+            for (k, s) in p.segments.iter().enumerate() {
+                let (a, b) = self.ends(e, p, k);
                 let (t, d) = ray_to_segment(origin, dir, a, b);
                 if t > 0.0 && t < far && d < s.radius + 0.12 && best.is_none_or(|(_, bt)| t < bt) {
                     best = Some((e, t));
@@ -1111,9 +1130,9 @@ fn meets(cx: &mut Cx, a: Vec3, b: Vec3) -> Option<(Entity, Crossing, Vec3)> {
     let near: Vec<Entity> = cx
         .people
         .iter()
-        .filter(|(_, p)| {
-            p.segments.iter().any(|s| {
-                let (pa, pb) = segment_ends(s);
+        .filter(|(e, p)| {
+            p.segments.iter().enumerate().any(|(k, s)| {
+                let (pa, pb) = cx.ends(*e, p, k);
                 let (t, dist) = ray_to_segment(a, d, pa, pb);
                 dist < s.radius + 0.1 && t > -0.1 && t < far + 0.1
             })
@@ -1239,15 +1258,18 @@ fn bloody(w: &mut Weapons, key: &'static str, area: f32) {
 fn take_hold(cx: &mut Cx) {
     let eye = cx.eye();
     let (at, ahead) = (eye.translation, eye.forward().as_vec3());
-    // port: needs body. Bowel that has come out is taken before the body (viscera.pick); a person is knocked down and
-    // held by the segment nearest the skin looked at (ragdoll.nearest, the segment's rigid body). Until the ragdoll
-    // lands, a person met is only logged.
+    // port: phase 3. Bowel that has come out is taken before the body (viscera.pick).
+    // A person: knocked down and held by the segment nearest the skin looked at (behaviour.rs Grabbed), pulled every
+    // physics step toward in front of the eye.
     if let Some((who, _)) = cx.person(at, ahead, 3.0) {
-        if let Some(skin) = cx.npc(who, |n| surface(n, at, ahead, 3.0)).flatten() {
-            let label = cx.label(who);
-            let seg = cx.people.get(who).unwrap().1.segments[skin.segment].name.clone();
-            cx.weapons.log.push(json!({ "grab": label, "segment": seg, "point": skin.point.to_array() }));
-        }
+        let Some(skin) = cx.npc(who, |n| surface(n, at, ahead, 3.0)).flatten() else { return };
+        let Ok(rd) = cx.ragdolls.get(who) else { return };
+        let g = Grabbed::at(rd, skin.point, at);
+        let seg = rd.segs[g.seg].def.name.clone();
+        cx.commands.entity(who).insert(g);
+        cx.weapons.holding = Some(who);
+        let label = cx.label(who);
+        cx.weapons.log.push(json!({ "grab": label, "segment": seg, "point": skin.point.to_array() }));
         return;
     }
     // Or a thing.
@@ -1262,14 +1284,9 @@ fn take_hold(cx: &mut Cx) {
 
 // --- throwing things, the grenade -------------------------------------------------------------------------------------
 
-// A thing in flight, for the blows it lands (`flying`).
+// A thing thrown (its blows are `landings`').
 #[derive(Component)]
-pub struct Thrown {
-    mass: f32,
-    stiffness: Option<f32>,
-    last: f32,
-    was: Vec3,
-}
+pub struct Thrown;
 
 // A grenade's ball, carrying the model.
 #[derive(Component)]
@@ -1302,11 +1319,11 @@ fn throw(cx: &mut Cx) {
         Friction::coefficient(0.6),
         Restitution::coefficient(0.15),
         Velocity { linear: v, angular: spin },
-        Thrown { mass, stiffness, last: -1.0, was: v },
+        Thrown,
     ));
-    cx.weapons.thrown.push(e);
+    cx.weapons.thrown.push((e, mass, stiffness));
     if cx.weapons.thrown.len() > 30 {
-        let old = cx.weapons.thrown.remove(0);
+        let old = cx.weapons.thrown.remove(0).0;
         cx.commands.entity(old).despawn();
     }
 }
@@ -1364,7 +1381,7 @@ fn explode(cx: &mut Cx, ball: Entity) {
     let Ok((t, _)) = cx.bodies.get(ball) else { return };
     let at = t.translation;
     cx.note("grenade went off".into());
-    let near: Vec<(String, f32)> = cx.people.iter().map(|(_, p)| (p.label.clone(), p.segments.iter().find(|s| s.name == "pelvis").map_or(0.0, |s| s.rest.translation.distance(at)))).collect();
+    let near: Vec<(String, f32)> = cx.people.iter().map(|(e, p)| (p.label.clone(), cx.centre(e, p).distance(at))).collect();
     cx.weapons.log.push(json!({ "grenade": at.to_array(), "people": near }));
     cx.commands.entity(ball).despawn();
     cx.sound.play("explosion", Play::at(at));
@@ -1373,28 +1390,38 @@ fn explode(cx: &mut Cx, ball: Entity) {
     cx.muzzle.burst(at, now, turn);
     // The blast: an impulse on every part of everyone near, falling off with the square of the distance; limbs near enough
     // torn off and a belly burst (180 g of Composition B is about 0.25 kg of TNT).
-    // port: needs body (the impulses on the segments' rigid bodies, knockDown) and medicine (dismember's blast).
-    let near: Vec<(Entity, f32, usize)> = cx
-        .people
-        .iter()
-        .filter_map(|(e, p)| {
-            let centre = p.segments.iter().find(|s| s.name == "pelvis").map_or(Vec3::ZERO, |s| s.rest.translation);
-            let d = at.distance(centre).max(0.4);
-            (d < 3.5).then(|| (e, d, nearest(p, at)))
-        })
-        .collect();
-    for (who, d, k) in near {
-        let point = cx.people.get(who).unwrap().1.segments[k].rest.translation;
-        blow(cx, who, point, (point - at).normalize(), 2.0, (12.0 / d).min(18.0), Some(Tool::Flat));
+    // port: phase 3 (dismember's blast: limbs torn off, a belly burst).
+    let people: Vec<(Entity, f32)> = cx.people.iter().map(|(e, p)| (e, at.distance(cx.centre(e, p)).max(0.4))).collect();
+    for (who, d) in people {
+        if d > 8.0 {
+            continue;
+        }
+        let total = (35.0 / (d * d)).min(60.0); // N s on the whole body
+        if let Ok(mut rd) = cx.ragdolls.get_mut(who) {
+            for k in rd.attached.clone() {
+                let p = rd.segs[k].now.translation;
+                let dir = ((p - at).normalize() + Vec3::new(0.0, 0.35, 0.0)).normalize();
+                let share = rd.segs[k].def.mass / rd.mass;
+                rd.push(k, dir * total * share, p);
+            }
+        }
+        if d < 3.5 {
+            if let Ok(mut b) = cx.behaviours.get_mut(who) {
+                b.knock_down(&mut cx.rng);
+            }
+            let Ok(rd) = cx.ragdolls.get(who) else { continue };
+            let point = rd.segs[rd.nearest(at).0].now.translation;
+            blow(cx, who, point, (point - at).normalize(), 2.0, (12.0 / d).min(18.0), Some(Tool::Flat));
+        }
     }
     // The fragments, about a thousand, each spending its energy against air first (half its speed in 15 m). Followed one
     // by one only where they meet somebody: each part of each person takes as many as the share of the sphere it covers
     // seen from the burst. A few hundred more go out every way, for the marks they leave on the room.
     let frag = Missile { name: "fragment", energy: 330.0, mass: 0.0003, speed: 1500.0, calibre: 0.004, channel: 0.004, soft: 18.0, hard: 110.0, ..M };
     let mut aims = Vec::new();
-    for (_, p) in &cx.people {
-        for s in &p.segments {
-            let (a, b) = segment_ends(s);
+    for (e, p) in &cx.people {
+        for (k, s) in p.segments.iter().enumerate() {
+            let (a, b) = cx.ends(e, p, k);
             let d = at.distance((a + b) / 2.0);
             if d > 25.0 {
                 continue;
@@ -1637,7 +1664,70 @@ pub fn act(mut cx: Cx) {
     if let Some(b) = cx.weapons.blades.get_mut(a.key) {
         b.2 += dt;
     }
+    // A person held: drawn to in front of the eye; let go with the button, or when something else is taken up.
+    if let Some(who) = cx.weapons.holding {
+        if !cx.weapons.firing || cx.weapons.arm().kind != Kind::Grab {
+            cx.weapons.holding = None;
+            cx.commands.entity(who).try_remove::<Grabbed>();
+        } else if let Ok(mut g) = cx.grabbed.get_mut(who) {
+            g.aim(eye.translation, eye.forward().as_vec3());
+        }
+    }
+    // A segment slammed into something standing takes it as a blow, broad and flat over the whole part (thuds.rs).
+    let slams: Vec<crate::thuds::Slam> = cx.slams.read().cloned().collect();
+    for sl in slams {
+        cx.npc(sl.person, |n| wounds::blow(n, sl.point, sl.normal, sl.mass, sl.toward, Some(wounds::Tool::Named("wall"))));
+    }
+    landings(&mut cx);
     medic(&mut cx, dt);
+}
+
+// A thing thrown, or the grenade, landing on someone: a blow, at the speed it is going, with its mass and how stiff it is
+// (weapons.ts's collision observers: a thrown thing over 3 m/s, a quarter of a second apart; the grenade over 5 m/s).
+fn landings(cx: &mut Cx) {
+    let now = cx.time.elapsed_secs();
+    let mut segments: HashMap<Entity, (Entity, usize)> = HashMap::new();
+    for (e, _) in &cx.people {
+        if let Ok(rd) = cx.ragdolls.get(e) {
+            for (k, s) in rd.segs.iter().enumerate() {
+                segments.insert(s.entity, (e, k));
+            }
+        }
+    }
+    let things: Vec<(Entity, f32, Option<f32>, f32, f32)> = cx
+        .weapons
+        .thrown
+        .iter()
+        .map(|&(e, mass, stiff)| (e, mass, stiff, 3.0, 0.25))
+        .chain(cx.weapons.grenades.iter().map(|&(e, _)| (e, 0.4, None, 5.0, 0.12)))
+        .collect();
+    let mut blows = Vec::new();
+    {
+        let Ok(ctx) = cx.rapier.single() else { return };
+        for (e, mass, stiff, fastest, apart) in things {
+            let Ok((t, Some(v))) = cx.bodies.get(e) else { continue };
+            let speed = v.linear.length();
+            if speed < fastest || now - cx.weapons.struck.get(&e).copied().unwrap_or(-1.0) < apart {
+                continue;
+            }
+            for pair in ctx.contact_pairs_with(e) {
+                if !pair.has_any_active_contact() {
+                    continue;
+                }
+                let other = if pair.collider1() == Some(e) { pair.collider2() } else { pair.collider1() };
+                let Some(&(who, k)) = other.and_then(|o| segments.get(&o)) else { continue };
+                blows.push((e, who, k, t.translation, v.linear, mass, stiff));
+                break;
+            }
+        }
+    }
+    for (e, who, k, at, v, mass, stiff) in blows {
+        cx.weapons.struck.insert(e, now);
+        let point = cx.ragdolls.get(who).map_or(at, |rd| rd.middle(k));
+        let speed = v.length();
+        blow(cx, who, point, v / speed, mass, speed, stiff.map(Tool::Stiff));
+        cx.sound.play("blunt", Play::at(point).gain((speed / 10.0).min(1.0)));
+    }
 }
 
 fn medic(cx: &mut Cx, dt: f32) {
@@ -1666,7 +1756,7 @@ fn medic(cx: &mut Cx, dt: f32) {
         let near: Vec<Entity> = cx
             .people
             .iter()
-            .filter(|(_, p)| at.distance(p.segments.iter().find(|s| s.name == "pelvis").map_or(Vec3::ZERO, |s| s.rest.translation)) <= REACH + 1.2)
+            .filter(|(e, p)| at.distance(cx.centre(*e, p)) <= REACH + 1.2)
             .map(|(e, _)| e)
             .collect();
         for who in near {
@@ -1739,9 +1829,9 @@ fn sight(mut cx: Cx, camera: Query<(&Camera, &GlobalTransform), With<Player>>) {
     }
     let (from, ahead) = cx.bore(key);
     let mut far = cx.wall(from, ahead).map_or(60.0, |w| w.distance);
-    for (_, p) in &cx.people {
-        for s in &p.segments {
-            let (a, b) = segment_ends(s);
+    for (e, p) in &cx.people {
+        for (k, s) in p.segments.iter().enumerate() {
+            let (a, b) = cx.ends(e, p, k);
             let (t, d) = ray_to_segment(from, ahead, a, b);
             if t > 0.0 && t < far && d < s.radius {
                 far = t;
@@ -1773,14 +1863,9 @@ fn pull(weapons: Res<Weapons>, time: Res<Time>, bodies: Query<(&Transform, &Velo
     commands.entity(g.body).insert(ExternalImpulse::at_point(force * dt, at, t.translation));
 }
 
-// Things in flight: a thrown thing that lands on someone fast enough lands a blow; the grenade heard where it bounces.
-// (A bounce is a sudden change in its velocity: the contact events Rapier would give need every collider to ask.)
-fn flying(
-    mut sound: ResMut<Sound>,
-    time: Res<Time>,
-    mut thrown: Query<(&Transform, &Velocity, &mut Thrown)>,
-    mut grenades: Query<(&Transform, &Velocity, &mut Grenade)>,
-) {
+// The grenade heard where it bounces. (A bounce is a sudden change in its velocity: the contact events Rapier would give
+// need every collider to ask for them.)
+fn flying(mut sound: ResMut<Sound>, time: Res<Time>, mut grenades: Query<(&Transform, &Velocity, &mut Grenade)>) {
     let now = time.elapsed_secs();
     for (t, v, mut g) in &mut grenades {
         let speed = g.was.length();
@@ -1789,12 +1874,6 @@ fn flying(
             sound.play("bounce-metal", Play::at(t.translation).gain((speed / 8.0).min(1.0)));
         }
         g.was = v.linear;
-    }
-    // port: needs body. A thrown thing meeting a person's segment (bodyOf) lands blow(person, point, its way, its mass,
-    // its speed, its stiffness) and is heard ('blunt', gain speed / 10); people have no colliders until the ragdoll.
-    for (_, v, mut th) in &mut thrown {
-        let _ = (th.mass, th.stiffness, th.last);
-        th.was = v.linear;
     }
 }
 
@@ -2601,6 +2680,11 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
         s.push(push(vec![Act::Take]));
         s.push(Step::Wait(2));
         s.push(report(format!("{key}: taken off the board")));
+        // The room cleared and new people lined up (K), so each thing meets someone standing and whole.
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            use bevy::ecs::system::RunSystemOnce;
+            let _ = w.run_system_once(crate::sandbox::reset);
+        })));
         // At rest, looking at the line-up from where the player starts: the first-person view with it.
         s.push(level(1.0));
         s.push(stand(0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
@@ -2696,9 +2780,17 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
                 at_person(&mut s);
                 s.push(Step::Wait(4));
                 s.push(push(vec![Act::Press(0)]));
-                s.push(Step::Wait(20));
+                // Held, and drawn back a step: walked back two metres while holding on.
+                s.push(Step::Wait(30));
+                s.push(stand(0.75, 2.2 - near - 2.0, [0.75, 1.0, 2.2], 1.65));
+                s.push(Step::Wait(60));
+                s.push(level(1.0));
+                s.push(Step::Wait(1));
+                s.push(Step::Shot("fp_hands_holding".into()));
+                s.push(level(4.0));
                 s.push(push(vec![Act::Release(0)]));
-                s.push(report("hands: taking hold of a person".into()));
+                s.push(Step::Wait(20));
+                s.push(report("hands: taking hold of a person and pulling".into()));
             }
             Kind::Throw => {
                 s.push(stand(0.0, -4.0, [11.0, 1.4, -4.0], 1.65));

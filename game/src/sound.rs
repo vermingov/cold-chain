@@ -866,6 +866,21 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
     saying.retain(|e, _| people.contains(*e));
 }
 
+// What the bodies make heard (thuds.rs): their thuds and falls where they happen, and a body dragged sliding on the
+// floor, from where it is, as loud as it slides fast (the 'drag' stream, made the first time it is wanted).
+fn bodies(mut sound: ResMut<Sound>, mut heard: MessageReader<crate::thuds::Heard>, dragging: Res<crate::thuds::Dragging>, mut drag: Local<Option<Stream>>) {
+    for h in heard.read() {
+        sound.play(h.name, Play::at(h.at).gain(h.gain));
+    }
+    if drag.is_none() && dragging.gain > 0.0 {
+        *drag = sound.stream("drag", Some(dragging.at));
+    }
+    if let Some(d) = drag.as_ref() {
+        d.at(dragging.at);
+        d.drive(dragging.gain, 1.0);
+    }
+}
+
 // A footfall heard (player.ts onStep): harder running, softer on the heels.
 fn steps(mut sound: ResMut<Sound>, players: Query<&Player>, mut last: Local<u32>) {
     let Ok(p) = players.single() else { return };
@@ -880,7 +895,7 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(Sound::new())
         .add_systems(Startup, (load, mix).chain())
         .add_systems(Update, steps)
-        .add_systems(PostUpdate, (hurts, crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));
+        .add_systems(PostUpdate, (hurts, bodies, crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));
 }
 
 #[test]

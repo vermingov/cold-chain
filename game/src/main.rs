@@ -11,6 +11,7 @@
 mod anatomy;
 mod arm;
 mod arsenal;
+mod behaviour;
 mod bones;
 mod bruise;
 mod dressing;
@@ -22,6 +23,7 @@ mod hud;
 mod map;
 mod models;
 mod muzzle;
+mod motor;
 mod npc;
 mod person;
 mod picture;
@@ -35,6 +37,7 @@ mod scenario;
 mod solids;
 mod sound;
 mod surfaces;
+mod thuds;
 mod teeth;
 mod throat;
 mod vitals;
@@ -141,7 +144,9 @@ fn main() -> AppExit {
         hud::plugin,
     ))
     // The hands and ears (dev/PORT.md phase 2): the thing in the hand's flash, the arms and fists, F2.
-    .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin));
+    .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin))
+    // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
+    .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {
