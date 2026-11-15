@@ -595,6 +595,8 @@ pub struct Ragdoll {
     between: Vec<usize>,
     // The entities of the free joints that keep the halves of the long bones either side of an elbow or knee apart.
     apart: Vec<Entity>,
+    // Seconds of physics since it was made.
+    pub age: f32,
 }
 
 // A segment's collider, in its own frame (origin at its bone's head, axes the body's at rest).
@@ -715,7 +717,7 @@ impl Ragdoll {
         let between = (0..body.bones.len())
             .filter(|i| !lead.contains(i) && !NOT.iter().any(|n| body.bones[*i].name.contains(n)))
             .collect();
-        let mut rd = Ragdoll { segs, attached: (0..defs.len()).collect(), mass: defs.iter().map(|d| d.mass).sum(), tone: ALIVE, toned: false, limp: false, between, apart: Vec::new() };
+        let mut rd = Ragdoll { segs, attached: (0..defs.len()).collect(), mass: defs.iter().map(|d| d.mass).sum(), tone: ALIVE, toned: false, limp: false, between, apart: Vec::new(), age: 0.0 };
         for k in 0..defs.len() {
             if defs[k].joint.is_some() {
                 rd.join(commands, person, k);
@@ -1243,7 +1245,8 @@ impl Ragdoll {
     // --- every physics step -----------------------------------------------------------------------------------------
 
     // Where the bodies are now and how they move, after a step.
-    fn read(&mut self, bodies: &Query<(&Transform, &Velocity, &mut ExternalImpulse)>) {
+    fn read(&mut self, bodies: &Query<(&Transform, &Velocity, &mut ExternalImpulse)>, dt: f32) {
+        self.age += dt;
         for s in &mut self.segs {
             if let Ok((t, v, _)) = bodies.get(s.entity) {
                 s.now = *t;
@@ -1280,9 +1283,9 @@ pub enum Steps {
     Give,
 }
 
-fn read(mut ragdolls: Query<&mut Ragdoll>, bodies: Query<(&Transform, &Velocity, &mut ExternalImpulse)>) {
+fn read(time: Res<Time>, mut ragdolls: Query<&mut Ragdoll>, bodies: Query<(&Transform, &Velocity, &mut ExternalImpulse)>) {
     for mut rd in &mut ragdolls {
-        rd.read(&bodies);
+        rd.read(&bodies, time.delta_secs());
     }
 }
 

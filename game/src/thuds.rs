@@ -92,6 +92,12 @@ fn met(
             let Some(&(person, k)) = body_of.get(&who) else { continue };
             let other = body_of.get(&other);
             let rd = people.get(person).unwrap().1;
+            // (Not while a person just made settles into their stance: Rapier pushes the upper arms off the belly and the
+            // soles up out of the floor where the pose has them a little into each other, and reports the push as a
+            // contact of 8 to 20 m/s. bones.rs leaves its landings alone as long, 1.5 s.)
+            if rd.age < 1.5 {
+                continue;
+            }
             let seg = &rd.segs[k];
             // A segment's own neighbours meet all the time as it moves: only a hard one is heard.
             let own = other.is_some_and(|o| o.0 == person);
