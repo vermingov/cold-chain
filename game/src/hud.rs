@@ -98,7 +98,7 @@ fn spawn(mut commands: Commands, assets: Res<AssetServer>) {
         "Bandage or medkit: hold left click on a wound (the medkit dresses all of them, one after another).",
         "N: another person where you are looking. X: see inside them. K: clear the room. H: hide this.",
     ];
-    commands.spawn((Node { max_width: px(34.0 * REM), flex_direction: FlexDirection::Column, ..at(Some(1.0), None, None, Some(1.0)) }, Help)).with_children(|c| {
+    commands.spawn((Node { width: px(34.0 * REM), flex_direction: FlexDirection::Column, ..at(Some(1.0), None, None, Some(1.0)) }, Help)).with_children(|c| {
         for line in help {
             c.spawn((Text::new(line), font(r, 0.9), LineHeight::RelativeToFont(1.35), TextColor(HELP), shadow()));
         }
@@ -162,7 +162,7 @@ fn update(
                 let on = i == weapons.slot;
                 let (num, name) = if on { (PALE, BRIGHT) } else if k.is_none() { (DIM, DIM) } else { (Color::srgb(0.435, 0.416, 0.376), FAINT) };
                 commands.spawn((Node { align_items: AlignItems::Baseline, ..default() }, ChildOf(e))).with_children(|c| {
-                    c.spawn((Text::new(format!("{} ", i + 1)), font(r, 0.8), TextColor(num), shadow()));
+                    c.spawn((Text::new(format!("{}", i + 1)), font(r, 0.8), TextColor(num), shadow(), Node { margin: UiRect::right(px(0.2 * REM)), ..default() }));
                     c.spawn((Text::new(k.map_or("Hands", |k| arm(k).name)), font(r, 1.0), TextColor(name), shadow()));
                 });
             }
@@ -182,7 +182,7 @@ fn update(
             commands.entity(e).despawn_children();
             if let Some(t) = &text {
                 commands.spawn((Node { align_items: AlignItems::Baseline, ..default() }, ChildOf(e))).with_children(|c| {
-                    c.spawn((Text::new("E "), font(r, 0.8), TextColor(FAINT), shadow()));
+                    c.spawn((Text::new("E"), font(r, 0.8), TextColor(FAINT), shadow(), Node { margin: UiRect::right(px(0.35 * REM)), ..default() }));
                     c.spawn((Text::new(t.clone()), font(r, 1.1), TextColor(INK), shadow()));
                 });
             }

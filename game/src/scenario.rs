@@ -21,6 +21,7 @@ use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCapture
 use serde_json::{json, Value};
 
 use crate::anatomy::Seeing;
+use crate::graphics::Graphics;
 use crate::map::Map;
 use crate::person::Person;
 use crate::player::Player;
@@ -115,6 +116,17 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.extend(view("hall_sw", -10.0, -10.0, [3.0, 1.5, 4.0], 1.65));
             s.extend(view("hall_east", 2.0, -2.0, [9.0, 1.5, 2.0], 1.65));
             s.extend(view("hall_north", 5.0, 7.0, [-4.0, 1.0, -6.0], 1.65));
+            // The F3 presets, and the picture drawn at 40% a side (what the adaptive scale comes down to at worst).
+            for (preset, name) in [(1, "hall_medium"), (2, "hall_low")] {
+                s.push(Step::Do(Box::new(move |w: &mut World| w.resource_mut::<Graphics>().preset = preset)));
+                s.extend(view(name, 0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
+            }
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let mut g = w.resource_mut::<Graphics>();
+                g.preset = 0;
+                g.level = 2.5;
+            })));
+            s.extend(view("hall_scaled", 0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
         }
         // The weapon board, from across the hall and up close.
         "arsenal" => {
@@ -144,19 +156,6 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = true)));
             s.extend(view("people_xray", 0.0, -1.5, [0.0, 1.0, 2.2], 1.65));
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
-        }
-        "debugparts" => {
-            s.push(only(Some("buyer")));
-            for kind in ["skin", "eyes", "teeth", "tongue", "brows", "lashes", "hair", "cloth"] {
-                s.push(Step::Do(Box::new(move |w: &mut World| {
-                    let mut q = w.query::<&Person>();
-                    let parts: Vec<(Entity, bool)> = q.iter(w).flat_map(|p| p.parts.iter().map(|&(i, e)| (e, p.body.parts[i].kind == kind)).collect::<Vec<_>>()).collect();
-                    for (e, on) in parts {
-                        *w.get_mut::<Visibility>(e).unwrap() = if on { Visibility::Inherited } else { Visibility::Hidden };
-                    }
-                })));
-                s.extend(view(&format!("debug_{kind}"), 0.75, 2.2 - 0.6, [0.75, 1.77, 2.2], 1.79));
-            }
         }
         _ => return None,
     }

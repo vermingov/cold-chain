@@ -169,10 +169,10 @@ fn build(
             }
         }
     }
-    // The lamp overhead is three metres from the bottom row (a ninth of its light at the top row's distance): a small
-    // lamp low on the board's frame lights the tools hung there, and casts no shadow. (The TS lit only the tools with
-    // it; Bevy's lights cannot pick what they light, so it lights the board round them too.)
-    commands.spawn(spot(babylon(WALL.x + 1.3, 1.45, WALL.z), babylon(-0.85, -0.5, 0.0), 2.2, 18.0));
+    // (The TS also put a small lamp low on the board's frame, 18 cd, lighting only the tools on the bottom row, which the
+    // lamp overhead reaches at a ninth of its light. Bevy's lights cannot pick what they light, and from 30 cm off the
+    // steel it threw a hot spot across the middle of the board, so it is left out: the bottom row is dimmer than the
+    // TS meant it to be.)
     commands.insert_resource(arsenal);
 }
 
