@@ -158,6 +158,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
         "sound" => s = crate::sound::scenario(),
+        "arsenal-use" => s = crate::weapons::scenario(),
         _ => return None,
     }
     Some(s)

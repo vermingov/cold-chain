@@ -220,7 +220,7 @@ fn look(motion: Res<AccumulatedMouseMotion>, cursor: Query<&CursorOptions, With<
     }
 }
 
-fn walk(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, map: Res<Map>, mut players: Query<(&mut Player, &mut Transform, &mut Projection, &Camera)>) {
+pub fn walk(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, map: Res<Map>, mut players: Query<(&mut Player, &mut Transform, &mut Projection, &Camera)>) {
     for (mut p, mut t, mut projection, camera) in &mut players {
         p.update(&map, &keys, time.delta_secs());
         *t = p.eye();

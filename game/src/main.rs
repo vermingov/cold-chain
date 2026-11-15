@@ -9,16 +9,21 @@
 #![allow(dead_code)]
 
 mod anatomy;
+mod arm;
 mod arsenal;
 mod dressing;
+mod fist;
 mod graphics;
+mod hands;
 mod hud;
 mod map;
 mod models;
+mod muzzle;
 mod person;
 mod picture;
 mod player;
 mod poses;
+mod profiler;
 mod ragdoll;
 mod rng;
 mod sandbox;
@@ -126,7 +131,9 @@ fn main() -> AppExit {
         sandbox::plugin,
         arsenal::plugin,
         hud::plugin,
-    ));
+    ))
+    // The hands and ears (dev/PORT.md phase 2): the thing in the hand's flash, the arms and fists, F2.
+    .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

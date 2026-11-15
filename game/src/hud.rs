@@ -149,6 +149,7 @@ fn update(
     monitor: Query<Entity, With<Monitor>>,
     mut ammo: Query<&mut Text, (With<Ammo>, Without<NoteText>)>,
     mut said: Query<&mut Text, (With<NoteText>, Without<Ammo>)>,
+    mut aim: Query<&mut Node, With<Aim>>,
     mut last: Local<(String, String, String)>,
 ) {
     let r = &fonts.roman;
@@ -190,9 +191,19 @@ fn update(
     }
     let a = weapons.arm();
     let rounds = match a.rounds {
+        Some(_) if weapons.reloading > 0.0 => "Reloading".to_string(),
         Some(n) => format!("{} / {n}", weapons.ammo[a.key]),
+        None if a.kind == crate::weapons::Kind::Throw => format!("Throwing a {}", weapons.throwing()),
         None => String::new(),
     };
+    // The crosshair where the gun's bore meets the world (weapons.rs `sight`), the middle of the view for anything else.
+    let (left, top) = weapons.sight.map_or((50.0, 50.0), |p| (p.x * 100.0, p.y * 100.0));
+    for mut n in &mut aim {
+        if n.left != percent(left) || n.top != percent(top) {
+            n.left = percent(left);
+            n.top = percent(top);
+        }
+    }
     for mut t in &mut ammo {
         if t.0 != rounds {
             t.0 = rounds.clone();
