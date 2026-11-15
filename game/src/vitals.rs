@@ -21,13 +21,15 @@ const COLLAPSE: f32 = 75.0; // seconds a punctured lung takes to collapse
 
 // The dice everything medical throws (a knockout is a chance, an exit wound's size varies). The TS drew on Math.random;
 // this is the generator the port's checks put in its place there (dev/PORT.md "Medicine"), so that a shot fired with
-// the same seed in both throws the same numbers in the same order: s = s * 1103515245 + 12345 (mod 2^32), over 2^32.
+// the same seed in both throws the same numbers in the same order: s = (s * 1103515245 + 12345) >>> 0, over 2^32, worked
+// as JavaScript works it, in doubles (the product rounds past 2^53: it is not the integer LCG, and must not be).
 #[derive(Resource, Clone)]
 pub struct Dice(pub u32);
 
 impl Dice {
     pub fn next(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(1103515245).wrapping_add(12345);
+        let x = self.0 as f64 * 1103515245.0 + 12345.0;
+        self.0 = (x % 4_294_967_296.0) as u32;
         (self.0 as f64 / 4_294_967_296.0) as f32
     }
 }
@@ -401,12 +403,15 @@ impl Vitals {
 mod tests {
     use super::*;
 
-    // Dice as the TS's checks seed Math.random: the first throw from 12345.
+    // Dice as the TS's checks seed Math.random: node -e 'let s = 12345; for (let i = 0; i < 3; i++) console.log(s = (s *
+    // 1103515245 + 12345) >>> 0)' gives 3554416254, 2802067456, 1358247936 (the integer LCG's second is 2802067423).
     #[test]
     fn dice_as_the_lcg() {
         let mut d = Dice(12345);
-        let s = (12345u64 * 1103515245 + 12345) % (1 << 32);
-        assert!((d.next() as f64 - s as f64 / 4294967296.0).abs() < 1e-7);
+        for want in [3554416254u32, 2802067456, 1358247936] {
+            d.next();
+            assert_eq!(d.0, want);
+        }
     }
 
     // A cut femoral artery (vessel rate at r = 4 mm: 1.2 * 16 * 0.001 = 19 ml/s at normal pressure) bleeds a 75 kg man

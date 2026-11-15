@@ -924,6 +924,24 @@ pub fn with<R>(world: &mut World, who: Entity, f: impl FnOnce(&mut Npc) -> R) ->
     })
 }
 
+// A person made whole again: fresh vitals and a fresh Hurt, as the TS's room reset (K) gave a fresh person, posed
+// standing on breathing clock `clock` (the TS's npc.clock, P.stand). For checks.
+pub fn renew(world: &mut World, who: Entity, clock: f32) {
+    let frame = world.resource::<FrameCount>().0;
+    world.resource_scope(|world, mut dice: Mut<Dice>| {
+        let mut q = world.query::<(&mut Person, &Transform, &mut Vitals, &mut Hurt)>();
+        let Ok((mut person, root, mut vitals, mut hurt)) = q.get_mut(world, who) else { return };
+        let pose = crate::poses::stand(clock, 1.0, 0.0);
+        person.posed = person.apply(&pose, Some(crate::person::FEET));
+        person.pose = pose;
+        *vitals = Vitals::new(person.mass);
+        *hurt = Hurt::new(hurt.traced.clone(), hurt.facts.clone(), &person, &mut dice);
+        let traced = hurt.traced.clone();
+        let mut npc = Npc { person: &person, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut dice, frame };
+        npc.made();
+    });
+}
+
 pub fn plugin(app: &mut App) {
     app.insert_resource(Dice(12345)).add_systems(Update, (fit, update).chain());
 }
