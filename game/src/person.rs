@@ -22,6 +22,7 @@ use std::f32::consts::PI;
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
@@ -762,6 +763,9 @@ fn part_mesh(body: &Body, p: &Part) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, bevy::mesh::VertexAttributeValues::Uint16x4(body.joints[range.clone()].to_vec()))
         .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, body.weights[range].iter().map(|w| w.map(|x| x as f32 / 255.0)).collect::<Vec<[f32; 4]>>())
         .with_inserted_indices(Indices::U32(index))
+        // (What each bone carries of it, for its bounds to follow the bones: the ragdoll takes them anywhere in the hall.)
+        .with_generated_skinned_mesh_bounds()
+        .expect("a part skinned to its bones")
 }
 
 // A person of body `name` standing at `at` (the floor under them), facing `yaw` as the TS measured it (radians from
@@ -812,7 +816,9 @@ pub fn spawn(
     for (i, p) in body.parts.iter().enumerate() {
         let Some(mesh) = &part_meshes[i] else { continue };
         let material = people.material(p, false, assets, materials);
-        parts.push((i, commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), skin.clone(), ChildOf(space))).id()));
+        // (Its bounds where its bones are each frame, not where the person stood when made: Bevy's own, kept from the
+        // part's bones, as sandbox.ts kept a box round the bodies.)
+        parts.push((i, commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), skin.clone(), DynamicSkinnedMeshBounds, ChildOf(space))).id()));
     }
     let mut person = Person {
         body: body.clone(),

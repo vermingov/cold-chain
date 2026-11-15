@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use serde_json::{json, Value};
@@ -158,7 +159,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
         "wounds" => s = wounds(),
-        _ => return None,
+        _ => return body(name),
     }
     Some(s)
 }
@@ -295,8 +296,393 @@ pub fn plugin(this: Run) -> impl Fn(&mut App) {
                 shots: 0,
                 saved: Arc::new(AtomicUsize::new(0)),
             })
-            .add_systems(Last, run);
+            .init_resource::<Jitter>()
+            .add_systems(FixedUpdate, jitter.after(crate::ragdoll::Steps::Read))
+            .add_systems(Last, (heard, run).chain());
     }
+}
+
+// --- the body (port/body) --------------------------------------------------------------------------------------------
+//
+// The ragdolls and what works them, against the TS game's numbers: standing, shoved over, getting up, crawling, dragged
+// by a hand, dead. Each logs what the people are doing second by second and how much they shake: the jitter measure of
+// the TS's scratch rig (jitter.mjs), each segment's high-frequency spin, the RMS of the second difference of its
+// angular velocity from one physics step to the next (rad/s), per second; a situation's number is that over every
+// segment, second and person in it, as the TS's multi.py and analyse.py took it.
+
+use crate::behaviour::{Behaviour, Grabbed, Mode, State as Doing};
+use crate::ragdoll::Ragdoll;
+
+#[derive(Default)]
+struct Acc {
+    state: Option<Doing>,
+    mode: Option<Mode>,
+    // Per segment: steps, the sum of the squared second difference, of |w|.
+    segs: Vec<(u32, f64, f64)>,
+}
+
+#[derive(Resource, Default)]
+struct Jitter {
+    // Per person (by entity): each segment's last two angular velocities, and the seconds measured.
+    last: std::collections::HashMap<Entity, Vec<(Option<Vec3>, Option<Vec3>)>>,
+    bins: std::collections::BTreeMap<(Entity, u32), Acc>,
+    // Rapier's own time for its steps (ms), and how many.
+    step_ms: f64,
+    steps: u32,
+}
+
+fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Query<(Entity, &Ragdoll, &Behaviour)>,
+          sims: Query<&bevy_rapier3d::prelude::RapierContextSimulation>) {
+    let Some(started) = runner.started else { return };
+    for sim in &sims {
+        j.step_ms += sim.step_stats().step_time_ms;
+        j.steps += 1;
+    }
+    let second = ((runner.frame - started) / 60) as u32;
+    let _ = time;
+    for (e, rd, b) in &people {
+        let last = j.last.entry(e).or_insert_with(|| vec![(None, None); rd.segs.len()]).clone();
+        let mut now = last.clone();
+        let acc = j.bins.entry((e, second)).or_default();
+        acc.state = Some(b.state);
+        acc.mode = Some(b.mode);
+        acc.segs.resize(rd.segs.len(), (0, 0.0, 0.0));
+        for (k, s) in rd.segs.iter().enumerate() {
+            let w = s.spin;
+            if let (Some(p), Some(p2)) = last[k] {
+                let h = w - 2.0 * p + p2;
+                let a = &mut acc.segs[k];
+                a.0 += 1;
+                a.1 += h.length_squared() as f64;
+                a.2 += w.length() as f64;
+            }
+            now[k] = (Some(w), last[k].0);
+        }
+        j.last.insert(e, now);
+    }
+}
+
+// The people in the order they were made.
+fn everyone(w: &mut World) -> Vec<Entity> {
+    let mut q = w.query_filtered::<Entity, With<Person>>();
+    let mut v: Vec<Entity> = q.iter(w).collect();
+    v.sort();
+    v
+}
+
+// The mean high-frequency spin over every segment, second and person `pick` takes (person's place in the line, second,
+// state, mode), and the five segments that shake most; into the log as `name`.
+fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool + Send + Sync + 'static) -> Step {
+    Step::Do(Box::new(move |w: &mut World| {
+        let people = everyone(w);
+        let names: Vec<String> = {
+            let mut q = w.query::<&Ragdoll>();
+            q.iter(w).next().map(|rd| rd.segs.iter().map(|s| s.def.name.clone()).collect()).unwrap_or_default()
+        };
+        let j = w.resource::<Jitter>();
+        let mut per: Vec<(f64, f64, u32)> = vec![(0.0, 0.0, 0); names.len()];
+        for (&(e, t), acc) in &j.bins {
+            let Some(i) = people.iter().position(|&p| p == e) else { continue };
+            if !pick(i, t, acc.state.unwrap(), acc.mode.unwrap()) {
+                continue;
+            }
+            for (k, &(n, h2, wsum)) in acc.segs.iter().enumerate() {
+                if n > 0 && k < per.len() {
+                    per[k].0 += (h2 / n as f64).sqrt();
+                    per[k].1 += wsum / n as f64;
+                    per[k].2 += 1;
+                }
+            }
+        }
+        let rows: Vec<(String, f64, f64)> = per.iter().zip(&names).filter(|(p, _)| p.2 > 0).map(|(p, n)| (n.clone(), p.0 / p.2 as f64, p.1 / p.2 as f64)).collect();
+        let seconds = per.first().map_or(0, |p| p.2);
+        let mean = if rows.is_empty() { 0.0 } else { rows.iter().map(|r| r.1).sum::<f64>() / rows.len() as f64 };
+        let mut worst = rows.clone();
+        worst.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let worst: Vec<Value> = worst.iter().take(5).map(|(n, hf, w)| json!({ "seg": n, "hf": (hf * 100.0).round() / 100.0, "w": (w * 100.0).round() / 100.0 })).collect();
+        info!("jitter {name}: mean hf {mean:.2} rad/s over {seconds} person-seconds");
+        log(w, json!({ "event": "jitter", "situation": name, "person_seconds": seconds, "mean_hf": (mean * 1000.0).round() / 1000.0, "worst": worst }));
+    }))
+}
+
+// Second by second, what each person was doing, where their chest was, and their mean high-frequency spin.
+fn timeline(w: &mut World) {
+    let people = everyone(w);
+    let mut chests = std::collections::HashMap::new();
+    {
+        let mut q = w.query::<(Entity, &Ragdoll)>();
+        for (e, rd) in q.iter(w) {
+            chests.insert(e, rd.segs[rd.by_name("chest")].now.translation);
+        }
+    }
+    let j = w.resource::<Jitter>();
+    let rows: Vec<Value> = j.bins.iter().filter_map(|(&(e, t), acc)| {
+        let i = people.iter().position(|&p| p == e)?;
+        let hf: Vec<f64> = acc.segs.iter().filter(|s| s.0 > 0).map(|s| (s.1 / s.0 as f64).sqrt()).collect();
+        let mean = hf.iter().sum::<f64>() / hf.len().max(1) as f64;
+        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "hf": (mean * 100.0).round() / 100.0 }))
+    }).collect();
+    let at: Vec<Value> = people.iter().map(|e| json!(chests.get(e).map(|c| c.to_array()))).collect();
+    let ms = j.step_ms / j.steps.max(1) as f64;
+    log(w, json!({ "event": "timeline", "seconds": rows, "chests": at, "physics_ms_per_step": (ms * 100.0).round() / 100.0 }));
+}
+
+// What is heard (thuds.rs), into the log while sound.rs is not there to play it.
+fn heard(mut heard: MessageReader<crate::thuds::Heard>, runner: Res<Runner>, mut log: ResMut<Log>) {
+    for h in heard.read() {
+        log.0.push(json!({ "frame": runner.frame, "what": { "event": "heard", "name": h.name, "at": h.at.to_array(), "gain": (h.gain * 100.0).round() / 100.0 } }));
+    }
+}
+
+// Every person (or the `i`th) made to do something, with their body, mind and the dice.
+fn each(i: Option<usize>, f: impl Fn(&mut Ragdoll, &mut Behaviour, &mut Rng) + Send + Sync + 'static) -> Step {
+    Step::Do(Box::new(move |w: &mut World| {
+        let people = everyone(w);
+        w.resource_scope(|w, mut rng: Mut<Rng>| {
+            for (n, &e) in people.iter().enumerate() {
+                if i.is_some_and(|i| i != n) {
+                    continue;
+                }
+                let mut q = w.query::<(&mut Ragdoll, &mut Behaviour)>();
+                let (mut rd, mut b) = q.get_mut(w, e).unwrap();
+                f(&mut rd, &mut b, &mut rng);
+            }
+        });
+    }))
+}
+
+// The player put `back` metres off person `i`'s chest, `side` to their right of the line from them to the hall's south
+// end, the eye `eye` high, looking at the chest; a picture.
+fn watch(name: String, i: usize, back: f32, side: f32, eye: f32) -> Step {
+    Step::Do(Box::new(move |w: &mut World| {
+        let e = everyone(w)[i];
+        let c = {
+            let rd = w.entity(e).get::<Ragdoll>().unwrap();
+            rd.segs[rd.by_name("chest")].now.translation
+        };
+        w.resource_scope(|w, map: Mut<Map>| {
+            let mut q = w.query::<&mut Player>();
+            for mut p in q.iter_mut(w) {
+                p.spawn(&map, c.x + side, c.z + back, Some(c), eye);
+            }
+        });
+        let mut runner = w.resource_mut::<Runner>();
+        runner.steps.push_front(Step::Shot(name.clone()));
+        runner.steps.push_front(Step::Wait(3));
+    }))
+}
+
+// `n` pictures `every` frames apart, the player kept on person `i` as they move.
+fn film(s: &mut Vec<Step>, name: &str, i: usize, n: usize, every: u32, back: f32, side: f32, eye: f32) {
+    for k in 0..n {
+        s.push(watch(format!("{name}_{k}"), i, back, side, eye));
+        s.push(Step::Wait(every));
+    }
+}
+
+fn body(name: &str) -> Option<Vec<Step>> {
+    let mut s: Vec<Step> = Vec::new();
+    match name {
+        // Four people standing ten seconds: no drift, no jitter.
+        "stand" => {
+            s.push(Step::Do(Box::new(timeline_start)));
+            s.extend(view("stand_0", 0.0, -2.0, [0.0, 1.0, 2.2], 1.65));
+            for k in 1..5 {
+                s.push(Step::Wait(120));
+                s.extend(view(&format!("stand_{k}"), 0.0, -2.0, [0.0, 1.0, 2.2], 1.65));
+            }
+            s.push(Step::Wait(100));
+            film(&mut s, "stand_feet", 1, 1, 2, -1.0, 0.6, 0.6);
+            s.push(situation("standing", |_, t, st, _| t >= 1 && st == Doing::Stand));
+            s.push(Step::Do(Box::new(drift)));
+        }
+        // Knocked out and shoved hard backwards (north, away from the player): falling, then lying still.
+        "fall" => {
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for mut v in w.query::<&mut crate::vitals::Vitals>().iter_mut(w) {
+                    v.out = 1e9;
+                }
+            })));
+            s.push(each(None, |rd, b, rng| {
+                let chest = rd.by_name("chest");
+                let at = rd.middle(chest);
+                rd.push(chest, Vec3::new(0.0, 0.0, -60.0), at);
+                b.knock_down(rng);
+            }));
+            film(&mut s, "fall", 1, 8, 20, -2.2, 1.6, 1.4);
+            s.push(Step::Wait(240));
+            s.extend(view("fall_still", 0.0, -1.0, [0.0, 0.2, 3.0], 1.65));
+            s.push(situation("lying still after the fall", |_, t, st, _| t >= 6 && st == Doing::Down));
+        }
+        // Shoved over from behind, awake: down on the front, then up again (onto all fours, a knee, a foot, up).
+        "getup" => {
+            s.push(Step::Wait(60));
+            s.push(each(None, |rd, b, rng| {
+                let chest = rd.by_name("chest");
+                let at = rd.middle(chest);
+                rd.push(chest, Vec3::new(0.0, 0.0, 60.0), at);
+                b.knock_down(rng);
+            }));
+            film(&mut s, "getup", 2, 16, 45, -2.6, 1.8, 1.5);
+            s.push(Step::Wait(120));
+            s.push(situation("getting up", |_, t, st, _| t >= 2 && st == Doing::Down));
+            s.push(situation("stood up again", |_, t, st, _| t >= 4 && st == Doing::Stand));
+        }
+        // Legs paralysed: down, rolled onto the front, and dragging themselves away on the elbows.
+        "crawl" => {
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for mut v in w.query::<&mut crate::vitals::Vitals>().iter_mut(w) {
+                    v.paralysed_legs = true;
+                }
+            })));
+            s.push(each(None, |_, b, rng| b.knock_down(rng)));
+            s.push(Step::Wait(60 * 12));
+            film(&mut s, "crawl", 1, 8, 6, -0.3, -1.8, 1.4);
+            s.push(Step::Wait(60 * 10));
+            s.push(situation("crawl", |_, _, _, m| m == Mode::Crawl));
+        }
+        // The fourth person taken by the right hand from 1.4 m off and swept about for eight seconds (the eye's yaw 0.6
+        // rad either way at 0.4 Hz, its pitch at 0.27 Hz), as jitter.mjs did, then let go.
+        "drag" => {
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let e = everyone(w)[3];
+                let (at, centre) = {
+                    let rd = w.entity(e).get::<Ragdoll>().unwrap();
+                    let hand = rd.by_name("handR");
+                    (rd.middle(hand), rd.centre())
+                };
+                let mut back = centre - at;
+                back.y = 0.0;
+                let back = back.normalize();
+                w.resource_scope(|w, map: Mut<Map>| {
+                    let mut q = w.query::<&mut Player>();
+                    for mut p in q.iter_mut(w) {
+                        p.spawn(&map, at.x - back.x * 1.4, at.z - back.z * 1.4, Some(at), 1.65);
+                    }
+                });
+                let eye = w.query::<&Player>().iter(w).next().unwrap().eye().translation;
+                let g = Grabbed::at(w.entity(e).get::<Ragdoll>().unwrap(), at, eye);
+                w.entity_mut(e).insert(g);
+                let yaw0 = w.query::<&Player>().iter(w).next().unwrap().yaw;
+                let mut runner = w.resource_mut::<Runner>();
+                let mut steps = Vec::new();
+                for k in 0..480u32 {
+                    let t = k as f32 / 60.0;
+                    steps.push(Step::Do(Box::new(move |w: &mut World| {
+                        let mut q = w.query::<&mut Player>();
+                        let eye = {
+                            let mut p = q.iter_mut(w).next().unwrap();
+                            p.yaw = yaw0 + 0.6 * (t * std::f32::consts::TAU * 0.4).sin();
+                            // (The TS's pitch 0.35 down is -0.35 here: up is positive.)
+                            p.pitch = -(0.35 + 0.15 * (t * std::f32::consts::TAU * 0.27).sin());
+                            p.eye()
+                        };
+                        let mut q = w.query::<&mut Grabbed>();
+                        for mut g in q.iter_mut(w) {
+                            g.aim(eye.translation, eye.forward().as_vec3());
+                        }
+                    })));
+                    steps.push(if k == 150 || k == 165 || k == 180 || k == 195 || k == 210 || k == 225 { Step::Shot(format!("drag_{}", (k - 150) / 15)) } else { Step::Wait(2) });
+                }
+                steps.push(Step::Do(Box::new(move |w: &mut World| {
+                    w.entity_mut(e).remove::<Grabbed>();
+                })));
+                for step in steps.into_iter().rev() {
+                    runner.steps.push_front(step);
+                }
+            })));
+            s.push(Step::Wait(120));
+            s.push(situation("dragged by the hand", |i, t, _, _| i == 3 && (2..=8).contains(&t)));
+        }
+        // Dead (the heart stopped) and down: lying dead and still.
+        "dead" => {
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let mut q = w.query::<&mut crate::vitals::Vitals>();
+                for mut v in q.iter_mut(w) {
+                    v.dead = true;
+                    v.brain_damage = 1.0;
+                }
+            })));
+            s.push(each(None, |_, b, rng| b.knock_down(rng)));
+            film(&mut s, "dead", 2, 4, 60, -2.4, 1.2, 1.5);
+            s.push(Step::Wait(60 * 6));
+            s.extend(view("dead_still", 0.0, -1.0, [0.0, 0.2, 3.0], 1.65));
+            s.push(situation("dead lying still", |_, t, _, _| t >= 4));
+        }
+        // K and N: the room cleared and lined up again (every body and joint of the old people gone), then two more made
+        // where the eye looks, one on the floor ahead and one up on the ledge.
+        "keys" => {
+            s.push(Step::Wait(30));
+            s.push(Step::Do(Box::new(count)));
+            s.push(Step::Do(Box::new(|w: &mut World| { let _ = w.run_system_once(crate::sandbox::reset); })));
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(count)));
+            s.extend(view("keys_reset", 0.0, -2.0, [0.0, 1.0, 2.2], 1.65));
+            s.extend(view("keys_aim_floor", 0.0, -3.0, [-2.0, 0.0, -0.5], 1.65));
+            s.push(Step::Do(Box::new(|w: &mut World| { let _ = w.run_system_once(crate::sandbox::spawn_looked_at); })));
+            s.extend(view("keys_aim_ledge", 5.0, -2.0, [9.0, 1.0, -2.0], 1.65));
+            s.push(Step::Do(Box::new(|w: &mut World| { let _ = w.run_system_once(crate::sandbox::spawn_looked_at); })));
+            s.push(Step::Wait(120));
+            s.push(Step::Do(Box::new(count)));
+            s.extend(view("keys_made", 3.0, -5.0, [3.0, 0.8, -1.0], 1.65));
+        }
+        // Every joint of the first person: where it is, where its muscle aims, its range, standing a moment.
+        "joints" => {
+            for _ in 0..4 {
+                s.push(Step::Do(Box::new(joints)));
+                s.push(Step::Wait(15));
+            }
+        }
+        _ => return None,
+    }
+    s.push(Step::Do(Box::new(timeline)));
+    Some(s)
+}
+
+// Where each person's pelvis is as the run begins, to measure how far they drift standing.
+#[derive(Resource)]
+struct Start(Vec<Vec3>);
+
+fn pelvises(w: &mut World) -> Vec<Vec3> {
+    let people = everyone(w);
+    people.iter().map(|&e| w.entity(e).get::<Ragdoll>().unwrap().centre()).collect()
+}
+
+fn timeline_start(w: &mut World) {
+    let at = pelvises(w);
+    w.insert_resource(Start(at));
+}
+
+fn drift(w: &mut World) {
+    let now = pelvises(w);
+    let was = w.resource::<Start>().0.clone();
+    let moved: Vec<Value> = now.iter().zip(&was).map(|(a, b)| json!({ "level_cm": ((a - b).with_y(0.0).length() * 1000.0).round() / 10.0, "height_cm": ((a.y - b.y) * 1000.0).round() / 10.0 })).collect();
+    log(w, json!({ "event": "drift", "people": moved }));
+}
+
+fn joints(w: &mut World) {
+    let e = everyone(w)[0];
+    let rd = w.entity(e).get::<Ragdoll>().unwrap();
+    let deg = |a: [f32; 3]| a.map(|x| (x / crate::person::RAD).round());
+    let rows: Vec<Value> = (0..rd.segs.len()).filter(|&k| rd.segs[k].def.parent.is_some()).map(|k| {
+        let (t, f) = rd.aim(k);
+        let s = &rd.segs[k];
+        json!({ "seg": s.def.name, "now": deg(rd.angles(k)), "aim": deg(t), "f": f.round(), "lo": deg(s.lo), "hi": deg(s.hi), "y": (s.now.translation.y * 100.0).round() / 100.0 })
+    }).collect();
+    log(w, json!({ "event": "joints", "rows": rows }));
+}
+
+// How many people there are, and how many rigid bodies and joints in all, into the log.
+fn count(w: &mut World) {
+    let people = w.query::<&Person>().iter(w).count();
+    let bodies = w.query::<&bevy_rapier3d::prelude::RigidBody>().iter(w).count();
+    let joints = w.query::<&bevy_rapier3d::prelude::ImpulseJoint>().iter(w).count();
+    let at: Vec<Value> = w.query::<&Ragdoll>().iter(w).map(|rd| json!(rd.centre().to_array())).collect();
+    log(w, json!({ "event": "count", "people": people, "bodies": bodies, "joints": joints, "at": at }));
 }
 
 // --- wounds: the same shots and blows as the TS game took (medicine, dev/PORT.md) ------------------------------------

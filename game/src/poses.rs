@@ -51,3 +51,51 @@ pub fn stand(t: f32, breathe: f32, still: f32) -> Pose {
         ("neckFlex", 4.0 + (t * 0.23).sin() * 2.0 * (1.0 - still)),
     ])
 }
+
+// `a` blended toward `b` by `t`, control by control (a control one of them leaves out is at rest there).
+pub fn mix(a: &Pose, b: &Pose, t: f32) -> Pose {
+    let mut out: Pose = a.iter().map(|&(k, v)| (k, v * (1.0 - t) + get(b, k) * t)).collect();
+    for &(k, v) in b {
+        if !a.iter().any(|(n, _)| *n == k) {
+            out.push((k, v * t));
+        }
+    }
+    out
+}
+
+// One control set to `v`.
+pub fn set(pose: &mut Pose, key: &'static str, v: f32) {
+    match pose.iter_mut().find(|(n, _)| *n == key) {
+        Some((_, x)) => *x = v,
+        None => pose.push((key, v)),
+    }
+}
+
+// `v` added to one control.
+pub fn add(pose: &mut Pose, key: &'static str, v: f32) {
+    let now = get(pose, key);
+    set(pose, key, now + v);
+}
+
+// The control `name` on side `s` ('L' or 'R'): the TS wrote `'shoulderFlex' + side`.
+pub fn side(name: &str, s: char) -> &'static str {
+    const SIDED: [[&str; 3]; 14] = [
+        ["shoulderFlex", "shoulderFlexL", "shoulderFlexR"], ["shoulderAbduct", "shoulderAbductL", "shoulderAbductR"],
+        ["shoulderTwist", "shoulderTwistL", "shoulderTwistR"], ["elbow", "elbowL", "elbowR"], ["wrist", "wristL", "wristR"],
+        ["curl", "curlL", "curlR"], ["thumb", "thumbL", "thumbR"], ["thumbBase", "thumbBaseL", "thumbBaseR"], ["thumbIn", "thumbInL", "thumbInR"],
+        ["hipFlex", "hipFlexL", "hipFlexR"], ["hipAbduct", "hipAbductL", "hipAbductR"], ["knee", "kneeL", "kneeR"], ["ankle", "ankleL", "ankleR"],
+        ["shrug", "shrugL", "shrugR"],
+    ];
+    let row = SIDED.iter().find(|r| r[0] == name).unwrap_or_else(|| panic!("no sided control {name}"));
+    if s == 'L' { row[1] } else { row[2] }
+}
+
+#[test]
+fn mixed() {
+    let a: Pose = vec![("kneeL", 10.0)];
+    let b: Pose = vec![("kneeL", 30.0), ("elbowR", 20.0)];
+    let m = mix(&a, &b, 0.5);
+    assert_eq!(get(&m, "kneeL"), 20.0);
+    assert_eq!(get(&m, "elbowR"), 10.0);
+    assert_eq!(side("knee", 'R'), "kneeR");
+}

@@ -10,6 +10,7 @@
 
 mod anatomy;
 mod arsenal;
+mod behaviour;
 mod bones;
 mod bruise;
 mod dressing;
@@ -18,6 +19,7 @@ mod graphics;
 mod hud;
 mod map;
 mod models;
+mod motor;
 mod npc;
 mod person;
 mod picture;
@@ -30,6 +32,7 @@ mod scenario;
 mod solids;
 mod sound;
 mod surfaces;
+mod thuds;
 mod teeth;
 mod throat;
 mod vitals;
@@ -134,7 +137,9 @@ fn main() -> AppExit {
         sandbox::plugin,
         arsenal::plugin,
         hud::plugin,
-    ));
+    ))
+    // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
+    .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

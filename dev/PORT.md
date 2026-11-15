@@ -203,3 +203,54 @@ bat blows; chest, belly, neck, head, mouth, eye, thigh, shin, ribs; two then dre
 standing people, on a person made whole again each time, with the TS people's breathing clocks, and logs a minute of
 vitals. tools/port-wounds.mjs fires the same in the TS game (dev server, rig; Math.random seeded as `Dice`, drawing
 stubbed, no physics stepped); tools/port-wounds-compare.py compares the two logs.
+
+## The body (phase 2, branch port/body)
+
+ragdoll.rs (the bodies), motor.rs, behaviour.rs, thuds.rs and poses.rs's helpers are the TS's, number for number, with
+the reasons in the comments; where Rapier needed something else, the comment says what and why.
+
+### A person's body
+Every person made (`person::spawn`) is given, before the next physics step (behaviour.rs `make`, PreUpdate):
+- `ragdoll::Ragdoll`: `segs[k]` in `person.segments`' order, each with `def` (the fitted `Segment`), `entity` (its
+  Rapier body: a top-level entity, `RigidBody::Dynamic`, the segment's collider, its mass and inertia as ragdoll.ts gave
+  them), and after every step `now` (its world Transform: its bone's head and turn), `vel`, `spin`, `was` (its velocity
+  before the step). Joints: an `ImpulseJoint` on each segment's entity (the TS's per-axis ranges, the shoulder's 30-degree
+  bend zero, ForceBased motors for the muscles), a second free joint beside it whose velocity motors are the tone (Havok's
+  axis friction), and contact-less free joints between the halves of the long bones either side of an elbow or knee
+  (`_apart`). Self-collision is everyone's segments against everyone's but jointed neighbours (collision groups TRUNK,
+  ROOTS, LIMBS; the per-person bit for pieces cut off is dismember.rs's to add).
+  Asking it: `by_name`, `world_point`, `middle`, `com`, `com_velocity`, `lowest`, `nearest(point)`, `outside`,
+  `segment_ends`, `angles(k)` (the joint's angles from its neutral), `cut_off`, `loose`, `push(k, impulse, at)`,
+  `set_tone`, `break_at`, `set_range`, `change` (medicine's `npc::Joint`), `entities()` (to despawn).
+- `behaviour::Behaviour`: `state` (Stand, Fall, Down), `mode`, `will`, `strength`, `wound`, `felt` (the vitals as it read
+  them this frame), `why` (why they last went over). `hit(rd, root, rng, seg, impulse, point, jolt)` is behaviour.hit;
+  `knock_down(rng)` puts them off their feet.
+- The skeleton follows the bodies: each frame `Ragdoll::drive` writes `person.posed` (the pelvis as the frame, every
+  segment's turn on its lead bone, the spine's and the neck's spread over their bones, the bones between left straight,
+  the fingers posed from the pose), so `person.joint`, medicine's `bone_worlds` and the drawn skeleton are the bodies'.
+  Each drawn part has Bevy's `DynamicSkinnedMeshBounds` (its bounds kept from its bones; the x-ray's are not yet).
+
+### Holding and dragging (for the hands)
+`behaviour::Grabbed` on the person is weapons.ts's grab of a body: `Grabbed::at(&ragdoll, point, eye)` takes hold of the
+segment nearest the point (insert it; they go down and writhe, `why` "grabbed"), `grabbed.aim(eye, ahead)` each frame is
+`_hold` (drawn to in front of the eye, as far as it was taken from, at most 2.2 m), and the pull is weapons.ts `step`,
+given every physics step (behaviour.rs `pull`). Let go: remove the component.
+
+### Sounds and slams (thuds.rs)
+`thuds::Heard { name, at, gain }` (a message): the takes a body makes (thuds, `body-fall` from behaviour) for sound.rs to
+play; until it does, the scenarios log them. `thuds::Slam` is a segment slammed into something standing (wounds.rs's
+`blow(.., 'wall')` to take), `thuds::Dragging` (a resource) the 'drag' stream's place and gain.
+
+### Medicine
+behaviour.rs writes `Hurt::segments` and calls `bones().fell` after every step (`landings`), and once a frame
+(PostUpdate, `hurts`) takes `Hit`, `Joint` and `Broke` from `Hurt::happened` and calls `bones().opens` with the ragdoll's
+bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the breaks.
+
+### Physics
+120 Hz, one step a tick, as phase 1 set it. Rapier's solver is given sixteen passes and warm-started joints (ragdoll.rs
+`solver`): at its defaults a standing body's knees sagged and its feet crept along the floor.
+
+### Scenarios
+`stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
+`jitter` of its situation as the TS's jitter.mjs measured it, and Rapier's time a step), `keys` (K and N), `joints` (every
+joint's angles and aims, standing).
