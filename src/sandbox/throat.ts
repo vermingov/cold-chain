@@ -36,11 +36,24 @@ const CLEARS = 0.3;         // share of the blood in a lung's large airways one 
 const SICK = 30;            // ml in the stomach before it starts to turn it (a pistol hole in it bleeds some 70 ml into it before clotting)
 const HEAVE = 0.7;          // seconds a retch takes
 const EMPTIES = 1.2;        // seconds the stomach takes to empty in one vomit
+const SURGE = 0.3;          // seconds: most of a vomit comes up in the first heave's surge, the rest after it
+// The mouth's cavity, as an ellipsoid on the skull: its middle from the middle of the dental arch (rest metres: +x the
+// person's right, +y up, +z forward) and its half-widths. Front to back it runs from the incisors to the oropharynx; side
+// to side and up and down it is a little wider than the mouth is, out into the cheeks and the chin, so that the edge of
+// the surface lies behind them and only the liquid shows through the lips (the bodies have no inside to the mouth to
+// hide it). Filled in proportion to HOLDS.
+const CAVITY = { at: [0, -0.004, -0.007], r: [0.026, 0.025, 0.036] };
+// What the pool's surface looks like: blood as it comes, frothed from the lungs (pink, the air in it dulls it), and
+// from the stomach (darker: fresh enough to be dark red and clotted, not the coffee grounds of hours in acid).
+const RED = [0.4, 0.03, 0.025], FROTH = [0.5, 0.15, 0.13], GUT = [0.1, 0.009, 0.007];
+// The tongue and teeth coated in it: their own tints (person.ts, npc.ts) and what blood over them makes of them.
+const COATED = { tongue: [[0.55, 0.42, 0.42], [0.42, 0.05, 0.04]], teeth: [[0.93, 0.9, 0.82], [0.6, 0.13, 0.1]] };
 
 const ramp = (x: number, a: number, b: number) => Math.max(0, Math.min(1, (x - a) / (b - a)));
 
 // Scratch: one matrix and vectors, reused every frame.
 const _m = new M(), _n = new M(), _down = new V3(0, -1, 0), _side = new V3();
+const _c = new V3(), _cw = new V3(), _ax = new V3(), _ay = new V3(), _az = new V3();
 const AXIS = { fwd: new V3(0, 0, 1), up: new V3(0, 1, 0), right: new V3(1, 0, 0) };
 
 type Outlet = { hit: any; at: BABYLON.Vector3; out: BABYLON.Vector3 };
@@ -52,11 +65,16 @@ export class Throat {
     declare stomach: number;
     declare gullet: number;          // on its way up the gullet in a vomit
     declare froth: number;           // share of the blood in the mouth that came up from the lungs, frothy
+    declare dark: number;            // share of it that came up from the stomach
+    declare pool: BABYLON.Mesh | null;  // its surface, drawn (_pool)
+    declare poolAt: BABYLON.Matrix;
+    declare coat: number;            // 0 to 1: how much blood is on the tongue and teeth
+    declare coated: { kind: string; m: BABYLON.PBRMaterial }[] | null;
     declare nausea: number;
     declare heaves: number;          // retches still to come before the vomit
     declare heaveT: number;
     declare vomiting: number;        // seconds left of a vomit
-    declare emptying: number;        // ml/s up out of the stomach while vomiting
+    declare emptying: number;        // ml coming up out of the stomach in this vomit
     declare gape: number;            // degrees the jaw is forced open by a retch or a vomit (face.ts)
     declare coughIn: number;
     declare swallowIn: number;
@@ -78,6 +96,11 @@ export class Throat {
         this.stomach = 0;
         this.gullet = 0;
         this.froth = 0;
+        this.dark = 0;
+        this.pool = null;
+        this.poolAt = new M();
+        this.coat = 0;
+        this.coated = null;
         this.nausea = 0;
         this.heaves = 0;
         this.heaveT = 0;
@@ -216,7 +239,7 @@ export class Throat {
                 this._lungward(drawn);
             }
         }
-        if (this.mouth < 0.05) this.froth = 0;
+        if (this.mouth < 0.05) this.froth = this.dark = 0;
 
         // --- the airways: coughed up while there is a cough
         const wet = this.lungs.L + this.lungs.R;
@@ -251,6 +274,93 @@ export class Throat {
                 }
             }
         }
+        this._pool();
+        this._coat(dt);
+    }
+
+    // Blood in the mouth wets the tongue and teeth red, at once, and stays on them a while after it has gone (wiped off
+    // by the tongue and saliva over a minute or so: an estimate). Their materials made this person's own the first time.
+    _coat(dt: number) {
+        const want = ramp(this.mouth, 0.3, 12);
+        this.coat = want > this.coat ? this.coat + (want - this.coat) * Math.min(1, dt * 4) : Math.max(want, this.coat - dt / 60);
+        if (!this.coated && this.coat < 0.01) return;
+        if (!this.coated) {
+            const mesh = this.npc.person.mesh, mm = mesh.material as BABYLON.MultiMaterial, parts = this.npc.person.header.parts;
+            this.coated = [];
+            mm.subMaterials = mm.subMaterials.map((m, i) => {
+                const kind = parts[i].kind;
+                if (!COATED[kind] || !m) return m;
+                const own = (m as BABYLON.PBRMaterial).clone(`${m.name}:mouth${mesh.uniqueId}`);
+                this.coated.push({ kind, m: own });
+                return own;
+            });
+        }
+        for (const { kind, m } of this.coated) {
+            const [a, b] = COATED[kind], k = this.coat;
+            m.albedoColor.set(a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k);
+        }
+    }
+
+    // The blood lying in the mouth, drawn: the cavity's ellipsoid filled from its lowest side as the head lies now, the
+    // surface a level disc where the horizontal plane at that height cuts it. The cheeks, palate, tongue and teeth hide
+    // what lies behind them; through an open mouth it shows, at the back of the throat on the back, and up to the teeth
+    // when full. (A plane cuts an ellipsoid in an ellipse: in the unit sphere the ellipsoid is a scaling of, the plane is
+    // still a plane, the cap under it has a volume in closed form and the cut is a circle.)
+    _pool() {
+        if (this.mouth < 0.3 || !this.centre?.owner) { this.pool?.setEnabled(false); return; }
+        const npc = this.npc, o = this.centre.owner;
+        if (!this.pool) {
+            const scene = npc.world.scene;
+            this.pool = BABYLON.MeshBuilder.CreateDisc('mouthBlood', { radius: 1, tessellation: 28 }, scene);
+            const wet = scene.getMaterialByName('dropBlood') as BABYLON.PBRMaterial | null;
+            const m = wet ? wet.clone('mouthBlood') : new BABYLON.PBRMaterial('mouthBlood', scene);
+            m.metallic = 0;
+            m.maxSimultaneousLights = 8;
+            m.environmentIntensity = 1;
+            // (Seen from whichever side, lit as the side seen: a level surface is looked at from above or, face down, from
+            // below.)
+            m.backFaceCulling = false;
+            m.twoSidedLighting = true;
+            this.pool.material = m;
+            this.pool.isPickable = false;
+            this.pool.alwaysSelectAsActiveMesh = true;
+        }
+        this.pool.setEnabled(true);
+        // The skull's rest frame in the world now, and the ellipsoid in it: its middle and its three half-axes.
+        M.TranslationToRef(-o.head.x, -o.head.y, -o.head.z, _m);
+        _m.multiplyToRef(o.bone.getAbsoluteMatrix(), _n);
+        _n.multiplyToRef(npc.person.mesh.getWorldMatrix(), _m);
+        _c.copyFrom(this.centre.rest).addInPlaceFromFloats(CAVITY.at[0], CAVITY.at[1], CAVITY.at[2]);
+        V3.TransformCoordinatesToRef(_c, _m, _cw);
+        V3.TransformNormalFromFloatsToRef(CAVITY.r[0], 0, 0, _m, _ax);
+        V3.TransformNormalFromFloatsToRef(0, CAVITY.r[1], 0, _m, _ay);
+        V3.TransformNormalFromFloatsToRef(0, 0, CAVITY.r[2], _m, _az);
+        // Up, in the unit sphere's frame, and how far along it the surface lies (t, -1 to 1) for the share filled: the cap
+        // under it holds (1 + t)^2 (2 - t) / 4 of the sphere.
+        const gx = _ax.y, gy = _ay.y, gz = _az.y, L = Math.hypot(gx, gy, gz) || 1;
+        // (The tongue fills the floor of the mouth and the blood lies over it: a few millilitres already stand above the
+        // ellipsoid's lowest part, and a full mouth reaches the teeth.)
+        const nx = gx / L, ny = gy / L, nz = gz / L, F = 0.15 + 0.7 * Math.min(1, this.mouth / HOLDS);
+        let lo = -1, hi = 1;
+        for (let k = 0; k < 18; k++) { const t = (lo + hi) / 2; if ((1 + t) * (1 + t) * (2 - t) / 4 < F) lo = t; else hi = t; }
+        const t = (lo + hi) / 2, rho = Math.sqrt(Math.max(0, 1 - t * t));
+        // Two ways across the cut circle, at right angles to up and each other.
+        let ux = -ny, uy = nx, uz = 0;
+        if (Math.abs(nz) > 0.9) { ux = 0; uy = -nz; uz = ny; }
+        const ul = Math.hypot(ux, uy, uz); ux /= ul; uy /= ul; uz /= ul;
+        const vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
+        // (A carries a direction in the sphere's frame into the world's.)
+        const A = (x: number, y: number, z: number, k: 'x' | 'y' | 'z') => _ax[k] * x + _ay[k] * y + _az[k] * z;
+        const P = ['x', 'y', 'z'] as const;
+        const [ax, ay, az] = P.map((k) => A(ux, uy, uz, k) * rho);
+        const [bx, by, bz] = P.map((k) => A(vx, vy, vz, k) * rho);
+        const [cx, cy, cz] = P.map((k) => _cw[k] + A(nx * t, ny * t, nz * t, k));
+        // The disc's own normal (its z) straight up, as a level surface's is.
+        M.FromValuesToRef(ax, ay, az, 0, bx, by, bz, 0, 0, 0, 1, 0, cx, cy, cz, 1, this.poolAt);
+        this.pool.freezeWorldMatrix(this.poolAt);
+        const m = this.pool.material as BABYLON.PBRMaterial, f = this.froth, d = this.dark * (1 - f), r = 1 - f - d;
+        m.albedoColor.set(RED[0] * r + FROTH[0] * f + GUT[0] * d, RED[1] * r + FROTH[1] * f + GUT[1] * d, RED[2] * r + FROTH[2] * f + GUT[2] * d);
+        m.roughness = 0.04 + 0.35 * f;
     }
 
     // Blood out over the lips, `ml` this frame. It goes out at the lowest of the three ways out; a trickle runs down the
@@ -359,14 +469,16 @@ export class Throat {
                 this.heaveT = 0;
                 if (--this.heaves === 0) {
                     this.vomiting = EMPTIES;
-                    this.emptying = (this.stomach * (0.6 + 0.3 * Math.random())) / EMPTIES;
+                    this.emptying = this.stomach * (0.6 + 0.3 * Math.random());
                     this._sound('vomit', 1);
                     if (!npc.vitals.injuries.some((i) => i.text === 'Vomiting blood')) npc.vitals.injure('Vomiting blood', 5);
                 } else this._sound('retch', 0.8);
             }
         }
         if (this.vomiting > 0) {
-            const up = Math.min(this.stomach, this.emptying * dt);
+            // (Its share of the vomit this frame, out of a surge falling away over SURGE.)
+            const was = EMPTIES - this.vomiting, now = Math.min(EMPTIES, was + dt);
+            const up = Math.min(this.stomach, (this.emptying * (Math.exp(-was / SURGE) - Math.exp(-now / SURGE))) / (1 - Math.exp(-EMPTIES / SURGE)));
             this.stomach -= up;
             this.gullet += up;
             this.vomiting -= dt;
@@ -377,6 +489,7 @@ export class Throat {
             const up = this.gullet * Math.min(1, dt * 10);
             this.gullet -= up;
             const forced = this.vomiting > 0 ? up * (0.35 + 0.55 * ramp(awake, 0.1, 0.6)) : 0;
+            if (up > forced) this.dark = (this.dark * this.mouth + up - forced) / (this.mouth + up - forced);
             this.mouth += up - forced;
             if (forced > 0) this._gush(forced, dt);
         }
@@ -384,14 +497,19 @@ export class Throat {
         if (b) b.retch = fold * (0.4 + 0.6 * ramp(awake, 0.1, 0.6));
     }
 
-    // Vomit out of the open mouth: a rope of it, as fast as the heave drives it, as thick as there is of it.
+    // Vomit out of the open mouth: a rope of it as thick as the flow and the gape make it, leaving slower than it looks
+    // (the mouth is wide, and a wide mouth lets it out without speed), with clots in it thrown as lumps; where it lands,
+    // it splashes and pools (blood.ts, floor.ts).
     _gush(ml: number, dt: number) {
         const o = this._lowest();
         if (!o) return;
-        const speed = 1.2 + 1.2 * Math.random(), q = (ml * 1e-6) / dt;
-        const r = Math.min(0.009, Math.max(0.002, Math.sqrt(q / (Math.PI * speed))));
+        const blood = this.npc.world.blood;
+        const speed = 0.8 + 0.7 * Math.random(), q = (ml * 0.8 * 1e-6) / dt;
+        const r = Math.min(0.012, Math.max(0.003, Math.sqrt(q / (Math.PI * speed))));
         const way = this.fwd.scale(0.8).addInPlace(o.out.scale(0.4)).addInPlace(_down.scale(0.3)).normalize();
-        this.npc.world.blood?.stream(this, o.at.add(this.fwd.scale(0.01)), way, speed, ml, r, dt);
+        const from = o.at.add(this.fwd.scale(0.01));
+        blood?.stream(this, from, way, speed, ml * 0.8, r, dt);
+        blood?.spray(from, way, speed, ml * 0.2, 0.3, 3);
         this.npc.runs.start(o.hit, ml * 0.04);
     }
 

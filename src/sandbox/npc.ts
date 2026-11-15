@@ -610,10 +610,10 @@ function boxCrossed(b: Float32Array, k: number, o, d, far: number) {
 function slabFor(box: number[], o, d, far) {
     let t0 = 0, t1 = far;
     for (let k = 0; k < 3; k++) {
-        const dk = [d.x, d.y, d.z][k], ok = [o.x, o.y, o.z][k];
+        const dk = k === 0 ? d.x : k === 1 ? d.y : d.z, ok = k === 0 ? o.x : k === 1 ? o.y : o.z;
         const inv = 1 / dk;
         let a = (box[k] - 0.05 - ok) * inv, b = (box[k + 3] + 0.05 - ok) * inv;
-        if (a > b) [a, b] = [b, a];
+        if (a > b) { const s = a; a = b; b = s; }
         t0 = Math.max(t0, a); t1 = Math.min(t1, b);
         if (t0 > t1) return false;
     }

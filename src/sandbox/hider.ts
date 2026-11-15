@@ -119,7 +119,8 @@ export class Hider extends BABYLON.MaterialPluginBase {
         const k = this.openings++ * 4;
         this.windows.set([at.x, at.y, at.z, radius], k);
         this.windowNormals.set([n.x, n.y, n.z, depth], k);
-        this.markAllDefinesAsDirty();
+        // (No define changes: the windows are uniforms, bound for every draw. Marking the defines dirty looks through every
+        // submesh in the scene, and a shotgun's blast opens a few dozen windows and holes.)
     }
 
     // An opening at `at` (rest space) running along `ex`, on skin facing `ey`: `half` is [half its length, half its
@@ -130,7 +131,8 @@ export class Hider extends BABYLON.MaterialPluginBase {
         this.a.set([at.x, at.y, at.z, half[0]], k);
         this.b.set([ex.x, ex.y, ex.z, half[1]], k);
         this.c.set([ey.x, ey.y, ey.z, this.depth], k);
-        this.markAllDefinesAsDirty();
+        // (Only the first changes a define, HIDER.)
+        if (k === 0) this.markAllDefinesAsDirty();
         return true;
     }
 

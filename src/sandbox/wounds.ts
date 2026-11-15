@@ -196,10 +196,12 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
         npc.wound(h, 'out', m.calibre * 2);
         if (exitHit) exitHit.cloth = h;
     }
-    // The scalp and face are full of small vessels and bleed far more than a wound anywhere else of the same size.
+    // The scalp and face are full of small vessels and bleed far more than a wound anywhere else of the same size. The
+    // neck (on the head's segment too) is not: its skin bleeds as skin, and what lies under it by the vessels met.
+    const face = (h) => h && !/^neck/.test(h.owner?.bone?.name ?? '');
     if (npc.ragdoll.nearest(enter.point).seg?.name === 'head' && !lid) {
-        v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
-        if (exitHit) v.bleed({ name: 'scalp', rate: 0.002, clots: 0.003, source: { mark: exitHit } });
+        if (face(enter)) v.bleed({ name: 'scalp', rate: 0.0012 * (m.blade ? 1.5 : 1), clots: 0.003, source: { mark: enter } });
+        if (face(exitHit)) v.bleed({ name: 'scalp', rate: 0.002, clots: 0.003, source: { mark: exitHit } });
     }
     // At the moment it is made a wound holds its blood: a blade fills the track it cuts until it is drawn out, and a
     // bullet's holes are small, clothed or raised, and the bleeding is mostly inside (stab-wounds.md sec. 1,

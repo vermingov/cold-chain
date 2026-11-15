@@ -36,15 +36,22 @@ export function region(npc, name: string, take: (p: BABYLON.Vector3) => boolean,
     // (A corner is shared by half a dozen triangles: what it is labelled is worked out once.)
     const labels = new Map<number, string>();
     const labelOf = (v: number, p: BABYLON.Vector3) => labels.get(v) ?? labels.set(v, label(p)).get(v);
+    // (Every triangle of the bone is asked about, most of them to be passed over: asked in the same three vectors, and
+    // only those taken given their own.)
+    const q = [new V3(), new V3(), new V3()], mid = new V3();
     for (const part of npc.insides.parts) {
         if (part.name !== name) continue;
         for (const c of part.clusters) for (const i of c.tris) {
             if (npc.insides.drawn[i] === npc.insides.drawn[i + 1]) continue;     // taken by an earlier break
-            const p = [0, 1, 2].map((j) => corner(position, index[i + j]));
-            const k = cut && p.map(cut);
-            if (!p.some(take) && !take(middle(p)) && !(k && Math.min(...k) <= 0 && Math.max(...k) >= 0)) continue;
+            for (let j = 0; j < 3; j++) { const v = index[i + j] * 3; q[j].copyFromFloats(position[v], position[v + 1], position[v + 2]); }
+            if (!take(q[0]) && !take(q[1]) && !take(q[2]) && !take(mid.copyFrom(q[0]).addInPlace(q[1]).addInPlace(q[2]).scaleInPlace(1 / 3))) {
+                if (!cut) continue;
+                const k0 = cut(q[0]), k1 = cut(q[1]), k2 = cut(q[2]);
+                if (!(Math.min(k0, k1, k2) <= 0 && Math.max(k0, k1, k2) >= 0)) continue;
+            }
+            const p = q.map((v) => v.clone());
             const before = out.length;
-            split(p, [0, 1, 2].map((j) => corner(normal, index[i + j])), p.map((q, j) => labelOf(index[i + j], q)), part.owner, label, out);
+            split(p, [0, 1, 2].map((j) => corner(normal, index[i + j])), p.map((x, j) => labelOf(index[i + j], x)), part.owner, label, out);
             if (out.length === before + 1 && stays(out[before])) out.pop();
             else taken.push(i);
         }

@@ -167,12 +167,14 @@ export class Insides {
         }
 
         const vessels = [];
+        // (Each point moved into the world once, into the same two vectors in turn: it ends one piece and starts the next.)
+        let a = new V3(), b = new V3();
         for (const tube of this.tubes) {
-            let best = null, b = null;
+            let best = null;
+            if (tube.points.length) V3.TransformCoordinatesToRef(tube.points[0].rest, transform(tube.points[0].owner).m, b);
             for (let i = 0; i + 1 < tube.points.length; i++) {
-                // (Each point moved into the world once: it ends one piece of the tube and starts the next.)
-                const a = b ?? V3.TransformCoordinates(tube.points[i].rest, transform(tube.points[i].owner).m);
-                b = V3.TransformCoordinates(tube.points[i + 1].rest, transform(tube.points[i + 1].owner).m);
+                const c = a; a = b; b = c;
+                V3.TransformCoordinatesToRef(tube.points[i + 1].rest, transform(tube.points[i + 1].owner).m, b);
                 const { t, distance } = rayToSegment(origin, dir, a, b);
                 const miss = distance - tube.points[i].r - reach;
                 if (t > 0 && t < far && miss < 0 && (!best || miss < best.miss)) best = { tube, at: i, t, miss, where: V3.Lerp(a, b, 0.5) };
@@ -349,16 +351,18 @@ function triangle(o, d, p, index, i) {
     return f * (e2x * qx + e2y * qy + e2z * qz);
 }
 
-// The nearest the line (o, unit d) comes to the segment a-b: how far along the line, and how near.
+// The nearest the line (o, unit d) comes to the segment a-b: how far along the line, and how near. (In numbers, not
+// vectors: it is asked for every piece of every vessel for each line, and made six vectors each time.)
 export function rayToSegment(o, d, a, b) {
-    const u = b.subtract(a), w = o.subtract(a);
-    const uu = V3.Dot(u, u), ud = V3.Dot(u, d), uw = V3.Dot(u, w), dw = V3.Dot(d, w);
+    const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z, wx = o.x - a.x, wy = o.y - a.y, wz = o.z - a.z;
+    const uu = ux * ux + uy * uy + uz * uz, ud = ux * d.x + uy * d.y + uz * d.z, uw = ux * wx + uy * wy + uz * wz, dw = d.x * wx + d.y * wy + d.z * wz;
     const den = uu - ud * ud;
     let s = den > 1e-9 ? (uw - ud * dw) / den : 0;
     s = Math.max(0, Math.min(1, s));
-    const onSeg = a.add(u.scale(s));
-    const t = V3.Dot(onSeg.subtract(o), d);
-    return { t, distance: V3.Distance(o.add(d.scale(t)), onSeg) };
+    const px = a.x + ux * s, py = a.y + uy * s, pz = a.z + uz * s;
+    const t = (px - o.x) * d.x + (py - o.y) * d.y + (pz - o.z) * d.z;
+    const x = o.x + d.x * t - px, y = o.y + d.y * t - py, z = o.z + d.z * t - pz;
+    return { t, distance: Math.sqrt(x * x + y * y + z * z) };
 }
 
 export { triangle };
