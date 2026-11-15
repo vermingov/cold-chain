@@ -1,31 +1,48 @@
-// The player's right arm, drawn while it punches.
+// The player's fists, drawn while they are held up (weapons.ts 'fists'): one of these for each arm, the left mouse
+// button the left's and the right the right's.
 //
 // A person's arm (table/arm.ts: a person's bones, the hand closed into a fist, the elbow found between a shoulder
-// beside and below the eye and the wrist), in that person's own skin and sleeve. What is moved is the knuckles. An
-// untrained man telegraphs it: the fist comes up from below and is drawn back beside the jaw, then driven at the
-// middle of the view, turning over from upright to most of the way flat as it goes and fastest a little before it
-// lands (7 m/s at the most, landing at about 5). The blow is dealt on the frame the knuckles get there, at the speed
-// they get there with (weapons.ts). What it lands on stops it short and gives a little under it, and the arm comes
-// back off it; a miss carries it on to the end of the arm and is pulled back slower.
+// beside and below the eye and the wrist), in that person's own skin and sleeve. What is moved is the knuckles. Between
+// punches the fist is up in a guard beside the jaw. A press winds it up: it is drawn back and down toward its shoulder,
+// that shoulder taken back and the body turned away from the punch, the view leaning with it, further the longer it is
+// held, to a second. Let go, it is driven straight out from its own side of the chin, the shoulder and the body turning
+// in behind it, and turns over from upright to most of the way flat as it goes; a tap is a jab, thrown from the guard
+// with the arm alone. It lands on the first skin its knuckles cross on the way (weapons.ts _fists: where the fist is,
+// not where the eye looks), with the speed it is going and the mass behind it. What it lands on stops it there and it
+// comes back off it to the guard; a miss carries it on to the end of the arm and is pulled back slower.
 
 import * as BABYLON from '@babylonjs/core';
 import { Arm, plain } from '../table/arm.ts';
 const V3 = BABYLON.Vector3;
 
-// The knuckles, in the eye's frame (x right, y up, z ahead), m.
-const DOWN = new V3(0.2, -0.5, 0.12);       // hanging, below the picture
-const COCKED = new V3(0.14, -0.09, 0.2);    // drawn back beside the jaw, at the bottom corner of the view (further in is out of it)
-const MISS = new V3(0.02, -0.04, 0.6);      // the arm's end, nothing met
-const HANGS = new V3(0.3, -1, -0.15);       // the way the elbow is off the line from shoulder to fist: down, a little out
-const SPEED = 7;                             // m/s at the hand, the most
-// What the player wears on it: a canvas work jacket. Its sleeve hangs `loose` m off the skin (upper arm, forearm) and
-// ends `cuff` m short of the wrist in a hem `band` m long and `hem` m proud of the sleeve, its edge turned in `turn` m
-// thick; above the hem the cloth gathers in shallow folds `fold` m deep. It is made `around` corners round, a ring every
-// `step` m.
-const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, loose: [0.011, 0.008], cuff: 0.03, band: 0.035, hem: 0.003, turn: 0.004,
-    fold: 0.0025, around: 32, step: 0.008 };
+// How hard (dev/research/blunt-trauma.md): Olympic boxers' straight punches land at 9.1 +- 2.1 m/s with an effective
+// mass of 2.9 kg and 3427 N peak (Walilko05); a jab, thrown from the guard with the arm alone, at about 6 m/s with the
+// fist and forearm's 1.5 kg or so, lands at 1 to 2 kN. A full wind-up is taken as the boxer's straight: the hips and
+// shoulder put the body's mass behind the fist and speed it up. In between, by how long it was wound up (`wind` s).
+export const PUNCH = { jab: { speed: 6, mass: 1.5 }, full: { speed: 10, mass: 2.9 }, wind: 1 };
 
-type Key = { at: BABYLON.Vector3; t: number; turn: number; ease: (u: number) => number; arc?: number };
+// The knuckles, in the eye's frame (x right, y up, z ahead; mirrored for the left fist, which is held a little further
+// out in front, the lead hand), m.
+const GUARD = { R: new V3(0.11, -0.08, 0.27), L: new V3(0.1, -0.07, 0.31) };
+const DRAWN = new V3(0.17, -0.17, 0.12);    // wound all the way up: back and down toward the shoulder
+const LINE = new V3(0.05, -0.06, 0);        // where it is driven out from, straight ahead: its own side of the chin
+const MISS = 0.6;                           // m ahead of the eye: the arm's end, nothing met
+const HANGS = new V3(0.3, -1, -0.15);       // the way the elbow is off the line from shoulder to fist: down, a little out
+// The body's turn (`body`, -1 wound fully away to 1 driven fully in): the punching shoulder that far back or forward (m,
+// as Arm.shift: out, up, ahead), and the view's yaw and lean with it (rad).
+const AWAY = new V3(0, -0.015, -0.06), INTO = new V3(-0.03, 0, 0.08), LEAN = { yaw: 0.025, roll: 0.015 };
+// What it lands with: the speed it gets there at and the mass behind it, and how far the fist and arm give (N/m). Taken
+// so that on a face (bones.ts: the bone's pad in series, the head's mass behind it) a jab lands with about 1.2 kN and a
+// full wind-up with about 2.6 kN.
+export const FIST_GIVES = 5e4;
+// What the player wears on the arms: a canvas work jacket. Its sleeve hangs `loose` m off the skin (upper arm, forearm)
+// and ends `cuff` m short of the wrist in a hem `band` m long and `hem` m proud of the sleeve, its edge turned in `turn`
+// m thick; above the hem the cloth gathers in shallow folds `fold` m deep. It is made `around` corners round, a ring
+// every `step` m.
+const SLEEVE = { colour: [0.24, 0.23, 0.2], rough: 0.85, loose: [0.011, 0.008], cuff: 0.03, band: 0.035, hem: 0.003, turn: 0.004,
+    fold: 0.0012, around: 32, step: 0.008 };
+
+type Key = { at: BABYLON.Vector3; t: number; turn: number; body: number; ease: (u: number) => number };
 const smooth = (u: number) => u * u * (3 - 2 * u);
 const drive = (u: number) => u * u * (2 - u);   // fastest at two thirds of the way, still moving when it gets there
 const off = (u: number) => 1 - (1 - u) * (1 - u);
@@ -34,115 +51,174 @@ const onto = (u: number) => u * u;
 export class Fist {
     declare arm: Arm;
     declare camera: BABYLON.Camera;
+    declare side: 'R' | 'L';
     declare keys: Key[];
     declare t: number;
+    declare wind: number;
+    declare up: boolean;
     declare at: BABYLON.Vector3;
+    declare turn: number;
+    declare body: number;
     declare contact: number;
     declare speed: number;
-    declare land: ((speed: number, ahead: number) => number | null) | null;
-    declare aim: (() => number | null) | null;
+    declare mass: number;
+    declare flying: boolean;
+    declare was: BABYLON.Vector3 | null;
     declare hand: number;
 
-    constructor(people, body: string, camera: BABYLON.Camera, cast?: (m: BABYLON.AbstractMesh) => void) {
+    constructor(arm: Arm, camera: BABYLON.Camera) {
+        this.arm = arm;
         this.camera = camera;
-        this.arm = ownArm(people, body, 'R', camera, 'fist', cast);
-        this.arm.grasp = knuckles(this.arm);
+        this.side = arm.side;
+        arm.hold('fist');
+        arm.grasp = knuckles(arm);
         // From the wrist to the knuckles, in line with the forearm in a fist that is punching.
-        this.hand = V3.Distance(this.arm.grasp.at, this.arm._in(this.arm.person.joint('wrist.R', 'head'), V3.Right(), V3.Up()).at);
-        this.arm.reach(null);
+        this.hand = V3.Distance(arm.grasp.at, arm._in(arm.person.joint(`wrist.${this.side}`, 'head'), V3.Right(), V3.Up()).at);
+        arm.reach(null);
         this.keys = [];
-        this.t = -1;
-        this.at = DOWN.clone();
+        this.t = this.wind = -1;
+        this.up = false;
+        this.at = this._mine(GUARD[this.side]);
+        this.turn = 0.25;
+        this.body = 0;
         this.contact = -1;
-        this.speed = 0;
-        this.land = this.aim = null;
+        this.speed = this.mass = 0;
+        this.flying = false;
+        this.was = null;
     }
 
-    // A punch, thrown straight ahead of the eye. `aim` is asked as the fist sets off from beside the cheek: how far ahead
-    // of the eye what it is thrown at is (m), or null for nothing in reach; it goes there, or on to the end of the arm.
-    // (Asked then and not at the press, so that someone who staggered while it was drawn back is still where it lands.)
-    // `land` is asked when the knuckles get there, with how fast they are going and how far ahead of the eye they are:
-    // how far ahead the skin they met is, or null for none.
-    punch({ aim, land }: { aim?: () => number | null; land?: (speed: number, ahead: number) => number | null } = {}) {
+    // A point of the right fist's frame, as this fist's.
+    _mine(v: BABYLON.Vector3) { return this.side === 'R' ? v.clone() : new V3(-v.x, v.y, v.z); }
+
+    // Where the knuckles are, in the world.
+    knuckles() { return V3.TransformCoordinates(this._mine(this.at), this.camera.getWorldMatrix()); }
+
+    // The fists taken up (in the guard) or put away.
+    raise(on: boolean) {
+        if (on === this.up) return;
+        this.up = on;
+        this.t = this.wind = -1;
+        this.flying = false;
+        this.body = 0;
+        this.at = this._mine(GUARD[this.side]);
+        this.turn = 0.25;
+        this.arm.shift.setAll(0);
+        if (!on) this.arm.reach(null);
         // (The same arm holds what is held, closed some other way round it: hands.ts.)
-        if (this.arm.holding !== 'fist') { this.arm.hold('fist'); this.arm.grasp = knuckles(this.arm); }
-        const from = this.t >= 0 ? this.at.clone() : DOWN.clone();
-        const up = 0.16 * Math.min(1, Math.max(0.35, V3.Distance(from, COCKED) / V3.Distance(DOWN, COCKED)));
-        this.keys = [{ at: from, t: 0, turn: 0, ease: smooth }, { at: COCKED, t: up, turn: 0, ease: smooth }, { at: MISS, t: up + 1, turn: 1, ease: drive }];
-        this.contact = Infinity;
-        this.t = 0;
-        this.aim = aim ?? (() => null);
-        this.land = land ?? (() => null);
+        else if (this.arm.holding !== 'fist') { this.arm.hold('fist'); this.arm.grasp = knuckles(this.arm); }
     }
 
-    // Set off from beside the cheek at what `aim` says. `drive` is fastest two thirds of the way and lands at its mean
-    // speed, three quarters of its most: an untrained arm going flat out lands at about 5 m/s, 670 N into a face
-    // behind 1.8 kg of fist and forearm giving at 9 kN/m (weapons.ts), inside the 500 to 850 N measured.
-    _drive() {
-        const ahead = this.aim();
-        this.aim = null;
-        const to = ahead === null ? MISS.clone() : new V3(0, 0, ahead), far = V3.Distance(COCKED, to);
-        const up = this.keys[1].t, go = Math.min(0.17, Math.max(0.06, far / (SPEED * 0.75)));
-        this.keys[2] = { at: to, t: up + go, turn: 1, ease: drive, arc: 0.05 };
-        this.contact = up + go;
-        this.speed = far / go;
+    // The button pressed: wound up from wherever it is, if it is not already on its way out.
+    windUp() {
+        if (!this.up || this.wind >= 0 || this.flying) return;
+        this.t = -1;
+        this.wind = 0;
+    }
+
+    // How far wound up, 0 (a tap: a jab) to 1 (held a second).
+    get charge() { return this.wind < 0 ? 0 : Math.min(1, Math.max(0, (this.wind - 0.08) / (PUNCH.wind - 0.08))); }
+
+    // Let go: thrown, straight out from its own side of the chin to the end of the arm, unless it meets something first
+    // (stopAt).
+    letGo() {
+        if (this.wind < 0) return;
+        const c = this.charge, line = this._mine(LINE);
+        this.wind = -1;
+        const to = new V3(line.x, line.y, MISS), far = V3.Distance(this.at, to);
+        this.speed = PUNCH.jab.speed + (PUNCH.full.speed - PUNCH.jab.speed) * c;
+        this.mass = PUNCH.jab.mass + (PUNCH.full.mass - PUNCH.jab.mass) * c;
+        // At its speed through the end (drive() is fastest two thirds of the way and goes on at its mean speed).
+        const go = Math.min(0.2, Math.max(0.05, far / this.speed));
+        this.keys = [{ at: this.at.clone(), t: 0, turn: this.turn, body: this.body, ease: smooth }, { at: to, t: go, turn: 1, body: 0.4 + 0.6 * c, ease: drive }];
+        this.contact = go;
+        this.t = 0;
+        this.flying = true;
     }
 
     // Whatever is under way, put away (another thing taken up).
-    stop() {
-        this.t = -1;
-        this.arm.reach(null);
-    }
+    stop() { this.raise(false); }
 
     update(dt: number) {
-        if (this.t < 0) return;
-        const was = this.t;
-        this.t += dt;
-        if (this.aim && was < this.keys[1].t && this.t >= this.keys[1].t) this._drive();
-        if (this.land && this.t >= this.contact) this._landed(this.land(this.speed, this.keys[2].at.z));
-        const keys = this.keys, last = keys[keys.length - 1];
-        if (this.t >= last.t) { this.stop(); return; }
-        let k = 1;
-        while (keys[k].t <= this.t) k++;
-        const a = keys[k - 1], b = keys[k], u = b.ease((this.t - a.t) / (b.t - a.t));
-        this.at = V3.Lerp(a.at, b.at, u);
-        // (thrown round a little from outside, the way an untrained arm swings in)
-        if (b.arc) this.at.addInPlace(new V3(b.arc, -b.arc * 0.5, 0).scale(Math.sin(Math.PI * u)));
-        this._pose(a.turn + (b.turn - a.turn) * u);
+        if (!this.up) return;
+        if (this.wind >= 0) {
+            // Wound up: drawn back, eased toward how far it is wound, the body turned away with it.
+            this.wind += dt;
+            const c = smooth(this.charge), ease = Math.min(1, dt * 12), toward = V3.Lerp(this._mine(GUARD[this.side]), this._mine(DRAWN), c);
+            this.at = V3.Lerp(this.at, toward, ease);
+            this.turn += (0.1 - this.turn) * ease;
+            this.body += (-c - this.body) * ease;
+        } else if (this.t >= 0) {
+            this.t += dt;
+            if (this.flying && this.t >= this.contact) this._landed(null);
+            const keys = this.keys, last = keys[keys.length - 1];
+            if (this.t >= last.t) { this.t = -1; this.at = last.at.clone(); this.turn = last.turn; this.body = last.body; }
+            else {
+                let k = 1;
+                while (keys[k].t <= this.t) k++;
+                const a = keys[k - 1], b = keys[k], u = b.ease((this.t - a.t) / (b.t - a.t));
+                this.at = V3.Lerp(a.at, b.at, u);
+                this.turn = a.turn + (b.turn - a.turn) * u;
+                this.body = a.body + (b.body - a.body) * u;
+            }
+        } else {
+            // In the guard, breathing.
+            const guard = this._mine(GUARD[this.side]), breath = Math.sin(performance.now() / 700 + (this.side === 'R' ? 0 : 1.3));
+            this.at = V3.Lerp(this.at, guard.add(new V3(0, breath * 0.003, 0)), Math.min(1, dt * 8));
+            this.turn += (0.25 - this.turn) * Math.min(1, dt * 8);
+            this.body *= Math.max(0, 1 - dt * 8);
+        }
+        this.arm.shift.copyFrom(this.body < 0 ? AWAY.scale(-this.body) : INTO.scale(this.body));
+        this._pose(this.turn);
+    }
+
+    // The view's turn with the body (rad): yaw, roll. The body turns away from a wound-up fist and into it as it goes out.
+    lean() {
+        const sign = this.side === 'R' ? 1 : -1;
+        return { yaw: -sign * this.body * LEAN.yaw, roll: sign * this.body * LEAN.roll };
     }
 
     // At the target: stopped at the skin it met (where it was aimed, or a little nearer or further if they moved), held
     // there a moment and back off it; or, nothing there, on to the end of the arm, the shoulder pulled after it, and
     // slowly back. (Stopped at the skin and not on into it: the face is not dented under it, and knuckles going on two
     // centimetres into an undented face read as a fist passing through a head.)
-    _landed(skin: number | null) {
-        this.land = null;
-        const t = this.contact, way = this.keys[2].at.subtract(COCKED).normalize(), back = COCKED.add(new V3(0.01, -0.03, 0));
-        this.keys.length = 3;
-        if (skin !== null) {
-            const at = (this.keys[2].at = new V3(0, 0, skin));
-            this.keys.push({ at, t: t + 0.035, turn: 1, ease: off },
-                { at: back, t: t + 0.25, turn: 0.4, ease: off }, { at: DOWN, t: t + 0.45, turn: 0, ease: onto });
+    _landed(at: BABYLON.Vector3 | null) {
+        this.flying = false;
+        const t = this.contact, hit = this.keys[1], guard = this._mine(GUARD[this.side]), body = hit.body;
+        this.keys.length = 2;
+        if (at) {
+            hit.at = at;
+            this.keys.push({ at, t: t + 0.035, turn: 1, body, ease: off }, { at: guard, t: t + 0.3, turn: 0.25, body: 0, ease: smooth });
         } else {
-            this.keys.push({ at: MISS.add(way.scale(0.03)), t: t + 0.07, turn: 1.1, ease: off },
-                { at: back, t: t + 0.36, turn: 0.4, ease: smooth }, { at: DOWN, t: t + 0.58, turn: 0, ease: onto });
+            const on = hit.at.add(hit.at.subtract(this.keys[0].at).normalize().scale(0.03));
+            this.keys.push({ at: on, t: t + 0.07, turn: 1.1, body: body * 1.1, ease: off }, { at: guard, t: t + 0.45, turn: 0.25, body: 0, ease: onto });
         }
     }
 
-    // The knuckles to `this.at`, the fist turned `turn` of the way over from upright (its back to the right) to most of
-    // the way flat (its back up). The arm is the right shoulder's (arm.ts): the elbow where an arm of that length from
-    // there puts it, a little down and out from the line to the fist; and the wrist kept straight, the knuckles in line
-    // with the forearm, so that the fist turns over by the forearm rolling (a hand aimed by itself bent the wrist back
-    // and left the hand hanging off it).
+    // Stopped where it met something (a point of the world, where the knuckles crossed its skin), now.
+    stopAt(point: BABYLON.Vector3) {
+        if (!this.flying) return;
+        const here = V3.TransformCoordinates(point, this.camera.getWorldMatrix().clone().invert()), at = this._mine(here);
+        // (The way here from the start as it was, ending now, at the skin.)
+        this.keys[1] = { ...this.keys[1], at, t: this.t, turn: this.turn, body: this.body };
+        this.contact = this.t;
+        this._landed(at);
+        this.at = at.clone();
+    }
+
+    // The knuckles to `this.at`, the fist turned `turn` of the way over from upright (its back outward) to most of the way
+    // flat (its back up). The arm is its own shoulder's (arm.ts): the elbow where an arm of that length from there puts it,
+    // a little down and out from the line to the fist; and the wrist kept straight, the knuckles in line with the forearm,
+    // so that the fist turns over by the forearm rolling (a hand aimed by itself bent the wrist back and left the hand
+    // hanging off it).
     _pose(turn: number) {
-        const m = this.camera.getWorldMatrix(), a = turn * 1.1, arm = this.arm;
-        const at = V3.TransformCoordinates(this.at, m), shoulder = arm._shoulder(), [upper, fore] = arm.lengths, rest = fore + this.hand;
+        const m = this.camera.getWorldMatrix(), a = turn * 1.1, arm = this.arm, sign = this.side === 'R' ? 1 : -1;
+        const at = V3.TransformCoordinates(this._mine(this.at), m), shoulder = arm._shoulder(), [upper, fore] = arm.lengths, rest = fore + this.hand;
         const line = at.subtract(shoulder), toward = line.normalizeToNew(), far = Math.min(line.length(), (upper + rest) * 0.985);
         const near = (upper * upper + far * far - rest * rest) / (2 * far), round = Math.sqrt(Math.max(0, upper * upper - near * near));
-        const hangs = V3.TransformNormal(HANGS, m), aside = hangs.subtract(toward.scale(V3.Dot(hangs, toward))).normalize();
+        const hangs = V3.TransformNormal(this._mine(HANGS), m), aside = hangs.subtract(toward.scale(V3.Dot(hangs, toward))).normalize();
         const elbow = shoulder.add(toward.scale(near)).add(aside.scale(round));
         const along = elbow.subtract(at).normalize();
-        let back = V3.TransformNormal(new V3(Math.cos(a), Math.sin(a), 0), m);
+        let back = V3.TransformNormal(new V3(sign * Math.cos(a), Math.sin(a), 0), m);
         back = back.subtract(along.scale(V3.Dot(back, along))).normalize();
         arm.reach({ at, along, back, elbow });
     }
@@ -242,7 +318,7 @@ function sleeve(arm: Arm) {
     const hemAt = length - SLEEVE.band, smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
     const out = (r: (typeof rings)[0], i: number) => {
         const a = (2 * Math.PI * i) / n, s = r.s;
-        const folds = SLEEVE.fold * smooth(upper, upper + 0.06, s) * (1 - smooth(hemAt - 0.02, hemAt, s)) * Math.sin((2 * Math.PI * s) / 0.04 + 1.3 * Math.sin(2 * a + s * 25));
+        const folds = SLEEVE.fold * smooth(upper, upper + 0.06, s) * (1 - smooth(hemAt - 0.02, hemAt, s)) * Math.sin((2 * Math.PI * s) / 0.06 + 1.3 * Math.sin(2 * a + s * 25));
         return r.reach[i] + SLEEVE.loose[0] + (SLEEVE.loose[1] - SLEEVE.loose[0]) * smooth(upper - 0.05, upper + 0.05, s) + SLEEVE.hem * smooth(hemAt - 0.004, hemAt, s) + folds;
     };
     const round = (r: (typeof rings)[0], i: number, radius: number, ahead = 0) => {
@@ -310,7 +386,7 @@ function sleeve(arm: Arm) {
 // Where a fist lands, for Arm.reach: on the skin over the first two knuckles, the hand running back from there to the
 // wrist, its back away from the curled fingers. In the person's own frame, the arm as it was made.
 function knuckles(arm: Arm) {
-    const person = arm.person, here = (name: string, end = 'head') => arm._in(person.joint(`${name}.R`, end), V3.Right(), V3.Up()).at;
+    const person = arm.person, here = (name: string, end = 'head') => arm._in(person.joint(`${name}.${arm.side}`, end), V3.Right(), V3.Up()).at;
     const mid = V3.Lerp(here('finger2-1'), here('finger3-1'), 0.5), ahead = mid.subtract(here('wrist')).normalize();
     const curled = V3.Lerp(here('finger2-3', 'tail'), here('finger3-3', 'tail'), 0.5).subtract(mid);
     const back = curled.subtract(ahead.scale(V3.Dot(curled, ahead))).normalize().negate(), along = ahead.negate();

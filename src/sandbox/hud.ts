@@ -15,6 +15,7 @@ const add = (parent, cls, html = '') => {
 export class Hud {
     declare layer: HTMLElement;
     declare arms: HTMLElement;
+    declare aim: HTMLElement;
     declare ammo: HTMLElement;
     declare monitor: HTMLElement;
     declare help: HTMLElement;
@@ -28,7 +29,7 @@ export class Hud {
     constructor(layer: HTMLElement) {
         this.layer = layer;
         add(layer, 'version', `Cold Chain ${__VERSION__}`);
-        add(layer, 'aim');
+        this.aim = add(layer, 'aim');
         this.arms = add(layer, 'arms');
         this.prompt = add(layer, 'prompt');
         this.ammo = add(layer, 'ammo');
@@ -36,7 +37,8 @@ export class Hud {
         this._bar = '';
         this.monitor = add(layer, 'monitor');
         this.help = add(layer, 'help', [
-            'Left click: fire, stab, swing, grab or throw. Right click: cut with a blade, punch with your hands, or change what you throw.',
+            'Left click: fire, stab, swing, grab or throw. Right click: cut with a blade or change what you throw.',
+            'Fists: left click punches with the left, right click with the right; hold to wind up a harder punch.',
             '1 to 6 or the mouse wheel: change what you hold. R: reload. E: take from the wall. G: put it back. Tab: what you carry.',
             'Bandage or medkit: hold left click on a wound (the medkit dresses all of them, one after another).',
             'N: another person where you are looking. X: see inside them. K: clear the room. H: hide this.',
@@ -85,6 +87,10 @@ export class Hud {
         const on = document.pointerLockElement ? weapons.looking() : null;
         const prompt = on ? `<b>E</b> ${weapons.slots.includes(on) ? 'Hold' : weapons.slots.includes(null) ? 'Take' : 'Swap for'} the ${name(on)}` : weapons.medic?.prompt ?? '';
         if (this.prompt.innerHTML !== prompt) this.prompt.innerHTML = prompt;
+        // The crosshair where the gun's bore meets the world (weapons.sight), the middle of the view for anything else.
+        const sight = weapons.sight?.(), left = sight ? `${(sight.x * 100).toFixed(2)}%` : '50%', top = sight ? `${(sight.y * 100).toFixed(2)}%` : '50%';
+        if (this.aim.style.left !== left) this.aim.style.left = left;
+        if (this.aim.style.top !== top) this.aim.style.top = top;
         const arm = weapons.arm;
         const ammo = arm.gun ? (weapons.reloading > 0 ? 'Reloading' : `${weapons.ammo.get(arm.key)} / ${arm.gun.rounds}`)
             : arm.kind === 'throw' ? `Throwing a ${weapons.throwing}` : '';

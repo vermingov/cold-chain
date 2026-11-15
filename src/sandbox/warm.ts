@@ -62,11 +62,12 @@ export async function warm({ scene, world, weapons, player, step, reset, xray, s
     }
     // A stab and a cut, a blow with the bat, a punch.
     say('Preparing shaders: blades and blows.');
-    for (const [key, button, part] of [['knife', 0, 'belly'], ['sword', 2, 'forearmL'], ['bat', 0, 'head'], [null, 2, 'head']] as const) {
+    for (const [key, button, part] of [['knife', 0, 'belly'], ['sword', 2, 'forearmL'], ['bat', 0, 'head'], ['fists', 2, 'head']] as const) {
         weapons.take(key);
         await ready(1);
-        aim(d, part, 0.7);
+        aim(d, part, key === 'fists' ? 0.5 : 0.7);
         press(button);
+        if (key === 'fists') weapons._punch('R');     // (a tap: thrown as it is let go)
         await new Promise((r) => setTimeout(r, 120));      // a stab lands after 90 ms
         await ready(24);      // a swing is over in half a second
     }

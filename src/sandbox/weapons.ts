@@ -14,7 +14,7 @@ import { pierce, blow, type Missile } from './wounds.ts';
 import { rayToSegment } from './anatomy.ts';
 import { blast } from './dismember.ts';
 import * as viscera from './viscera.ts';
-import { Fist } from './fist.ts';
+import { Fist, ownArm, FIST_GIVES } from './fist.ts';
 import { Hands, type Grip } from './hands.ts';
 import { Medic, buildKit } from './dressing.ts';
 import { GAMMA, RHO, volume } from './fluid.ts';
@@ -59,15 +59,15 @@ export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip;
     pistol: { at: [0.07, -0.115, 0.5], kick: [0.035, 0.2],
         right: { hold: 'grip', at: [0, -0.005, -0.005], along: [0, -0.95, -0.31], back: [0, -0.31, 0.95] },
         left: { hold: 'support', at: [-0.022, -0.02, 0.008], along: [0.1, -0.95, -0.3], back: [0.45, -0.25, 0.85] } },
-    rifle: { at: [0.15, -0.165, 0.32], kick: [0.06, 0.12],
+    rifle: { at: [0.14, -0.14, 0.28], kick: [0.06, 0.12],
         right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
         left: { hold: 'wrap', at: [0, 0.01, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
-    shotgun: { at: [0.15, -0.17, 0.34], kick: [0.06, 0.15],
+    shotgun: { at: [0.14, -0.145, 0.29], kick: [0.06, 0.15],
         right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
         left: { hold: 'wrap', at: [0, 0.04, 0.32], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
-    ak: { at: [0.15, -0.175, 0.36], kick: [0.03, 0.06], right: PISTOL_GRIP,
+    ak: { at: [0.14, -0.15, 0.33], kick: [0.03, 0.06], right: PISTOL_GRIP,
         left: { hold: 'wrap', at: [0, 0.075, 0.29], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
-    m4: { at: [0.15, -0.165, 0.34], kick: [0.025, 0.05], right: PISTOL_GRIP,
+    m4: { at: [0.14, -0.14, 0.29], kick: [0.025, 0.05], right: PISTOL_GRIP,
         left: { hold: 'wrap', at: [0, 0.07, 0.27], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
     grenade: { at: [0.15, -0.16, 0.4], turn: [-1.3, -0.2, 0],
         right: { hold: 'ball', at: [0, 0, -0.005], along: [0, 0, -1], back: [-1, 0, 0] } },
@@ -82,13 +82,14 @@ export const HELD: Record<string, { at: number[]; turn?: number[]; right?: Grip;
         left: { hold: 'support', at: [-0.026, -0.018, 0.01], along: [0.1, -0.8, -0.59], back: [0.45, -0.35, 0.82] } },
     // A 10/22: a straight wrist (no pistol grip), the other hand under the forend. Its .22 LR recoils by a fraction of a
     // joule in a 2.3 kg rifle: hardly a nudge.
-    r22: { at: [0.15, -0.165, 0.33], kick: [0.006, 0.012],
+    r22: { at: [0.14, -0.14, 0.28], kick: [0.006, 0.012],
         right: { hold: 'grip', at: [0, 0, 0], along: [0, -0.77, -0.64], back: [0, -0.64, 0.77] },
-        left: { hold: 'wrap', at: [0, -0.02, 0.36], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
-    // The tools in both hands (the hammer in one), carried up as the bat is.
-    shovel: { at: [0.19, -0.22, 0.42], turn: [-1.0, -0.35, 0.3],
+        left: { hold: 'wrap', at: [0, 0.015, 0.32], along: [-0.15, -0.2, -0.97], back: [0.85, 0.5, 0], shoulder: FORWARD } },
+    // The tools in both hands (the hammer in one), carried up as the bat is; the shovel across the body, its blade up by
+    // the left shoulder and the left hand up its shaft.
+    shovel: { at: [0.2, -0.25, 0.38], turn: [-0.75, -0.6, 0.5],
         right: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] },
-        left: { hold: 'handle', at: [0, 0, 0.32], along: [0, 0, -1], back: [0, -1, 0] } },
+        left: { hold: 'handle', at: [0, 0, 0.2], along: [0, 0, -1], back: [0, -1, 0] } },
     sledge: { at: [0.2, -0.26, 0.4], turn: [-1.0, -0.35, 0.3],
         right: { hold: 'handle', at: [0, 0, 0.12], along: [0, 0, -1], back: [0, -1, 0] },
         left: { hold: 'handle', at: [0, 0, 0], along: [0, 0, -1], back: [0, -1, 0] } },
@@ -131,6 +132,10 @@ export const SWINGS: Record<string, Record<string, number[][]>> = {
         down: DOWN,
     },
 };
+
+// Where along what is held (fractions of the way from the grip to its tip, weapons.json) the points that strike are
+// (_sweep): a blade's edge from near its hilt to the point, a head. Unlisted: a blade's whole edge, or a head at the end.
+const SWEPT: Record<string, number[]> = { knife: [0.4, 0.55, 0.7, 0.85, 1], bat: [0.55, 0.7, 0.85, 1], shovel: [0.72, 0.86, 1] };
 
 // Parts of a model that move in the hands, by their glTF node names: a pistol's slide and magazine, the M4's magazine
 // and charging handle, the bolt rifle's bolt, the grenade's pin.
@@ -195,6 +200,8 @@ export const ARMS = [
         sound: 'hit-hammer' },
     { key: 'grenade', name: 'M67 grenade', kind: 'grenade' },
     { key: 'hands', name: 'Hands', kind: 'grab' },
+    // Punched with: the left button the left fist, the right the right; held down, wound up harder (fist.ts).
+    { key: 'fists', name: 'Fists', kind: 'fists' },
     { key: 'throw', name: 'Throw things', kind: 'throw' },
     // Held on a wound (dressing.ts): the bandage dresses the one looked at, the medkit every one the person has.
     { key: 'bandage', name: 'Bandage', kind: 'dress' },
@@ -243,7 +250,7 @@ export class Weapons {
     declare arsenal: any;
     declare grenades: any[];
     declare flashAt: number;
-    declare fist: Fist | null;
+    declare fists: Record<'R' | 'L', Fist> | null;
     declare hands: Hands | null;
     declare parts: Map<string, Record<string, Part>>;
     declare clock: number;
@@ -255,13 +262,13 @@ export class Weapons {
     constructor(world) {
         this.world = world;
         // What is carried: six at hand (1 to 6), twelve more in the bag. An empty hand is the hands.
-        this.slots = ['pistol', 'knife', null, null, null, null];
+        this.slots = ['pistol', 'knife', 'fists', null, null, null];
         this.bag = new Array(12).fill(null);
         this.slot = 0;
         this.current = 0;
         this.arsenal = null;
         this.grenades = [];
-        this.fist = null;
+        this.fists = null;
         this.hands = null;
         this.parts = new Map();
         this.clock = 0;
@@ -368,10 +375,12 @@ export class Weapons {
                 this.blades.set(key, { wet: 0, held: 0, age: 0, at: null, v: null, looks });
             }
         }));
-        // The arm a punch is thrown with: a working man's, in the sleeve of his jacket.
-        if (this.world.people) this.fist = new Fist(this.world.people, 'sexton', this.world.camera, (m) => this.world.shadows?.addShadowCaster(m));
-        // And both of them, holding whatever else is held (the right is the same arm).
-        if (this.fist) this.hands = new Hands(this.world.people, 'sexton', this.world.camera, this.fist.arm, (m) => this.world.shadows?.addShadowCaster(m));
+        // The player's arms, a working man's in the sleeves of his jacket: holding whatever is held, or punching.
+        if (this.world.people) {
+            const cast = (m: BABYLON.AbstractMesh) => this.world.shadows?.addShadowCaster(m), { people, camera } = this.world;
+            this.hands = new Hands(people, 'sexton', camera, ownArm(people, 'sexton', 'R', camera, 'fist', cast), cast);
+            this.fists = { R: new Fist(this.hands.arms.R, camera), L: new Fist(this.hands.arms.L, camera) };
+        }
         for (const [key, node] of Object.entries(buildKit(this.world.scene))) {
             node.parent = this.hand;
             for (const mesh of node.getChildMeshes()) { mesh.isPickable = false; mesh.receiveShadows = true; }
@@ -389,7 +398,7 @@ export class Weapons {
     select(i) {
         if (i < 0 || i >= this.slots.length) return;
         this._letGo();
-        this.fist?.stop();
+        for (const f of Object.values(this.fists ?? {})) f.stop();
         this.slot = i;
         this.current = ARMS.findIndex((a) => a.key === (this.slots[i] ?? 'hands'));
         this.action = null;
@@ -397,6 +406,7 @@ export class Weapons {
         for (const [key, node] of this.models) node.setEnabled(key === this.arm.key);
         for (const blade of this.blades.values()) blade.at = blade.v = null;
         for (const parts of this.parts.values()) for (const part of Object.values(parts)) this._move(part);
+        if (this.arm.kind === 'fists') for (const f of Object.values(this.fists ?? {})) f.raise(true);
         this.since = Infinity;
         this._animate(0);
     }
@@ -464,7 +474,10 @@ export class Weapons {
             if (e.button === 0) this.firing = true;
             this._press(e.button);
         };
-        const up = (e) => { if (e.button === 0) { this.firing = false; this._letGo(); } };
+        const up = (e) => {
+            if (e.button === 0) { this.firing = false; this._letGo(); }
+            if (this.arm.kind === 'fists' && (e.button === 0 || e.button === 2)) this._punch(e.button === 0 ? 'L' : 'R');
+        };
         const key = (e) => {
             if (document.pointerLockElement !== canvas) return;
             if (/^Digit[1-6]$/.test(e.code)) this.select(Number(e.code.slice(5)) - 1);
@@ -490,7 +503,7 @@ export class Weapons {
         else if (arm.kind === 'blunt' && button === 0) this._swing('blow');
         else if (arm.kind === 'blunt' && button === 2 && arm.down) this._swing('down');
         else if (arm.kind === 'grab' && button === 0) this._take();
-        else if (arm.kind === 'grab' && button === 2) this._punch();
+        else if (arm.kind === 'fists' && (button === 0 || button === 2)) this.fists?.[button === 0 ? 'L' : 'R'].windUp();
         else if (arm.kind === 'throw') button === 0 ? this._throw() : (this.throwKind = (this.throwKind + 1) % THROWN.length);
         else if (arm.kind === 'grenade') this._lob(button === 0 ? 14 : 6);
     }
@@ -539,22 +552,23 @@ export class Weapons {
         this.ammo.set(key, this.ammo.get(key) - 1);
         this.busy = gun.every;
         this.recoil = 1;
-        const { camera, sound } = this.world;
-        const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
+        const { sound } = this.world;
+        const { from, ahead } = this._bore(key);
         // A shotgun's charge flies as one mass for the first metre or so before the pellets part: up to about 1.2 m it
         // makes one round hole 2 to 2.5 cm across and goes in as a single heavy missile, wrecking everything along a
         // wide track (dev/research/wounds.md). Further off, the pellets go their own ways.
-        const near = gun.pellets > 1 ? this._person(eye, ahead, 1.4) : null;
+        const near = gun.pellets > 1 ? this._person(from, ahead, 1.4) : null;
         if (near && near.t + 0.5 < 1.3) {
             const off = near.t + 0.5;
-            this._shot(eye, jitter(ahead, gun.spread * 0.05), { ...gun, energy: gun.energy * gun.pellets * (1 - off * 0.1), mass: gun.mass * gun.pellets,
+            this._shot(from, jitter(ahead, gun.spread * 0.05), { ...gun, energy: gun.energy * gun.pellets * (1 - off * 0.1), mass: gun.mass * gun.pellets,
                 calibre: off < 0.6 ? 0.022 : 0.026, channel: 0.024, soft: 42, hard: 120, pellets: 1 });
-        } else for (let p = 0; p < gun.pellets; p++) this._shot(eye, jitter(ahead, gun.spread), { ...gun });
+        } else for (let p = 0; p < gun.pellets; p++) this._shot(from, jitter(ahead, gun.spread), { ...gun });
         sound?.shot(gun.sound, { gain: 1 });
         // The flash at the muzzle, one frame (muzzle.ts), and the light it throws, going by the clock (update).
         const anchors = this._anchors.get(key);
         const tip = anchors?.tip ?? new V3(0, 0, 0.6);
         const muzzle = V3.TransformCoordinates(tip, this.hand.getWorldMatrix());
+        this.world.note(`  from the muzzle ${muzzle.asArray().map((x) => x.toFixed(2))} along the bore ${ahead.asArray().map((x) => x.toFixed(3))}`);
         this.flash.position.copyFrom(muzzle);
         this.flash.intensity = this.muzzle.fire(key, tip, muzzle, ahead);
         this.flashAt = performance.now();
@@ -594,6 +608,40 @@ export class Weapons {
     }
 
     // The nearest person a line could meet: tested against their segments first, which is cheap.
+    // Where a shot from the gun `key` in the hand starts and the way it goes: from its muzzle, along its bore, as the
+    // gun is held this moment (swayed, kicked, mid-reload), not from the eye along the middle of the view. The hand's +z
+    // is the bore (load()). But never from beyond a wall: a gun drawn over the room (HELD_GROUP) can be held out
+    // through one, and its shot then starts at the wall, on the line from the eye to the muzzle.
+    _bore(key: string) {
+        const m = this.hand.computeWorldMatrix(true);
+        return { from: this._beforeWall(V3.TransformCoordinates(this._anchors.get(key)?.tip ?? new V3(0, 0, 0.6), m)), ahead: V3.TransformNormal(V3.Forward(), m).normalize() };
+    }
+
+    // A point of what is in the hand, or the nearest point to it on the line from the eye that is on the eye's side of
+    // the room's walls.
+    _beforeWall(at: BABYLON.Vector3) {
+        const eye = this.world.camera.globalPosition, out = at.subtract(eye), far = out.length();
+        const wall = far > 1e-4 ? this._wall(eye, out.scale(1 / far)) : null;
+        return wall && wall.distance < far ? eye.add(out.scale((wall.distance - 0.01) / far)) : at.clone();
+    }
+
+    // Where on the screen (0 to 1 across and down) the gun in the hand's bore meets whatever is first along it, a wall or
+    // someone, for the crosshair (hud.ts) to be drawn on: the dot shows where a shot will go, not the middle of the view
+    // (the two part as the gun sways, kicks and lags a turn; at rest they meet AIMED metres ahead). Null for no gun.
+    sight() {
+        const key = this.arm.key;
+        if (!this.arm.gun || !this._anchors.has(key)) return null;
+        const { from, ahead } = this._bore(key);
+        let far = this._wall(from, ahead)?.distance ?? 60;
+        for (const npc of this.world.npcs) for (const seg of npc.ragdoll.segments) {
+            const [a, b] = npc.ragdoll.segmentEnds(seg), { t, distance } = rayToSegment(from, ahead, a, b);
+            if (t > 0 && t < far && distance < seg.radius) far = t;
+        }
+        const camera = this.world.camera, at = from.add(ahead.scale(far));
+        const p = V3.Project(at, BABYLON.Matrix.Identity(), camera.getViewMatrix().multiply(camera.getProjectionMatrix()), new BABYLON.Viewport(0, 0, 1, 1));
+        return p.z > 0 && p.z < 1 ? { x: p.x, y: p.y } : null;
+    }
+
     _person(origin, dir, far) {
         let best = null;
         for (const npc of this.world.npcs) {
@@ -674,76 +722,76 @@ export class Weapons {
     _swing(how) {
         const arm = this.arm;
         this.busy = how === 'stab' ? 0.35 : arm.swing;
-        this.action = { how, t: 0, length: this.busy, hits: new Map(), landed: false };
+        this.action = { how, t: 0, length: this.busy, hits: new Map(), landed: false, was: null };
         this.world.sound?.shot(arm.whoosh ?? 'swing', { gain: how === 'stab' ? 0.5 : 0.9, rate: arm.key === 'knife' ? 1.25 : arm.key === 'hammer' ? 1.2 : 1 });
-        if (how === 'stab') {
-            const { camera } = this.world;
-            const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
-            const person = this._person(eye, ahead, arm.reach);
-            if (!person) return;
-            const skin = person.npc.surface(eye, ahead, arm.reach).find((h) => h.kind === 'skin');
-            if (!skin) return;
-            setTimeout(() => {
-                const edge = this._anchors.get(arm.key)?.edge;
-                const across = edge ? V3.TransformNormal(edge, this.hand.getWorldMatrix()).normalize() : undefined;
-                const res = pierce(person.npc, eye, ahead, { ...arm.stab, across }, arm.reach + arm.stab.reach);
-                // The blade comes out with blood over what went in, both faces, about as wide as it is.
-                if (res.hit && res.enter) this._bloody(arm.key, Math.min(arm.stab.reach, res.at ? V3.Distance(res.enter.point, res.at) : arm.stab.reach) * arm.stab.calibre);
-                this.world.sound?.shot('stab', { at: skin.point.asArray() });
-            }, 90);
-        }
     }
 
-    // A cut or a blow under way: a fan of lines from the eye, swept from right to left over the middle of the swing.
+    // A stab, a cut or a blow under way. What it meets is what the thing in the hand meets as it is drawn: points along
+    // its edge (a blade's, from near the hilt to the point), or on its head (the bat's barrel, the tools' heads), each
+    // followed from where it was drawn last frame to where it was drawn this one, and the first skin or cloth any of those
+    // moves crosses (_meets) is struck there, along the way that point was going. A swing that passes beside someone's
+    // head, as drawn, touches nothing. (The hand's pose is _animate's of the frame before: the one on the screen.)
     _sweep(dt) {
-        const a = this.action, arm = this.arm;
+        const a = this.action, arm = this.arm, tip = this._anchors.get(arm.key)?.tip;
         a.t += dt;
         const p = a.t / a.length;
-        if (p < 0.2 || p > 0.75 || a.how === 'stab') return;
-        // From overhead it lands only as it comes down onto the line of sight, half way through.
-        if (a.how === 'down' && (p < 0.45 || p > 0.6)) return;
-        const { camera } = this.world;
-        const eye = camera.globalPosition.clone();
-        const turn = 0.75 - ((p - 0.2) / 0.55) * 1.5;
-        const dir = a.how === 'down' ? camera.getDirection(V3.Forward())
-            : V3.TransformNormal(new V3(Math.sin(turn), -0.12 + (p - 0.2) * 0.35, Math.cos(turn)).normalize(), camera.getWorldMatrix());
-        const person = this._person(eye, dir, arm.reach);
-        if (!person) return;
-        const npc = person.npc;
-        if (a.how === 'blow' || a.how === 'down') {
-            if (a.landed) return;
-            const skin = npc.surface(eye, dir, arm.reach).find((h) => h.kind === 'skin' || h.kind === 'cloth');
-            if (!skin) return;
-            a.landed = true;
-            // The bat moves across the eye's line, and on into them; a blow from overhead comes down and forward.
-            const across = V3.TransformNormal(new V3(a.how === 'down' ? 0 : -1, a.how === 'down' ? -0.8 : 0, a.how === 'down' ? 0.6 : 0.35).normalize(), camera.getWorldMatrix());
-            const down = a.how === 'down' ? arm.down : null;
-            if (down?.claw) {
-                // The claw's tines driven in (a puncture), along the way it comes down.
-                const res = pierce(npc, skin.point.subtract(across.scale(0.05)), across, { ...down.claw, across: camera.getDirection(V3.Right()) }, 0.05 + down.claw.reach);
-                if (res.hit) this.world.sound?.shot('stab', { at: skin.point.asArray() });
-            } else {
-                blow(npc, skin.point, across, arm.mass, down?.speed ?? arm.speed, down?.tool ?? arm.tool);
-                this.world.sound?.shot(arm.sound ?? 'blunt', { at: skin.point.asArray() });
-                // The shovel's edge also splits the skin over what it broke: a chop, drawn as a short cut across it.
-                if (down?.cut) {
-                    const res = pierce(npc, skin.point.subtract(across.scale(0.05)), across, { energy: 60, mass: 0.3, calibre: 0.004, channel: down.cut * 0.5, soft: 0.8, hard: 60,
-                        reach: down.cut, blade: true, slash: true }, 0.05 + down.cut);
-                    if (res.hit && res.enter) a.hits.set(npc, [res.enter]);
-                }
+        if (!tip) return;
+        const along = SWEPT[arm.key] ?? (arm.kind === 'blade' ? [0.35, 0.5, 0.65, 0.8, 0.92, 1] : [0.82, 0.92, 1]);
+        const m = this.hand.getWorldMatrix(), now = (a.how === 'stab' ? [1] : along).map((f) => V3.TransformCoordinates(tip.scale(f), m));
+        const was = a.was;
+        a.was = now;
+        const [from, to] = { stab: [0.05, 0.6], down: [0.25, 0.75] }[a.how] ?? [0.1, 0.85];
+        if (!was || p < from || p > to || (a.landed && a.how !== 'cut')) return;
+        for (let k = 0; k < now.length; k++) {
+            const met = this._meets(was[k], now[k]);
+            if (!met) continue;
+            const { npc, hit, dir } = met, far = V3.Distance(was[k], now[k]);
+            if (a.how === 'stab') {
+                a.landed = true;
+                const edge = this._anchors.get(arm.key)?.edge;
+                const across = edge ? V3.TransformNormal(edge, m).normalize() : undefined;
+                const res = pierce(npc, was[k], dir, { ...arm.stab, across }, far + arm.stab.reach);
+                this.world.note(`  ${arm.key} stab met ${npc.label} at ${hit.point.asArray().map((x) => x.toFixed(2))}`);
+                // The blade comes out with blood over what went in, both faces, about as wide as it is.
+                if (res.hit && res.enter) this._bloody(arm.key, Math.min(arm.stab.reach, res.at ? V3.Distance(res.enter.point, res.at) : arm.stab.reach) * arm.stab.calibre);
+                this.world.sound?.shot('stab', { at: hit.point.asArray() });
+                return;
             }
-            this.action.t = Math.max(this.action.t, this.action.length * 0.75);
-            return;
+            if (a.how === 'blow' || a.how === 'down') {
+                a.landed = true;
+                this.world.note(`  ${arm.key} ${a.how} met ${npc.label} at ${hit.point.asArray().map((x) => x.toFixed(2))}`);
+                const down = a.how === 'down' ? arm.down : null;
+                if (down?.claw) {
+                    // The claw's tines driven in (a puncture), along the way it comes down.
+                    const res = pierce(npc, hit.point.subtract(dir.scale(0.05)), dir, { ...down.claw, across: this.world.camera.getDirection(V3.Right()) }, 0.05 + down.claw.reach);
+                    if (res.hit) this.world.sound?.shot('stab', { at: hit.point.asArray() });
+                } else {
+                    blow(npc, hit.point, dir, arm.mass, down?.speed ?? arm.speed, down?.tool ?? arm.tool);
+                    this.world.sound?.shot(arm.sound ?? 'blunt', { at: hit.point.asArray() });
+                    // The shovel's edge also splits the skin over what it broke: a chop, drawn as a short cut across it.
+                    if (down?.cut) {
+                        const res = pierce(npc, hit.point.subtract(dir.scale(0.05)), dir, { energy: 60, mass: 0.3, calibre: 0.004, channel: down.cut * 0.5, soft: 0.8, hard: 60,
+                            reach: down.cut, blade: true, slash: true }, 0.05 + down.cut);
+                        if (res.hit && res.enter) a.hits.set(npc, [res.enter]);
+                    }
+                }
+                this.action.t = Math.max(this.action.t, this.action.length * 0.75);
+                return;
+            }
+            const res = pierce(npc, was[k], dir, { energy: arm.key === 'sword' ? 90 : 35, mass: 0.3, calibre: 0.004, channel: arm.cut * 0.5, soft: 0.8, hard: 60, reach: arm.cut,
+                blade: true, slash: true }, far + arm.cut);
+            if (!res.hit || !res.enter) continue;
+            // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).
+            if (!a.hits.has(npc)) {
+                a.hits.set(npc, []);
+                this.world.sound?.shot('skin', { at: res.enter.point.asArray(), gain: 0.9 });
+                this.world.note(`  ${arm.key} cut met ${npc.label} at ${res.enter.point.asArray().map((x) => x.toFixed(2))}`);
+            }
+            a.hits.get(npc).push(res.enter);
+            // Nothing is thrown out of the cut as it is made (no pressure behind it); the blade picks blood up as it goes
+            // through, a few centimetres of its edge in the flesh at a time (an estimate), and casts it off as it swings (_shed).
+            this._bloody(arm.key, arm.cut * 0.03);
         }
-        const res = pierce(npc, eye, dir, { energy: arm.key === 'sword' ? 90 : 35, mass: 0.3, calibre: 0.004, channel: arm.cut * 0.5, soft: 0.8, hard: 60, reach: arm.cut,
-            blade: true, slash: true }, arm.reach + arm.cut);
-        if (!res.hit || !res.enter) return;
-        // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).
-        if (!a.hits.has(npc)) { a.hits.set(npc, []); this.world.sound?.shot('skin', { at: res.enter.point.asArray(), gain: 0.9 }); }
-        a.hits.get(npc).push(res.enter);
-        // Nothing is thrown out of the cut as it is made (no pressure behind it); the blade picks blood up as it goes
-        // through, a few centimetres of its edge in the flesh at a time (an estimate), and casts it off as it swings (_shed).
-        this._bloody(arm.key, arm.cut * 0.03);
     }
 
     // --- hands: picking a body up and dragging it -------------------------------------------
@@ -774,37 +822,60 @@ export class Weapons {
         }
     }
 
-    // A punch: an untrained man's, 500 to 850 N, about 45 J behind a fist and forearm (dev/research/blunt-trauma.md). It
-    // lands when the fist gets there (fist.ts), on whatever is in front of the eye then.
-    _punch() {
-        this.busy = 0.42;
-        const { camera } = this.world, reach = 0.85;
-        const look = () => {
-            const eye = camera.globalPosition.clone(), ahead = camera.getDirection(V3.Forward());
-            const person = this._person(eye, ahead, reach + 0.08);
-            const hit = person?.npc.surface(eye, ahead, reach + 0.08).find((h) => h.kind === 'skin' || h.kind === 'cloth');
-            return hit ? { npc: person.npc, hit, ahead, far: V3.Distance(eye, hit.point) } : null;
-        };
-        const aim = () => {
-            this.world.sound?.shot('swing', { gain: 0.35, rate: 1.4 });
-            const at = look();
-            return at && at.far <= reach ? at.far : null;
-        };
-        // Whatever is in front of the eye where the knuckles are when they get there, or a little short of it (they came
-        // on into the fist): how far ahead its skin is, where the fist stops.
-        const land = (speed: number, ahead: number) => {
-            const at = look();
-            if (!at || at.far > ahead + 0.03 || at.far < ahead - 0.08) return null;
-            // A fist and the arm behind it give: about 9 kN/m, which is what makes 1.8 kg at the 5 m/s it lands at
-            // (fist.ts) land with the 500 to 850 N an untrained punch is measured at (dev/research/blunt-trauma.md), not
-            // with the force of a brick.
-            blow(at.npc, at.hit.point, at.ahead, 1.8, speed, 9000);
-            this.world.sound?.shot('blunt', { at: at.hit.point.asArray(), gain: 0.6 });
-            return at.far;
-        };
-        if (this.fist) { this.fist.punch({ aim, land }); return; }
-        const ahead = aim();
-        if (ahead !== null) setTimeout(() => land(5.25, ahead), 110);
+    // A punch let go: the fist `side` thrown, harder the longer it was wound up (fist.ts). It lands on whatever its
+    // knuckles meet on their way (_fists), not on what is in front of the eye.
+    _punch(side: 'R' | 'L') {
+        const fist = this.fists?.[side];
+        if (!fist || fist.wind < 0) return;
+        this.world.note(`punch, ${side === 'L' ? 'left' : 'right'}, wound up ${fist.charge.toFixed(2)}`);
+        this.world.sound?.shot('swing', { gain: 0.25 + 0.2 * fist.charge, rate: 1.5 - 0.2 * fist.charge });
+        fist.letGo();
+    }
+
+    // The fists, every frame: the view turned with the body behind a punch, each fist posed, and one on its way out
+    // landing on the first skin or cloth its knuckles cross between the last frame and this, where they cross it, with
+    // the speed and the mass behind it that fist.ts gives (the body's own give and the fist's, bones.ts and FIST_GIVES).
+    _fists(dt: number) {
+        if (!this.fists || this.arm.kind !== 'fists') return;
+        const camera = this.world.camera as BABYLON.FreeCamera;
+        for (const f of Object.values(this.fists)) { const l = f.lean(); camera.rotation.y += l.yaw; camera.rotation.z += l.roll; }
+        for (const f of Object.values(this.fists)) {
+            f.update(dt);
+            const now = f.knuckles(), was = f.was;
+            f.was = f.flying ? now : null;
+            if (!f.flying || !was) continue;
+            const met = this._meets(was, now);
+            if (!met) continue;
+            blow(met.npc, met.hit.point, met.dir, f.mass, f.speed, FIST_GIVES);
+            this.world.sound?.shot('blunt', { at: met.hit.point.asArray(), gain: 0.45 + 0.35 * (f.mass - 1.5) / 1.4 });
+            f.stopAt(met.hit.point);
+            f.was = null;
+        }
+    }
+
+    // The first skin or cloth of anyone that a point of what is held crosses going from `a` to `b` (this frame's move):
+    // who, the crossing (npc.surface's), and the way it was going.
+    _meets(a: BABYLON.Vector3, b: BABYLON.Vector3) {
+        const d = b.subtract(a), far = d.length();
+        if (far < 1e-5) return null;
+        d.scaleInPlace(1 / far);
+        for (const npc of this.world.npcs) {
+            if (!this._near(npc, a, b)) continue;
+            const hit = npc.surface(a, d, far).find((h) => h.kind === 'skin' || h.kind === 'cloth');
+            if (hit) return { npc, hit, dir: d };
+        }
+        return null;
+    }
+
+    // Whether the line from `a` to `b` comes within reach of any of `npc`'s segments (before the costly look at the skin).
+    _near(npc, a: BABYLON.Vector3, b: BABYLON.Vector3) {
+        const d = b.subtract(a), far = d.length();
+        if (far < 1e-5) return false;
+        d.scaleInPlace(1 / far);
+        return npc.ragdoll.segments.some((seg) => {
+            const [p, q] = npc.ragdoll.segmentEnds(seg), { t, distance } = rayToSegment(a, d, p, q);
+            return distance < seg.radius + 0.1 && t > -0.1 && t < far + 0.1;
+        });
     }
 
     // Where what is held is drawn to: in front of the eye, as far off as it was taken hold of. The pull is step()'s.
@@ -889,7 +960,8 @@ export class Weapons {
             node.parent = null;
             node.setEnabled(true);
             for (const m of node.getChildMeshes()) m.setEnabled(true);  // (the one in the hand is hidden as it leaves it)
-            node.position.copyFrom(camera.globalPosition.add(ahead.scale(0.4)).add(up.scale(speed > 10 ? 0.1 : -0.3)));
+            // (From where it was in the hand as it let go, _lobbing's; not through a wall the hand was drawn over.)
+            node.position.copyFrom(this._beforeWall(model.getAbsolutePosition()));
             const meshes = node.getChildMeshes();
             for (const m of meshes) { m.renderingGroupId = 0; this.world.shadows?.addShadowCaster(m); }   // (out of the hand, in the room)
             // The physics on a sphere the size of the body (64 mm across, 400 g) that carries the model with it.
@@ -1023,7 +1095,7 @@ export class Weapons {
             }
         }
         this._hold();
-        this.fist?.update(dt);
+        this._fists(dt);
         this.medic.update(dt);
         // The flash goes as fast as it came.
         // By the clock, not by frames: a frame held up by a limb coming off must not keep a flash on screen.
@@ -1092,8 +1164,8 @@ export class Weapons {
     _animate(dt) {
         const key = this.arm.key, held = HELD[key], hands = this.hands;
         if (!held) {
-            hands?.put('L', null);
-            if (!(this.fist?.t >= 0)) hands?.put('R', null);
+            // (The fists pose their own arms.)
+            if (this.arm.kind !== 'fists') { hands?.put('L', null); hands?.put('R', null); }
             return;
         }
         const { player } = this.world;

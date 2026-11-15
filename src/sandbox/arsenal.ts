@@ -9,7 +9,7 @@ const V3 = BABYLON.Vector3;
 // south end.
 const ROWS = [
     { y: 1.95, keys: ['rifle', 'shotgun', 'ak', 'm4', 'r22'] },
-    { y: 1.38, keys: ['pistol', 'deagle', 'knife', 'sword', 'bat', 'grenade', 'throw', 'bandage', 'medkit'] },
+    { y: 1.38, keys: ['pistol', 'deagle', 'knife', 'sword', 'bat', 'grenade', 'throw', 'fists', 'bandage', 'medkit'] },
     { y: 0.82, keys: ['shovel', 'sledge', 'hammer'] },
 ];
 const WALL = { x: -HALL.x, z: -1.2, width: 7.2, height: 1.7, y: 1.45 };
@@ -46,6 +46,8 @@ export async function buildArsenal(world, weapons) {
             if (key === 'throw') {
                 const source = models.sources.get(BOX);
                 if (source) node = source.createInstance('arsenal_throw');
+            } else if (key === 'fists') {
+                node = wraps(scene);
             } else if (weapons.models.has(key)) {
                 node = weapons.models.get(key).instantiateHierarchy(null, { doNotInstantiate: true });   // clones: the originals in the hand are switched off
                 node.setEnabled(true);
@@ -93,4 +95,21 @@ export async function buildArsenal(world, weapons) {
             return pick?.hit ? pick.pickedMesh.metadata.arsenal : null;
         },
     };
+}
+
+// "Fists" on the board: a boxer's pair of hand wraps, two rolls of cotton 5 cm wide, each with its loose end hanging.
+function wraps(scene: BABYLON.Scene) {
+    const node = new BABYLON.TransformNode('arsenal_fists', scene), cotton = new BABYLON.PBRMaterial('wraps', scene);
+    cotton.albedoColor = new BABYLON.Color3(0.62, 0.6, 0.55);
+    cotton.metallic = 0;
+    cotton.roughness = 0.95;
+    for (const z of [-0.035, 0.035]) {
+        const roll = BABYLON.MeshBuilder.CreateCylinder('wrap', { diameter: 0.055, height: 0.05, tessellation: 28 }, scene);
+        roll.rotation.z = Math.PI / 2;
+        roll.position.set(0.03, 0, z);
+        const end = BABYLON.MeshBuilder.CreateBox('wrapEnd', { width: 0.002, height: 0.09, depth: 0.048 }, scene);
+        end.position.set(0.004, -0.045, z);
+        for (const m of [roll, end]) { m.material = cotton; m.parent = node; }
+    }
+    return node;
 }
