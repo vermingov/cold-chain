@@ -892,7 +892,9 @@ impl Cx<'_, '_> {
     // The room's walls, floor and fixed things: where a line meets them.
     fn wall(&self, origin: Vec3, dir: Vec3) -> Option<Wall> {
         let ctx = self.rapier.single().ok()?;
-        let filter = QueryFilter::new().groups(CollisionGroups::new(Group::ALL, WORLD));
+        // (Only what is built: the TS picked the map's solid meshes. A casing, a thrown thing or the grenade's own ball
+        // is not a wall, and the fragments of a grenade started inside its ball.)
+        let filter = QueryFilter::only_fixed().groups(CollisionGroups::new(Group::ALL, WORLD));
         let (_, hit) = ctx.cast_ray_and_get_normal(origin, dir, 200.0, true, filter)?;
         Some(Wall { distance: hit.time_of_impact, point: hit.point, normal: if hit.normal.length_squared() > 0.5 { hit.normal } else { -dir } })
     }
