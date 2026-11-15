@@ -57,6 +57,7 @@ const ORGAN_BLEED = { heart: 0.07, liver: 0.012, spleen: 0.01, kidney: 0.007, lu
     colon: 0.0015, gallbladder: 0.001, bladder: 0.0008, adrenal: 0.001, muscle: 0.001, airway: 0.001, oesophagus: 0.001, brainstem: 0.001 };
 
 const AIRWAYS = 0.15;       // share of a torn lung's bleeding that goes into its own airways rather than the chest
+const TRACK_IN = 0.3;       // share of a neck wound's bleeding that runs into a windpipe holed along it (an estimate)
 const FAT = 0.012;          // metres of fat under the skin, about
 const SKIN = 0.002;
 
@@ -206,6 +207,14 @@ export function pierce(npc, origin: BABYLON.Vector3, dir: BABYLON.Vector3, m: Mi
     if (!m.slash) {
         if (!lid) npc.welling(enter, 0.03);
         npc.welling(exitHit, 0.1);
+    }
+    // A hole in the larynx or the windpipe opens the track into the airway: what the vessels and flesh torn along it
+    // bleed runs in through the hole as well as out of the skin, and is breathed down and coughed up
+    // (dev/research/airway-blood.md sec. 1).
+    if (v.bleeds.slice(first).some((b) => b.into === 'airway' && !b.side)) for (const b of v.bleeds.slice(first)) {
+        if (b.internal || b.into) continue;
+        v.bleed({ name: `${b.name}, into the windpipe`, rate: b.rate * TRACK_IN, arterial: b.arterial, internal: true, clots: b.clots, into: 'airway' });
+        b.rate *= 1 - TRACK_IN;
     }
     // What bleeds comes out of the wound: the way out if there is one, it being the bigger.
     for (const b of v.bleeds.slice(first)) b.source = { ...b.source, mark: (lid && b.source?.mark === enter ? lid : b.source?.mark) ?? exitHit ?? lid ?? enter };

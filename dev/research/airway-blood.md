@@ -12,6 +12,14 @@ chosen to sit inside what the sources describe.
   haemoptysis in 43%, later reviews call true haemoptysis uncommon. The game sends 15% of a lung wound's bleeding into
   its airways (*estimate*), the rest into the chest (vitals.ts as before). A holed trachea or main bronchus bleeds into
   its own lumen, straight down into the lungs.
+- **A neck wound through the airway.** A bullet through the larynx or trachea joins its track to the airway's lumen:
+  the vessels and flesh torn along the same track (a carotid or jugular beside it, the thyroid, the strap muscles) bleed
+  in through the hole as well as out of the skin, and the blood is breathed down and coughed up. The game sends 30% of
+  such a shot's outward bleeding into the airway (*estimate*). A carotid or jugular hole with no airway hole bleeds
+  outward only.
+- **The cord in the neck.** Cut at C4 or above, the diaphragm's nerve (C3 to C5) goes with it and breathing stops; cut
+  at C5 to C7 the diaphragm still works, but the belly's muscles that drive a forceful cough are paralysed, so the cough
+  is weak (the game: 40% of its strength, *estimate*).
 - **Haemoptysis vs haematemesis.** Blood from the lungs is coughed up, bright red and frothy (mixed with air, often
   with sputum); blood from the gut is vomited, with retching, dark red with clots, or "coffee grounds" once it has sat
   in the stomach acid for a while: haemoglobin oxidised to haematin, which takes hours (WebMD; NHS: "blood has been in
@@ -62,6 +70,10 @@ a lung, *estimate*), most of the mouth thrown out as a spray, needs the person a
   swallowed (a 20 ml swallow, after Adnerhill 1989's natural sip of 21 ml for men) or a mouthful is spat out; out cold,
   each breath draws a share of the pooled blood into the lungs, and the pool narrows the airway (`choked`) and gurgles.
   Rolling the person onto their side or front drains it out of the mouth.
+- Breathing through blood in the big airways froths it, and the breath out carries some of it up into the throat with
+  no cough: the froth seen at the mouth and nose of the drowned. The game moves 1% of what lies in the airways past
+  30 ml up into the mouth each breath, at most 2 ml (*estimate*); on the back it runs back and is breathed in again, on
+  the front or side it runs out.
 
 ## 5. Retching and vomiting
 

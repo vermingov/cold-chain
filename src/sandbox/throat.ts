@@ -206,7 +206,7 @@ export class Throat {
             if (reflex > 0.5) {
                 if ((this.swallowIn -= dt) < 0 && this.mouth > 4) {
                     // A mouthful awake and able: spat out, if the face is not turned up; otherwise swallowed.
-                    if (this.mouth > 12 && awake > 0.6 && this.toLips > -0.5 && Math.random() < 0.45) this._spit();
+                    if (this.mouth > 5 && awake > 0.6 && this.toLips > -0.5 && Math.random() < 0.6) this._spit();
                     else { const gulp = Math.min(this.mouth, SWALLOW); this.mouth -= gulp; this.stomach += gulp; }
                     this.swallowIn = 1.5 + Math.random() * 2;
                 }
@@ -239,6 +239,16 @@ export class Throat {
                 this.breath -= 1;
                 const gurgle = Math.max(ramp(this.mouth, 4, 30) * back * (1 - reflex * 0.7), ramp(wet, 15, 120));
                 if (gurgle > 0.15) npc.world.sound?.shot('gurgle', { follow: () => head.position.asArray(), gain: 0.25 + 0.5 * gurgle });
+                // Breathing through blood in the big airways froths it, and each breath out drives some of the froth up
+                // the windpipe into the throat with no cough to do it: the froth at the mouth and nose of the drowned
+                // (sec. 4; how much a breath carries is an estimate).
+                const frothed = Math.min(2, Math.max(0, wet - 30) * 0.01);
+                if (frothed > 0) {
+                    this.lungs.L -= (frothed * this.lungs.L) / wet;
+                    this.lungs.R -= (frothed * this.lungs.R) / wet;
+                    this.froth = (this.froth * this.mouth + frothed) / (this.mouth + frothed);
+                    this.mouth += frothed;
+                }
             }
         }
     }
@@ -291,7 +301,8 @@ export class Throat {
         for (const k of ['L', 'R'] as const) { const c = Math.min(15, this.lungs[k] * CLEARS * strength); this.lungs[k] -= c; up += c; }
         this.froth = (this.froth * this.mouth + up) / Math.max(1e-6, this.mouth + up);
         this.mouth += up;
-        const wet = this.mouth > 2;
+        // (Even a millilitre or two brought up comes out in the cough as a pink spray: frothed, it looks more than it is.)
+        const wet = this.mouth > 0.5;
         const playing = wet ? npc.world.sound?.shot('cough-wet', { follow: () => npc.ragdoll.byName.get('head').node.position.asArray(), gain: 0.9 }) : null;
         if (playing) { npc.face.speak(playing, npc.world.sound.now, 'cough'); npc._said.until = performance.now() / 1000 + 1.5; }
         else npc.say('cough', 0.9, true);
