@@ -950,8 +950,15 @@ pub fn renew(world: &mut World, who: Entity, clock: f32) {
     });
 }
 
+// What hurt did is there for the frame it happened in, for whatever draws, plays or moves it to take; then it goes.
+fn forget(mut people: Query<&mut Hurt>) {
+    for mut h in &mut people {
+        h.happened.clear();
+    }
+}
+
 pub fn plugin(app: &mut App) {
-    app.insert_resource(Dice(12345)).add_systems(Update, (fit, update).chain());
+    app.insert_resource(Dice(12345)).add_systems(First, forget).add_systems(Update, (fit, update).chain());
 }
 
 #[cfg(test)]

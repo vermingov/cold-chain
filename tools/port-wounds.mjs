@@ -60,6 +60,8 @@ for (const [k, shot] of SHOTS.entries()) {
           res.push({ stopped: p.stopped, energy: +p.energy.toFixed(1), hit: p.hit });
         }
       }
+      // (The next throw of the dice: the same as the port's if both threw as many in the shot.)
+      res.push('dice ' + Math.random().toFixed(6));
       // The medkit: the worst open wound dressed, then the next, until none is left open.
       if (shot.dress) for (let n = 0, w; (w = D.wounds(npc)[0]) && n < 12; n++) { const d = D.dress(w); res.push(d ? d.kind + ' ' + +d.capacity.toFixed(2) : 'none'); if (!d) break; }
       return { clocks: S.world.npcs.map((n) => n.clock), target: target.asArray(), res };

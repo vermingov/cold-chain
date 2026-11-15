@@ -28,7 +28,9 @@ for t in ts:
                 ok = same(a[k], b[k])
             if ok: matched += 1
             else: bad.append((a['t'], k, a[k], b[k]))
-    print(f"{name}: {'all readings match' if not bad else str(len(bad)) + ' differ'}")
+    shot = next(e['what'] for e in rs if e['what'].get('event') == 'shot' and e['what']['name'] == name)
+    dt = [x for x in t['res'] if isinstance(x, str)]; dr = [x for x in shot['result']['res'] if isinstance(x, str)]
+    print(f"{name}: {'all readings match' if not bad else str(len(bad)) + ' differ'}; after the shot TS {dt}, port {dr}")
     for x in bad[:12]: print('   t=%s %s\n      TS %s\n      RS %s' % x)
     says_t = [(s['t'], [l for l in s['log'] if l.startswith('say')]) for s in t['series']]
     says_r = [(s['t'], [l for l in s['log'] if l.startswith('say')]) for s in snaps[name]]

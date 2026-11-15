@@ -407,6 +407,8 @@ fn wounds() -> Vec<Step> {
                         }
                     }
                 }
+                // (The next throw of the dice: the same as the TS's if both threw as many in the shot.)
+                res.push(json!(format!("dice {:.6}", npc.dice.next())));
                 if shot.dress {
                     for _ in 0..12 {
                         let Some(w) = crate::dressing::wounds(npc).into_iter().next() else { break };

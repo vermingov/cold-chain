@@ -191,7 +191,7 @@ Everything to draw is in `Hurt::happened`, each variant named after the TS call 
 `Spray`, `Stream`, `Blot`, `Drawn` / `Through` (a break to draw: bones.rs `Break` has where and how), `Tooth`, `Tongue`,
 `Edge` / `Charge` / `Bled` (dismember and viscera). `Say`, `Cut` and `Sound` are the voice and the sounds. The bruise field
 (`Bruise`: per welded skin place, `ery`, `blood`, `age`, `h` the swelling out) and the eyes' state (`Eye`: marks,
-patches, blood, collapse) are kept as the TS kept them for its shaders. Take what you draw and clear the list.
+patches, blood, collapse) are kept as the TS kept them for its shaders. Each list is there for the frame it was made in (cleared in First): read it any time after Update.
 
 ### The check
 `cargo run -- --scenario wounds --out <dir>` fires fifteen shots and blows (rifle, pistol, shotgun pellets, a knife stab,
