@@ -375,6 +375,20 @@ fn rehearse(app: &mut App) {
             crate::dismember::sever(w, who, crate::dismember::Limb::Head, "", None, None, crate::dismember::How::Blade);
         }
     });
+    // A shotgun into a fresh belly from two metres, watched for four seconds: the bowel it lets out (viscera.rs's ropes,
+    // their own mesh layout) comes out over seconds, after the steps above have looked away.
+    add(app, "the bowel", 60, |w| {
+        let _ = w.run_system_once(crate::sandbox::reset);
+    });
+    add(app, "the bowel", 50, |w| {
+        take(w, "shotgun");
+        aim(w, 2, "belly", 2.0);
+    });
+    add(app, "the bowel", 240, |w| {
+        aim(w, 2, "belly", 2.0);
+        press(w, 0);
+    });
+    add(app, "the bowel", 2, |w| release(w, 0));
     // Whatever the rehearsal made and keeps hidden till it is wanted (a pool of sparks, smoke, a flash's card), and
     // whatever it left out of view, drawn once.
     add(app, "the rest", 3, show_all);

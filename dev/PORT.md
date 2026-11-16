@@ -672,7 +672,9 @@ Every render pipeline the game will need is made behind a loading screen before 
 scenario (other scenarios start as they did: compiling synchronously, they hold a frame up instead, and the rehearsal
 would change what they log). A pipeline is made for each mix of material, mesh layout and view that is drawn, the first
 time it is drawn in view: so the warm-up puts the people through what happens to people, in front of the camera, waiting
-after each step until the render world's `PipelineCache` has nothing left waiting for three frames running, then resets
+after each step until the render world's `PipelineCache` has nothing left waiting for three frames running (and, at the
+start and again after the events, every mesh drawn once unculled and unhidden: a prop first seen from the far side of
+the hall, sparks or a flash's card kept hidden till wanted, would otherwise make theirs when first seen), then resets
 the room as K does (new people, what was carried given back, the player where the game starts them). Sound is muted
 meanwhile.
 
