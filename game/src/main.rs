@@ -65,6 +65,7 @@ mod wet;
 mod wounds;
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use bevy::asset::io::file::FileAssetReader;
@@ -87,11 +88,19 @@ pub fn babylon_quat(q: [f32; 4]) -> Quat {
     Quat::from_xyzw(-q[0], -q[1], q[2], q[3])
 }
 
-// The assets are the TS game's own, in the repository's assets/, one up from this crate.
-pub const ASSETS: &str = "../assets";
+// The assets: assets/ beside the executable in a game as shipped (a folder with the binary and assets/ in it, wherever
+// it is run from); otherwise the repository's, one up from this crate, which `cargo run` finds through
+// CARGO_MANIFEST_DIR (Bevy's own base path).
+pub static ASSETS: LazyLock<PathBuf> = LazyLock::new(|| {
+    let beside = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("assets")));
+    match beside {
+        Some(dir) if dir.is_dir() => dir,
+        _ => FileAssetReader::get_base_path().join("../assets"),
+    }
+});
 
 pub fn asset_file(path: &str) -> PathBuf {
-    FileAssetReader::get_base_path().join(ASSETS).join(path)
+    ASSETS.join(path)
 }
 
 // Where the game is in starting up: the people, props and surfaces are read before the first frame (startup systems),
@@ -117,7 +126,7 @@ fn main() -> AppExit {
                 }),
                 ..default()
             })
-            .set(AssetPlugin { file_path: ASSETS.into(), ..default() })
+            .set(AssetPlugin { file_path: ASSETS.to_string_lossy().into(), ..default() })
             // Every surface seen at a slant, as Babylon's textures were (anisotropy 8), and repeating: the hall's
             // concrete is laid in world metres and tiles.
             .set(ImagePlugin {
