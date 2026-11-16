@@ -296,6 +296,8 @@ pub struct Face {
     breath: f32,
     slack: f32,
     dead_for: f32,
+    // How loud the voice is now (0 to 1).
+    pub loud: f32,
     // The pupils' size (mm) and how pale the skin has gone (0 to 1), for the eyes' and the skin's looks.
     pub pupil: f32,
     pub pale: f32,
@@ -347,6 +349,7 @@ impl Face {
             breath: 0.0,
             slack: 0.0,
             dead_for: 0.0,
+            loud: 0.0,
             pupil: 3.5,
             pale: 0.0,
             last_pain: 0.0,
@@ -379,6 +382,7 @@ impl Face {
         // How much of a face is left to make expressions with: all of it awake, none out cold.
         let alert = ramp(conscious, 0.35, 0.85);
         let (loud, kind) = seen.voice.map_or((0.0, ""), |(l, k)| (l, k));
+        self.loud = loud;
         let crying = hurt.crying;
         let hangs = hurt.bones.jaw_hangs.max(hurt.throat.gape);
 
@@ -1061,9 +1065,14 @@ pub fn scenario() -> Vec<Step> {
     let g = "sexton";
     s.extend(close("face_rest", g, 0.0, 0.4));
     // Each cry, caught where its recording is loud (the frames counted from the takes' loudness: scenario log).
-    for (kind, wait) in [("scream", 24), ("yell", 14), ("groan", 30), ("cry", 40), ("gasp", 14), ("cough", 10)] {
+    for kind in ["scream", "yell", "groan", "cry", "gasp", "cough"] {
         s.push(Step::Do(Box::new(move |w: &mut World| say(w, g, kind))));
-        s.push(Step::Wait(wait));
+        // (caught where the take is loud, after the face has had a moment to come)
+        s.push(Step::Wait(8));
+        s.push(Step::Until(Box::new(move |w: &mut World| {
+            let e = who(w, g);
+            w.get::<Face>(e).is_some_and(|f| f.loud > 0.45)
+        }), 120));
         s.extend(close(match kind {
             "scream" => "face_scream",
             "yell" => "face_yell",
@@ -1128,19 +1137,24 @@ pub fn scenario() -> Vec<Step> {
     s.extend(close("face_dying", "oldman", 0.0, 0.5));
     s.extend(dark(60 * 30));
     s.extend(close("face_dead", "oldman", 0.0, 0.5));
-    // The man in the hood: a bat into his chin, and his front teeth knocked out.
+    // The man in the hood: a bat into his chin until the jaw goes, and his front teeth knocked out.
     s.push(npc("hood", |npc| {
         let ahead = npc.segment("head").map_or(Vec3::NEG_Z, |k| npc.segment_world(k).rotation * Vec3::NEG_Z);
         let jaw = npc.bone_index("jaw");
         let chin = npc.world_of(npc.body().bones[jaw].tail, jaw, None).0;
-        if let Some(skin) = npc.surface(chin + ahead * 0.3, -ahead, 0.6, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin) {
-            crate::wounds::blow(npc, skin.point, -ahead, 0.79, 25.0, Some(crate::wounds::Tool::Named("bat")));
+        for speed in [25.0, 30.0, 35.0, 40.0] {
+            if npc.hurt.bones.jaw_hangs > 0.0 {
+                break;
+            }
+            if let Some(skin) = npc.surface(chin + ahead * 0.3, -ahead, 0.6, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin) {
+                crate::wounds::blow(npc, skin.point, -ahead, 0.79, speed, Some(crate::wounds::Tool::Named("bat")));
+            }
         }
         let front: Vec<Vec3> = npc.hurt.teeth.teeth.iter().filter(|t| t.front && t.name.contains("incisor")).map(|t| t.v0).collect::<Vec<_>>()
             .into_iter().map(|v| npc.skinned().at[v as usize]).collect();
         if !front.is_empty() {
             let c = front.iter().sum::<Vec3>() / front.len() as f32;
-            npc.teeth().blow(c + ahead * 0.01, -ahead, 2400.0, 0.02, true);
+            npc.teeth().blow(c + ahead * 0.01, -ahead, 6000.0, 0.02, true);
         }
         let hangs = npc.hurt.bones.jaw_hangs;
         let gone: Vec<String> = npc.hurt.teeth.teeth.iter().filter(|t| t.state != crate::teeth::State::Whole).map(|t| format!("{} {:?}", t.name, t.state)).collect();

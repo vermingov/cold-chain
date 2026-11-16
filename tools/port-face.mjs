@@ -34,9 +34,12 @@ try {
     const g = 'sexton';
     await wait(g, 1.5);
     await close('face_rest', g, 0, 0.55);
-    for (const [kind, frames] of [['scream', 24], ['yell', 14], ['groan', 30], ['cry', 40], ['gasp', 14], ['cough', 10]]) {
+    for (const kind of ['scream', 'yell', 'groan', 'cry', 'gasp', 'cough']) {
         await rig.eval(`__F.npc('${g}').say('${kind}', 1, true)`);
-        await wait(g, frames / 60);
+        // (caught where the take is loud, after the face has had a moment to come, as the port's check does)
+        await wait(g, 8 / 60);
+        const c = await clock(g);
+        await rig.until(`__F.npc('${g}').face._loudness() > 0.45 || __F.npc('${g}').face.clock > ${c + 2}`, 900000);
         await close(`face_${kind}`, g, 0, 0.55);
         await wait(g, 200 / 60);
     }
@@ -72,9 +75,9 @@ try {
       const W = await import('/src/sandbox/wounds.ts');
       const n = __F.npc('hood'), { fwd } = __F.at(n), jaw = n.person.byName.jaw, chin = n.worldOf(jaw.tail, jaw).at;
       const skin = n.surface(chin.add(fwd.scale(0.3)), fwd.scale(-1), 0.6).find((h) => h.kind === 'skin');
-      if (skin) W.blow(n, skin.point, fwd.scale(-1), 0.79, 25, 'bat');
+      for (const speed of [25, 30, 35, 40]) { if (n.bones.jawHangs > 0) break; if (skin) W.blow(n, skin.point, fwd.scale(-1), 0.79, speed, 'bat'); }
       const front = n.teeth.teeth.filter((t) => t.front && t.name.includes('incisor')).map((t) => n.teeth._where(t));
-      if (front.length) { const c = front.reduce((a, b) => a.add(b)).scale(1 / front.length); n.teeth.blow(c.add(fwd.scale(0.01)), fwd.scale(-1), 2400, 0.02, true); }
+      if (front.length) { const c = front.reduce((a, b) => a.add(b)).scale(1 / front.length); n.teeth.blow(c.add(fwd.scale(0.01)), fwd.scale(-1), 6000, 0.02, true); }
       return true; })()`);
     await wait('hood', 1);
     await close('face_jaw_teeth', 'hood', 0, 0.45);

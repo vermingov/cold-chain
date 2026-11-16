@@ -55,6 +55,8 @@ pub enum Step {
     Do(Box<dyn FnMut(&mut World) + Send + Sync>),
     // A screenshot of the window as this frame is drawn: <out>/<name>.png.
     Shot(String),
+    // A frame at a time until it says so (or `most` frames have gone): a moment that cannot be counted in advance.
+    Until(Box<dyn FnMut(&mut World) -> bool + Send + Sync>, u32),
 }
 
 // Where the run's pictures and log go.
@@ -252,6 +254,12 @@ fn run(world: &mut World) {
                 r.waited = 0;
             }
             Some(Step::Do(mut f)) => f(world),
+            Some(Step::Until(mut f, most)) => {
+                if most > 0 && !f(world) {
+                    world.resource_mut::<Runner>().steps.push_front(Step::Until(f, most - 1));
+                    return;
+                }
+            }
             Some(Step::Shot(name)) => {
                 let (path, saved) = {
                     let mut r = world.resource_mut::<Runner>();
