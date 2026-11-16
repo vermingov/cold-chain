@@ -982,9 +982,9 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
          mut stains: ResMut<Assets<ExtendedMaterial<StandardMaterial, Stain>>>, hall: Res<crate::wet::Hall>) {
     let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
     let mut blood = Blood::new();
-    // Blood in the air: a deep red that shines.
+    // Blood in the air: dark red, glossy (fluid.rs DROP).
     let air = materials.add(StandardMaterial {
-        base_color: Color::linear_rgb(0.16, 0.007, 0.006),
+        base_color: crate::fluid::DROP,
         perceptual_roughness: 0.06,
         reflectance: 0.35,
         ..default()
@@ -1034,9 +1034,13 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     commands.insert_resource(blood);
 }
 
-// What is in the air drawn: each drop long along its way (as far as it moves in a sixtieth of a second, as the eye sees
-// it), each stream as ropes between its points still joined; and the marks that changed. (The beads running on skin are
-// runs.rs's.)
+// What is in the air drawn: each drop a little long along its way, each stream as ropes between its points still joined;
+// and the marks that changed. (The beads running on skin are runs.rs's.)
+// A drop d across moving v smears over v t in a frame's time t, but covers each place of that smear only d / (d + v t) of
+// it: past three times its own size the smear is under a quarter covered and reads as a faint streak, not as blood. Drawn
+// solid (one draw for every drop), it is drawn only as long as it would be at least that solid, at most four times its
+// width; the TS drew the whole smear of a hundred-and-twentieth of a second solid, centimetres of it, and a spray from a
+// stump was a burst of red needles.
 fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&mut Transform, &mut Visibility)>, mut meshes: ResMut<Assets<Mesh>>) {
     let start = Instant::now();
     let b = &mut *blood;
@@ -1062,7 +1066,7 @@ fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&
         let speed = vel.length();
         let r = b.d[i].max(0.0006);
         let rotation = if speed > 1e-4 { Quat::from_rotation_arc(Vec3::Y, vel / speed) } else { Quat::IDENTITY };
-        show(&d.drops, i, Transform { translation: at, rotation, scale: Vec3::new(r, r + (speed / 60.0).min(0.08) * 0.5, r) }, &mut things);
+        show(&d.drops, i, Transform { translation: at, rotation, scale: Vec3::new(r, r + (speed / 120.0).min(r * 3.0), r) }, &mut things);
     }
     hide(&d.drops, n, d.shown[0].max(n), &mut things);
     d.shown[0] = n;

@@ -108,7 +108,9 @@ pub fn steps(part: &str) -> Vec<Step> {
     let all = part.is_empty();
     let mut s = Vec::new();
     s.push(Step::Do(Box::new(|w: &mut World| {
-        w.spawn((Lamp, PointLight { intensity: 0.8 * crate::map::CANDELA, range: 3.0, radius: 0.05, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, -50.0, 0.0)));
+        // (0.3 cd: it fills the shadows without lighting a close stump twice as brightly as the hall lights a face, which
+        // left skin and cloth white and the cut red glowing. tools/port-cut.mjs lights the TS's the same.)
+        w.spawn((Lamp, PointLight { intensity: 0.3 * crate::map::CANDELA, range: 3.0, radius: 0.05, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, -50.0, 0.0)));
     })));
     // The people settled into their stance.
     s.push(Step::Wait(90));

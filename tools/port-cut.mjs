@@ -28,7 +28,13 @@ try {
       const S = window.__sandbox, V = BABYLON.Vector3;
       const D = await import('/src/sandbox/dismember.ts'), W = await import('/src/sandbox/wounds.ts'), VI = await import('/src/sandbox/viscera.ts');
       const lamp = new BABYLON.PointLight('cut_lamp', new V(0, -50, 0), S.scene);
-      lamp.intensity = 2.5; lamp.range = 3; lamp.diffuse = new BABYLON.Color3(1, 1, 1);
+      // The Bevy scenario's lamp: 0.3 cd. Babylon sorts the lights shadow-casters first, then by renderPriority, then in the
+      // order made, and a material takes only its first maxSimultaneousLights (8 for people and cut faces, 4 for blood):
+      // made last, this lamp was the tenth light on a person and lit nothing. Put first among the rest, it lights what the
+      // Bevy lamp lights, so the two games are compared under the same light.
+      lamp.intensity = 0.3; lamp.range = 3; lamp.diffuse = new BABYLON.Color3(1, 1, 1); lamp.renderPriority = 10;
+      // (A mesh keeps its own list of lights, made when it was and added to since: made again in the new order.)
+      for (const m of S.scene.meshes) m._resyncLightSources();
       const between = (npc, a, b, t) => { const A = npc.person.byName[a], B = npc.person.byName[b]; return npc.worldOf(V.Lerp(A.head, B.head, t), A).at; };
       // The eye at 'from' looking at 'at', the lamp by it.
       const look = (at, from) => { const g = S.world.ground?.(from.x, from.z, Infinity) ?? 0; S.player.spawn(from.x, from.z, { toward: [at.x, at.y, at.z], eye: from.y - g });
@@ -48,6 +54,8 @@ try {
         console.log('forearm', await rig.eval(`(() => { const { D, V, between } = __C, n = ${npc(0)};
           const t = performance.now(); const off = D.chop(n, between(n, 'lowerarm01.R', 'wrist.R', 0.55), new V(-1, -0.3, 0).normalize(), 90); return [off, performance.now() - t]; })()`));
         await frames(2);
+        // (Which lights the stump's face takes: the lamp must be among its first eight.)
+        console.log('stump lights', await rig.eval(`${npc(0)}.dismember.cuts[0].meshes[0].lightSources.map((l) => l.name).join(' ')`));
         await rig.eval(`__C.facing(${npc(0)}, 0, false, 0.32)`); await shot('forearm_stump');
         await rig.eval(`__C.facing(${npc(0)}, 0, true, 0.32)`); await shot('forearm_piece_fresh');
         await frames(150);

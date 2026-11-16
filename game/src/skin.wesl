@@ -298,7 +298,12 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
         // crescent.
         let span = a * (0.4 + 0.6 * hash2(vec2(s.seed + k, select(0.0, 1.0, x > 0.0))));
         let xa = clamp(x / span, -1.0, 1.0);
-        let yb = y - bend * a * 0.45 * (xa * xa - 0.4);
+        // Skin tears along the weakest way through its collagen, not a ruled line: a long split wanders a little from side
+        // to side over a centimetre or so, and each split off the first bends its own way (a star of straight equal
+        // splits read as drawn, and a big tear's long side as cut with a knife).
+        let own = bend + select(0.0, (hash2(vec2(s.seed + 0.5, k)) - 0.5) * 0.5, i > 0u);
+        let wander = (noise2(vec2(x * 0.08, s.seed * 0.7 + k * 5.0)) - 0.5) * a * 0.3;
+        let yb = y - own * a * 0.45 * (xa * xa - 0.4) - wander;
         // Both lips torn along the one jagged line, so that they would fit back together; the gap between them uneven.
         // (The fine jags only at the edge itself: carried out across the lips they would comb them into ridges.)
         let jag = (noise2(vec2(x * 0.55, s.seed + k * 7.0)) - 0.5) * (0.35 + 0.2 * b);
@@ -514,8 +519,9 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     var c = albedo;
     var tissue_rough = 0.32;
     var coat = 0.0;
-    let fat = mix(vec3(0.82, 0.70, 0.48), vec3(0.93, 0.86, 0.66), smoothstep(0.3, 0.7, select(0.5, at.w, s.kind == EXIT)));
-    let muscle = vec3(0.42, 0.08, 0.065) * (0.7 + 0.5 * mix(0.5, noise2(q * vec2(0.9, 6.0) + s.seed), fine));
+    // (sRGB. Fat pale cream to light yellow, L* 75-80, b* 20-25; muscle beef's red-brown, L* 30-38, a* 25-32: cutface.rs.)
+    let fat = mix(vec3(0.80, 0.68, 0.54), vec3(0.88, 0.80, 0.64), smoothstep(0.3, 0.7, select(0.5, at.w, s.kind == EXIT)));
+    let muscle = vec3(0.45, 0.17, 0.16) * (0.7 + 0.5 * mix(0.5, noise2(q * vec2(0.9, 6.0) + s.seed), fine));
     let dermis = vec3(0.76, 0.50, 0.46);
     if s.kind != EXIT {
         let ring = at.z;
@@ -574,19 +580,22 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         // The lips turned out: the skin bruised red along them, blood smeared at the edge.
         let lip = 1.5 + 0.08 * s.a.z * 1000.0;
         let t = clamp(1.0 + inside / lip, 0.0, 1.0);
-        c = mix(c, c * vec3(0.8, 0.52, 0.52), t * 0.7);
-        c = blood_over(c, 0.05 * t * t * t, wet);
+        // (Dusky rather than red: an exit has no scraped ring, only the bruise of skin stretched out from inside; DiMaio.)
+        c = mix(c, c * vec3(0.8, 0.6, 0.62), t * 0.7);
+        c = blood_over(c, 0.06 * t * t * t * t, wet);
         // The skin's cut edge seen over the lip (the turned-out dermis, pale), then the fat bulging between, glistening and
         // filmed with blood, red muscle where it is torn deeper, and the track black-red.
         let edge = smoothstep(-0.1, 0.12, inside);
-        c = mix(c, blood_over(to_linear(dermis) * 0.75, 0.035, wet), edge);
+        // (Fresh, the edge is bloody: a bare dermis rim caught the light pale, like paper.)
+        c = mix(c, blood_over(to_linear(dermis) * 0.7, 0.07, wet), edge);
         var deep = mix(fat, muscle, at.z);
-        deep = blood_over(to_linear(deep), 0.03 + 0.1 * smoothstep(0.3, 0.8, 1.0 - at.w) + 0.12 * at.z, wet);
+        // (Fat barely bleeds: the blood lies in the crevices between its lobules, a trace over their tops; body-wall.md.)
+        deep = blood_over(to_linear(deep), 0.012 + 0.1 * smoothstep(0.3, 0.8, 1.0 - at.w) + 0.12 * at.z, wet);
         let thick = max(s.a.x * 1000.0, 1.5);
         deep = mix(deep, vec3(0.03, 0.002, 0.002), smoothstep(thick + 4.0, thick + 9.0, h));
         c = mix(c, deep, smoothstep(0.25, 0.5, inside));
-        // (wet, but fat glistens rather than shines: a thin film over lobules)
-        coat = max(coat, edge * 0.25);
+        // (wet, but fat glistens rather than shines: a thin film over lobules, not a lacquer)
+        coat = max(coat, edge * 0.15);
         tissue_rough = 0.5;
     }
     // Blood standing in it: level, dark red where it is deep, glossy.
@@ -965,9 +974,10 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
             let lob = mix(0.5, noise2(uv * 350.0 + 5.0) * 0.65 + noise2(uv * 800.0 + 9.0) * 0.35, glob);
             let in_fat = smoothstep(1.6, 3.0, d) * (1.0 - smoothstep(8.5, 10.0, d));
             // Fat at a fresh cut is a pale cream to light yellow, never orange (dev/research/wounds.md sec. 0).
-            let fat = mix(vec3(0.82, 0.70, 0.48), vec3(0.93, 0.86, 0.66), smoothstep(0.3, 0.7, lob));
+            let fat = mix(vec3(0.80, 0.68, 0.54), vec3(0.88, 0.80, 0.64), smoothstep(0.3, 0.7, lob));
             // Torn muscle: bundles of fibres running one way, ragged, darker between them.
-            let muscle = vec3(0.44, 0.09, 0.07) * (0.7 + 0.5 * mix(0.5, noise2(uv * vec2(180.0, 1400.0) + 2.0), gmid));
+            // (beef's red-brown, as the cut faces: cutface.rs)
+            let muscle = vec3(0.45, 0.17, 0.16) * (0.7 + 0.5 * mix(0.5, noise2(uv * vec2(180.0, 1400.0) + 2.0), gmid));
             // The skin's cut edge, rolled a little outward, paler at its rim.
             var flesh = mix(vec3(0.66, 0.42, 0.36), vec3(0.5, 0.17, 0.15), smoothstep(0.4, 1.3, d));
             flesh = mix(flesh, fat, smoothstep(1.6, 3.0, d));
@@ -984,7 +994,8 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
             let patches = mix(0.5, noise2(uv * 90.0 + 3.0), glob);
             var blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, noise2(uv * 400.0), gmid)) * (0.55 + 0.9 * patches);
             blood += smoothstep(0.42, 0.22, lob) * 0.55 * smoothstep(1.5, 4.0, d) * smoothstep(0.0, 0.03, gm.g);
-            albedo = mix(albedo, to_linear(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
+            // (a pool's colour: fluid.wesl's deep)
+            albedo = mix(albedo, vec3(0.075, 0.012, 0.011), clamp(blood, 0.0, 0.93));
             albedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);
             // Cut flesh is wet: a soft sheen on it, and more where blood lies.
             wet = max(smoothstep(0.3, 1.5, d), clamp(blood, 0.0, 1.0));

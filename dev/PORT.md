@@ -711,3 +711,28 @@ Worktrees sharing one CARGO_TARGET_DIR share the crate's fingerprint (the packag
 `cargo build` in one can say Finished at once while target/debug/cold-chain is another worktree's latest. Check the copy
 you run is yours (`strings` for a name only your branch has), and force your own link with
 `cargo rustc --bin cold-chain -- --cfg <your branch>` (a flag of its own: only this crate is built again).
+
+## The look against the TS (phase 4, branch port/parity-look)
+
+### Comparing under the same light
+Babylon gives a material only its first `maxSimultaneousLights` (8 for people, cut faces and the hall; 4, the default,
+for blood's drops), sorted with the shadow casters first, then by `renderPriority`, then in the order the lights were
+made. A person meets ten (the fill, six hall lamps, the arsenal lamp, the muzzle flash and anything added after), so
+a lamp a TS check adds last lights nothing: the cut check's lamp by the eye was dark in every TS picture and lit every
+Bevy one, which is why the cut job saw Bevy's stumps a brighter red. tools/port-cut.mjs now gives its lamp
+`renderPriority` 10 and remakes each mesh's light list, and logs the stump's lights to show it. A check lamp in
+either game is 0.3 cd: stronger, it doubled the hall's light on a close subject, pale skin came out nearly white
+(sRGB 235) and every red on it glowed. At 0.3 cd a close-up's skin is exposed as the hall leaves a face (sRGB 150-165).
+The hall, people and arsenal views themselves agree with the TS's within 5% in mean sRGB; Bevy draws the lamps' glass
+and lights the arsenal board, as "The foundation" says.
+
+### Blood and tissue colours
+- fluid.wesl `blood_over` is the one copy (organs.wesl and wall.wesl import it). Green and blue go as whole blood's
+  diffusion rate (36 and 40 per mm) and a depth of it gives back its own diffuse reflectance (0.075, 0.012, 0.011): the
+  TS's 24, 28 and 0.004 left a smear's edge orange and a pool glowing pure red. The sources are in the comment.
+- Drops and beads are a pool's colour (fluid.rs `DROP`). A drop in flight is drawn at most four times as long as it is
+  wide, as long as its motion smear would be at least a quarter covered; the TS's centimetre-long solid needles are gone.
+- Muscle in a cut face, a blade wound's wall, a gunshot's and the body wall is beef's red-brown (L* 34-40, a* 22-32);
+  fat is a pale cream (b* 20-25), as body-wall.md 1.6 says. The TS's were scarlet (a* 50) and orange (b* 45).
+- Exit wounds: dusky lips with a bloody edge, only a trace of blood over the fat between them and less gloss, a long
+  tear that wanders, and splits that each bend their own way.

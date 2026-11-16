@@ -17,6 +17,12 @@ pub const AIR: f32 = 1.2; // kg/m3, the air drops fly through
 pub const MU_AIR: f32 = 1.8e-5; // Pa s
 pub const DRIP: f32 = 0.05; // ml: the drop that falls from a chin, a nose, a fingertip
 
+// A drop or bead of fresh blood as a surface: a millimetre of it is a few times as deep as light gets into it, so it
+// looks as a pool does, its colour blood's own diffuse reflectance (fluid.wesl's `deep`, fresh), and its shine water's
+// (an index of 1.35: 2% at normal incidence, reflectance 0.35). The TS drew drops twice as bright and with almost no
+// green or blue, so that lit by a lamp near the eye a spray read as glowing red needles.
+pub const DROP: Color = Color::linear_rgb(0.075, 0.012, 0.011);
+
 // A drop of `ml` millilitres: how wide it is (m), and the other way.
 pub fn across(ml: f32) -> f32 {
     (ml * 1e-6 * 6.0 / std::f32::consts::PI).cbrt()
