@@ -708,9 +708,7 @@ fn draw_mouth(
         let world = |p: Vec3| ax * p.x + ay * p.y + az * p.z;
         let (a, b) = (world(u) * rho, world(v) * rho);
         let c = cw + world(n * cut);
-        // The ellipse's own axes (the conjugate diameters a, b turned to where they are at right angles), lying level.
-        let th = 0.5 * (2.0 * a.dot(b)).atan2(a.length_squared() - b.length_squared());
-        let (p, q) = (a * th.cos() + b * th.sin(), b * th.cos() - a * th.sin());
+        let (p, q) = axes(a, b);
         let (pl, ql) = (p.length().max(1e-6), q.length().max(1e-6));
         let x = (p / pl).reject_from(Vec3::Y).normalize_or(Vec3::X);
         let place = Transform::from_translation(c)
@@ -754,6 +752,25 @@ fn draw_mouth(
             commands.entity(e).insert(fresh);
         }
     }
+}
+
+// An ellipse's own axes from two conjugate half-diameters `a` and `b` (the points a cos t + b sin t): turned by the angle
+// where they come at right angles, they are its longest and shortest.
+fn axes(a: Vec3, b: Vec3) -> (Vec3, Vec3) {
+    let th = 0.5 * (2.0 * a.dot(b)).atan2(a.length_squared() - b.length_squared());
+    (a * th.cos() + b * th.sin(), b * th.cos() - a * th.sin())
+}
+
+#[test]
+fn ellipse_axes() {
+    // The ellipse with half-axes 3 along x and 1 along z, given by two of its conjugate half-diameters.
+    let t = 0.4f32;
+    let at = |t: f32| Vec3::new(3.0 * t.cos(), 0.0, t.sin());
+    let (p, q) = axes(at(t), at(t + std::f32::consts::FRAC_PI_2));
+    assert!(p.dot(q).abs() < 1e-5);
+    let mut l = [p.length(), q.length()];
+    l.sort_by(f32::total_cmp);
+    assert!((l[0] - 1.0).abs() < 1e-5 && (l[1] - 3.0).abs() < 1e-5, "{l:?}");
 }
 
 pub fn plugin(app: &mut App) {
