@@ -57,6 +57,10 @@ pub enum Step {
     Shot(String),
 }
 
+// Where the run's pictures and log go.
+#[derive(Resource)]
+pub struct Out(pub PathBuf);
+
 // What happened, written out at the end: each entry with the frame it was made in.
 #[derive(Resource, Default)]
 pub struct Log(pub Vec<Value>);
@@ -158,6 +162,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.extend(view("people_xray", 0.0, -1.5, [0.0, 1.0, 2.2], 1.65));
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
+        "sound" => s = crate::sound::scenario(),
+        "arsenal-use" => s = crate::weapons::scenario(),
         "wounds" => s = wounds(),
         _ => return body(name),
     }
@@ -284,6 +290,7 @@ pub fn plugin(this: Run) -> impl Fn(&mut App) {
         let steps = steps(&this.name).unwrap_or_else(|| panic!("no scenario {:?}", this.name));
         std::fs::create_dir_all(&this.out).unwrap_or_else(|e| panic!("{}: {e}", this.out.display()));
         app.insert_resource(Rng::new(this.seed))
+            .insert_resource(Out(this.out.clone()))
             .init_resource::<Log>()
             .insert_resource(Runner {
                 name: this.name.clone(),
