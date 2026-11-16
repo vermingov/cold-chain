@@ -343,7 +343,7 @@ joint's angles and aims, standing).
 
 shards.rs (with bones.ts `_look` and `_drawAll`), dismember.rs, cutface.rs (its `paint`, `capMesh`, `capMaterial`),
 viscera.rs, tubes.rs (viscera.ts `_tubeLook`), wall.rs, and anatomy.rs's per-person x-ray are the TS's, number for number,
-with the reasons in the comments. flesh.rs is new: it does on the geometry what hider.ts did per pixel for these two.
+with the reasons in the comments. flesh.rs is new: it does on the geometry what hider.ts did per pixel for a limb cut off.
 
 ### What drives it
 - Medicine hands over `Happened::Drawn` and `Through` (shards.rs draws them), `Edge` (kept per limb until the swing is
@@ -355,19 +355,21 @@ with the reasons in the comments. flesh.rs is new: it does on the geometry what 
   ahead, far)` / `viscera::pull(&mut viscera, held, Some(to) | None)` for bowel taken hold of (Weapons::bowel). They run
   from `commands.queue` with the whole World. Also: `dismember::chop`, `charge`, `sever`, `limb_at`, `place`,
   `end_world`; `viscera::open`, `blown`, `burst`, `openings`, `opening_world`.
-- dismember.rs and viscera.rs hand on what others draw: `Happened::Rim` (the stump's skin edge for marks.rs: its outline in
-  the skin's picture), `Lip` (an opening's lips), `Spray`, `Run` (what was in a piece, out of its end), `Drip` (off bowel
-  that came out), `Sound`.
+- What others draw: the stump's skin edge (`Skin::rim`) and an opening's lips (`Skin::lip`) are called on skin.rs's
+  `Skin`; an opening is skin.rs's hider's (`skin_hole`, `cloth_hole`, `window`: the skin and clothes not drawn there, the
+  body's inside wall seen through it), and a cut's window onto the skin under the clothes too. Blood: `Happened::Spray`,
+  `Run` (new: what was in a piece, out of its end), `Drip` (new: off bowel that came out); `Sound`.
 
 ### The person's flesh (flesh.rs)
 The TS kept the triangles a cut runs through in both the body's mesh and the piece's and hid each side's other half per
-pixel, cut openings out of the skin and clothes per pixel, and drew the skin under the clothes only in windows, each
-test looping over up to 64 holes and 8 cuts in every fragment of every person. Here a person gets `Flesh` (their own
-weights, triangles, cuts, openings, windows) the first time they are cut, and each touched part is made again once into a
-mesh of their own: triangles cut along the plane (new corners with the edge's picture, normal and mixed weights), openings
-cut out (triangles across a lens's edge halved down to 3 mm), the skin under the clothes put in as meshes of its own where
-a window shows it (`Flesh::under`). The same planes, radii and lenses as hider.ts, so what is drawn is what it drew. A
-person's skin and clothes materials are not touched (skin's job owns them): a wound extension there needs nothing from this.
+pixel (hider.ts, eight cuts a person tested in every fragment). Here a person gets `Flesh` (their own weights, triangles,
+cut planes) the first time a limb comes off, and each touched part (skin.rs's list: with the skin under the clothes) is
+made again once into a mesh of their own: triangles cut along the plane, their new corners with the edge's picture,
+normal and mixed weights. A part's own corners keep their order and the new ones come after them, because skin.wesl
+reads each corner's bruising from the table by its place in the part. The same planes and radii as hider.ts, so what is
+drawn is what it drew. So skin.rs's table row 4 (kept for the hider's cuts) is not used: nothing about a cut is asked per
+pixel. The piece's meshes wear the part's own material (skin.rs's `Flesh`, or person.rs's StandardMaterial before skin.rs
+has made it).
 
 ### A piece cut off
 `Ragdoll::sever` (ragdoll.rs, new): the joint and its friction let go, `attached` and the mass without the piece, a dead

@@ -1,8 +1,7 @@
 // The belly or chest opened: what is inside seen, and what can come out (src/sandbox/viscera.ts).
 //
-// An opening is a hole through the body's wall: the skin and the clothes over it are cut out there (flesh.rs: the TS
-// left them undrawn, hider.ts), its lips show the layers the wall was cut through (marks.rs's lip, handed over as
-// `Happened::Lip`), and through it the body's own organs are seen, the real ones from the anatomy in their places, each
+// An opening is a hole through the body's wall: the skin and the clothes over it are not drawn there (skin.rs's hider),
+// its lips show the layers the wall was cut through (marks.rs's lip), and through it the body's own organs are seen, the real ones from the anatomy in their places, each
 // in a wet look of its own: the small bowel's pink coils with the fine vessels that run round them, the liver dark and
 // glossy, the stomach, the colon, the lungs and the heart behind the ribs, and blood on them where they were hit and
 // round the opening. Behind the skin, where no organ is, the body's wall is seen from inside.
@@ -38,7 +37,6 @@ use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, Tex
 use bevy::shader::ShaderRef;
 
 use crate::anatomy::Anatomy;
-use crate::flesh::{mesh_of, Corner, Cuts, Flesh, Lens, Window};
 use crate::npc::{self, Crossing, Happened, Hurt, Kind};
 use crate::person::Person;
 use crate::ragdoll::Ragdoll;
@@ -305,8 +303,6 @@ pub struct Viscera {
     organs: Vec<(String, Entity, Handle<Mesh>)>,
     lungs: Vec<(String, Vec<(usize, Vec3, Vec3, u8)>)>,
     fallen: [f32; 2],
-    // The inside of the wall round each opening, seen from inside.
-    inside: Option<(Entity, Handle<Mesh>)>,
     // Where a missile or a blade went through an organ (rest), and how far the blood on it reaches.
     spots: Vec<(Vec3, f32)>,
     stale: bool,
@@ -361,23 +357,12 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
     let half = [(length / 2.0).max(width / 2.0), width / 2.0];
     let o = Opening { at: hit.rest, normal: n, ex, owner: hit.owner, half };
     // The wall: no skin there, nor the clothes over it, which are torn a little wider; the skin under the clothes shown
-    // round it; seen through, the body's inside.
-    {
-        let body = world.get::<Person>(who)?.body.clone();
-        if world.get::<Flesh>(who).is_none() {
-            let f = Flesh::new(&body, world.get::<Person>(who).unwrap());
-            world.entity_mut(who).insert(f);
-        }
-        let mut f = world.get_mut::<Flesh>(who).unwrap();
-        f.holes.push(Lens { at: o.at, ex, ey: n, half, depth: 0.03 });
-        f.cloth_holes.push(Lens { at: o.at, ex, ey: n, half: [half[0] * 1.1 + 0.005, half[1] * 1.15 + 0.004], depth: 0.05 });
-        f.windows.push(Window { at: o.at, n, radius: half[0] + 0.015, depth: 0.05 });
-        f.touch(&body, o.at, half[0] + 0.1);
-        for (i, p) in body.parts.iter().enumerate() {
-            if p.under {
-                f.stale[i] = true;
-            }
-        }
+    // round it; seen through, the body's inside (skin.rs's hider).
+    if let Some(mut sk) = world.get_mut::<crate::skin::Skin>(who) {
+        use crate::hider::Opening as Hole;
+        sk.skin_hole(&Hole { at: o.at, ex, ey: n, half });
+        sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.1 + 0.005, half[1] * 1.15 + 0.004] });
+        sk.window(o.at, n, half[0] + 0.015, 0.05);
     }
     let edge = lips(world, who, &o);
     let v_open = {
@@ -439,9 +424,11 @@ fn lips(world: &mut World, who: Entity, o: &Opening) -> Vec<Option<Crossing>> {
     .unwrap_or_default();
     let edge: Vec<Crossing> = all.iter().flatten().cloned().collect();
     if edge.len() > 2 {
-        if let Some(mut h) = world.get_mut::<Hurt>(who) {
-            h.happened.push(Happened::Lip { edge, width: (0.006 + o.half[1] * 0.25).min(0.015) });
-        }
+        world.resource_scope(|world, mut rng: Mut<Rng>| {
+            if let Some(mut sk) = world.get_mut::<crate::skin::Skin>(who) {
+                sk.lip(&edge, (0.006 + o.half[1] * 0.25).min(0.015), 0.014, &mut rng);
+            }
+        });
     }
     all
 }
@@ -993,52 +980,11 @@ fn collapse(v: &mut Viscera, vitals: &Vitals, meshes: &mut Assets<Mesh>) {
     }
 }
 
-// The inside of the wall round the openings, seen through them: the skin within 30 cm of an opening drawn again facing
-// in, dark muscle under its glistening lining with blood on it (hider.ts HIDER_INSIDE: the skin's back faces there). The
-// openings are cut out of it as out of the skin.
-fn inside_mesh(flesh: &Flesh, person: &Person, openings: &[Opening]) -> Mesh {
-    let body = &person.body;
-    let mut tris: Vec<[Corner; 3]> = Vec::new();
-    for (i, p) in body.parts.iter().enumerate() {
-        if p.kind != "skin" {
-            continue;
-        }
-        let none: Vec<crate::flesh::Plane> = Vec::new();
-        let cuts = Cuts { planes: &none, sides: &[], holes: &flesh.holes, cloth: false };
-        let _ = i;
-        for t in flesh.drawn[p.index_start..p.index_start + p.index_count].chunks_exact(3) {
-            if t[0] == t[1] && t[0] == t[2] {
-                continue;
-            }
-            let c = [0, 1, 2].map(|k| flesh.corner(body, t[k], &flesh.joints, &flesh.weights));
-            let mid = (c[0].p + c[1].p + c[2].p) / 3.0;
-            if !openings.iter().any(|o| mid.distance(o.at) < o.half[0] + 0.3) {
-                continue;
-            }
-            let mut out = Vec::new();
-            cuts.apply(c, &mut out);
-            for t in out {
-                // (Turned round: facing in.)
-                let f = |c: Corner| Corner { n: -c.n, ..c };
-                tris.push([f(t[0]), f(t[2]), f(t[1])]);
-            }
-        }
-    }
-    let mut mesh = mesh_of(&tris);
-    let rest: Vec<[f32; 4]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(VertexAttributeValues::Float32x3(p)) => p.iter().map(|p| [p[0], p[1], p[2], 0.0]).collect(),
-        _ => Vec::new(),
-    };
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, rest);
-    mesh
-}
-
 // The looks shared by everybody: one for each kind of organ, the ropes' (with their painted pictures), the wall's inside.
 #[derive(Resource, Default)]
 pub struct Looks {
     organs: Vec<(String, Handle<WetMaterial>)>,
     tubes: Vec<(String, Handle<WetMaterial>)>,
-    inside: Option<Handle<WetMaterial>>,
 }
 
 fn linear(c: [f32; 3]) -> Vec4 {
@@ -1107,12 +1053,12 @@ pub fn update_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<WetMaterial>>,
-    mut people: Query<(Entity, &Person, &Transform, &mut Viscera, &mut Hurt, &mut Vitals, Option<&Ragdoll>, Option<&Flesh>)>,
+    mut people: Query<(Entity, &Person, &Transform, &mut Viscera, &mut Hurt, &mut Vitals, Option<&Ragdoll>)>,
     skins: Query<&SkinnedMesh>,
     parents: Query<&ChildOf>,
 ) {
     let dt = time.delta_secs();
-    for (_, person, root, mut v, mut hurt, mut vitals, rd, flesh) in &mut people {
+    for (_, person, root, mut v, mut hurt, mut vitals, rd) in &mut people {
         let first = person.parts[0].1;
         let (Ok(skin), Ok(space)) = (skins.get(first), parents.get(first).map(|c| c.parent())) else { continue };
         // What wounds.rs handed over: blood on an organ hit.
@@ -1139,27 +1085,6 @@ pub fn update_system(
                     let at = inv.transform_point3(v.loops[k].p[i]);
                     let mm = v.blood_at(at);
                     v.loops[k].gore[i] = v.loops[k].gore[i].max(mm);
-                }
-            }
-            if let Some(f) = flesh {
-                let mesh = inside_mesh(f, person, &v.openings);
-                match &v.inside {
-                    Some((_, h)) => {
-                        if let Some(mut m) = meshes.get_mut(h.id()) {
-                            *m = mesh;
-                        }
-                    }
-                    None => {
-                        let h = meshes.add(mesh);
-                        let material = looks.inside.get_or_insert_with(|| {
-                            materials.add(ExtendedMaterial {
-                                base: StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.35, ..default() },
-                                extension: Wet { base: Vec4::new(0.026, 0.002, 0.0015, 1.0), look: Vec4::new(0.3, 0.6, 0.0, 2.0) },
-                            })
-                        });
-                        let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(material.clone()), skin.clone(), DynamicSkinnedMeshBounds, NotShadowReceiver, ChildOf(space))).id();
-                        v.inside = Some((e, h));
-                    }
                 }
             }
         }

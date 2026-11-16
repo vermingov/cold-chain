@@ -166,13 +166,15 @@ pub fn steps(part: &str) -> Vec<Step> {
 
     }
     if all || part == "belly" {
-    // 4. A shotgun's charge at contact range into the man in the hood's belly: its pellets one mass (1.4 kJ, the wad's
+    // 4. A shotgun's charge at contact range into the man in the hood's belly: its pellets one mass (1.45 kJ, the wad's
     // width), which blows the wall open.
     s.push(Step::Do(Box::new(|w: &mut World| {
         let who = person_at(w, 3);
         let p = between(w, who, "spine03", "spine03", 0.0) + babylon(0.03, -0.02, 0.0);
         let dir = babylon(0.0, 0.0, 1.0);
-        let m = crate::wounds::Missile { energy: 1400.0, mass: 0.032, speed: Some(400.0), calibre: 0.0185, channel: 0.03, soft: 9.0, hard: 90.0, ..default() };
+        // (weapons.rs's charge, half a metre from the muzzle: nine pellets' energy less a twentieth, one mass.)
+        let m = crate::wounds::Missile { energy: 170.0 * 9.0 * 0.95, mass: 0.0035 * 9.0, speed: Some(400.0), calibre: 0.022, channel: 0.024, soft: 42.0, hard: 120.0,
+                                         name: Some("charge".into()), ..default() };
         let t = std::time::Instant::now();
         let r = npc::with(w, who, |npc| crate::wounds::pierce(npc, p - dir * 0.6, dir, &m, 1.2).energy);
         taken(w);

@@ -62,7 +62,7 @@ try {
     }
     if (all || part === 'belly') {
         console.log('charge', await rig.eval(`(() => { const { W, V, between } = __C, n = ${npc(3)}, p = between(n, 'spine03', 'spine03', 0).add(new V(0.03, -0.02, 0)), dir = new V(0, 0, 1);
-          const t = performance.now(); const r = W.pierce(n, p.subtract(dir.scale(0.6)), dir, { energy: 1400, mass: 0.032, speed: 400, calibre: 0.0185, channel: 0.03, soft: 9, hard: 90 }, 1.2);
+          const t = performance.now(); const r = W.pierce(n, p.subtract(dir.scale(0.6)), dir, { name: 'charge', energy: 170 * 9 * 0.95, mass: 0.0035 * 9, speed: 400, calibre: 0.022, channel: 0.024, soft: 42, hard: 120 }, 1.2);
           return [r.energy, performance.now() - t, n.viscera.openings.length]; })()`));
         await frames(3);
         const opening = (i, k, off) => rig.eval(`(() => { const n = ${npc(i)}, o = n.viscera.openings[${k} < 0 ? n.viscera.openings.length - 1 : ${k}]; if (!o) return false;

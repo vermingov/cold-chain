@@ -130,11 +130,6 @@ pub enum Happened {
     Edge { energy: f32, at: Vec3, dir: Vec3 },
     Charge { energy: f32, at: Vec3, dir: Vec3, hit: Crossing, calibre: f32 },
     Bled { part: String, at: Vec3, channel: f32 },
-    // dismember.rs and viscera.rs, for the marks on the skin (marks.ts rim and lip): the skin's cut edge round a stump,
-    // its outline as points in the skin's picture with texture units to a metre there, as wide and deep as the cut was
-    // torn; and the lips of an opening through the wall, the skin crossings all round it.
-    Rim { uvs: Vec<Vec2>, scale: f32, width: f32, depth: f32, torn: bool },
-    Lip { edge: Vec<Crossing>, width: f32 },
     // The tongue torn through (throat.rs's card on it).
     Tongue { hit: Crossing, size: f32 },
     // marks.ts cut: a blade drawn through the skin from `a` to `b`, `deep` m into it, opening `gapes` of its full gape

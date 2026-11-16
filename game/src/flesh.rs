@@ -1,20 +1,17 @@
-// A person's own skin and clothes, cut (what hider.ts did for dismember.ts and viscera.ts, done on the geometry).
+// A person's own skin and clothes cut where a limb came off (what hider.ts did for dismember.ts, done on the geometry).
 //
 // In the TS a limb cut off kept every triangle the cut ran through in both meshes, the body's and the piece's, and each
-// drew only its own side of the plane (a shader test per pixel against every cut); an opening through the belly left the
-// skin and the clothes over it undrawn in a lens (the same, against every opening); and the skin under the clothes, never
-// drawn, was drawn in a window round each. Here the triangles are cut instead, once, when it happens: the skin and the
-// clothes are this person's own meshes from then on, each triangle a cut runs through cut along it (its new corners
-// with the colours, picture and weights of the edge they are on), the triangles in an opening taken out and those across
-// its edge cut small along it, and the skin under the clothes put in as meshes of its own where a window shows it. The
-// same planes and lenses as the TS's, in the person's rest space, so what is drawn is what it drew; nothing is asked per
-// pixel.
+// drew only its own side of the plane (a shader test per pixel against every cut). Here the triangles are cut instead,
+// once, when it happens: the skin and the clothes (and the skin under them, skin.rs's) are this person's own meshes from
+// then on, each triangle a cut runs through cut along it, its new corners with the colours, picture and weights of the
+// edge they are on. A part's own corners stay where they were in it, in order (skin.wesl reads each corner's bruising
+// from the person's table by its place in the part), and the new ones come after them. The same planes and radii as
+// hider.ts, so what is drawn is what it drew; nothing is asked per pixel. (Openings through the belly and holes in the
+// clothes are skin.rs's hider, per pixel, as the TS's were: viscera.rs puts them there.)
 
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::DynamicSkinnedMeshBounds;
-use bevy::mesh::skinning::SkinnedMesh;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 
@@ -28,27 +25,6 @@ pub struct Plane {
     pub n: Vec3,
     pub radius: f32,
     pub tore: bool,
-}
-
-// An opening through the skin: at `at` running along `ex` on skin facing `ey`, `half` its half length and half width,
-// `depth` how far either side of its plane (hider.ts's slot, a lens: viscera.rs `gape`).
-#[derive(Clone, Copy, Debug)]
-pub struct Lens {
-    pub at: Vec3,
-    pub ex: Vec3,
-    pub ey: Vec3,
-    pub half: [f32; 2],
-    pub depth: f32,
-}
-
-// A window in the clothes through which the skin under them is seen: round, `radius` across at `at`, through clothes
-// facing `n`, `depth` either side.
-#[derive(Clone, Copy, Debug)]
-pub struct Window {
-    pub at: Vec3,
-    pub n: Vec3,
-    pub radius: f32,
-    pub depth: f32,
 }
 
 // A corner of a triangle being cut: where it is at rest, which way it faces, where it is in the picture, its bones.
@@ -110,33 +86,6 @@ impl Plane {
     }
 }
 
-impl Lens {
-    // Whether a point is in the opening (hider.ts: a slit gaping most at its middle and closing to its ends, its edge
-    // wandering by a tenth of its width or so, as torn skin's does).
-    pub fn holds(&self, p: Vec3) -> bool {
-        let d = p - self.at;
-        if d.dot(self.ey).abs() >= self.depth {
-            return false;
-        }
-        let across = self.ex.cross(self.ey);
-        let (x, y) = (d.dot(self.ex), d.dot(across));
-        let along = (x.abs() / self.half[0]).min(1.0);
-        let lens = 0.5 + 0.5 * ((self.half[0] / self.half[1] - 1.0) * 0.5).clamp(0.0, 1.0);
-        y.abs() < self.half[1] * (1.0 - along * along).max(0.0).powf(lens) * (0.92 + 0.16 * noise(p * 260.0))
-    }
-
-    fn near(&self, p: Vec3, by: f32) -> bool {
-        p.distance(self.at) < self.half[0].max(self.half[1]) + by
-    }
-}
-
-impl Window {
-    pub fn shows(&self, p: Vec3) -> bool {
-        let d = p - self.at;
-        d.dot(self.n).abs() < self.depth && (d - self.n * d.dot(self.n)).length() < self.radius
-    }
-}
-
 // The polygon `poly` cut by a plane, the part where `side(p)` is at most nothing kept (Sutherland and Hodgman).
 fn keep(poly: Vec<Corner>, side: &dyn Fn(Vec3) -> f32) -> Vec<Corner> {
     let s: Vec<f32> = poly.iter().map(|c| side(c.p)).collect();
@@ -159,49 +108,30 @@ fn keep(poly: Vec<Corner>, side: &dyn Fn(Vec3) -> f32) -> Vec<Corner> {
     out
 }
 
-// A triangle with the openings taken out of it: halved across its longest side while it is across an opening's edge
-// and longer than 3 mm, the small ones whose middle is in it left out.
-fn holed(t: [Corner; 3], holes: &[Lens], out: &mut Vec<[Corner; 3]>) {
-    let mid = (t[0].p + t[1].p + t[2].p) / 3.0;
-    let size = t[0].p.distance(t[1].p).max(t[1].p.distance(t[2].p)).max(t[2].p.distance(t[0].p));
-    let near: Vec<&Lens> = holes.iter().filter(|h| h.near(mid, size)).collect();
-    if near.is_empty() {
-        out.push(t);
-        return;
-    }
-    let inside = |p: Vec3| near.iter().any(|h| h.holds(p));
-    let ins = [inside(t[0].p), inside(t[1].p), inside(t[2].p), inside(mid)];
-    if size <= 0.003 || ins.iter().all(|&x| !x) && size < 0.01 {
-        if !ins[3] {
-            out.push(t);
-        }
-        return;
-    }
-    let sides = [t[0].p.distance_squared(t[1].p), t[1].p.distance_squared(t[2].p), t[2].p.distance_squared(t[0].p)];
-    let a = if sides[0] >= sides[1] && sides[0] >= sides[2] { 0 } else if sides[1] >= sides[2] { 1 } else { 2 };
-    let (b, c) = ((a + 1) % 3, (a + 2) % 3);
-    let m = t[a].lerp(&t[b], 0.5);
-    holed([t[a], m, t[c]], holes, out);
-    holed([m, t[b], t[c]], holes, out);
-}
-
 // The cuts a triangle of the body meets: each plane it is near, kept to the side of it `sides` says (1 the body's, -1
-// the piece's, 0 not at all), and the openings.
+// the piece's, 0 not at all).
 pub struct Cuts<'a> {
     pub planes: &'a [Plane],
     pub sides: &'a [f32],
-    pub holes: &'a [Lens],
     pub cloth: bool,
 }
 
 impl Cuts<'_> {
+    // Whether a plane reaches triangle `t` (any corner within the cut's reach, as hider.ts asked of each pixel: a big
+    // triangle of a trouser leg can have its middle out of reach and a corner well past the plane) and puts some of it on
+    // the side not kept.
+    fn touching(&self, t: &[Corner; 3]) -> bool {
+        self.planes.iter().enumerate().any(|(k, pl)| {
+            let side = self.sides.get(k).copied().unwrap_or(1.0);
+            side != 0.0 && t.iter().any(|c| c.p.distance(pl.c) <= pl.radius) && t.iter().any(|c| pl.past(c.p, self.cloth) * side > 0.0)
+        })
+    }
+
     // Triangle `t` as what is left of it, in triangles.
     pub fn apply(&self, t: [Corner; 3], out: &mut Vec<[Corner; 3]>) {
         let mut poly: Vec<Corner> = t.to_vec();
         for (k, pl) in self.planes.iter().enumerate() {
             let side = self.sides.get(k).copied().unwrap_or(1.0);
-            // (Within the cut's reach: any of it, as hider.ts asked of each pixel; a big triangle of a trouser leg can have
-            // its middle out of reach and a corner well past the plane.)
             if side == 0.0 || t.iter().all(|c| c.p.distance(pl.c) > pl.radius) {
                 continue;
             }
@@ -210,18 +140,55 @@ impl Cuts<'_> {
                 return;
             }
         }
-        let mut tris = Vec::new();
         for k in 1..poly.len() - 1 {
-            tris.push([poly[0], poly[k], poly[k + 1]]);
-        }
-        if self.holes.is_empty() {
-            out.extend(tris);
-        } else {
-            for t in tris {
-                holed(t, self.holes, out);
-            }
+            out.push([poly[0], poly[k], poly[k + 1]]);
         }
     }
+}
+
+// Part `i` of the body as a mesh of its own: all its corners, in order, with bones and weights `joints`, `weights` (by
+// the body's numbering), and the triangles `tris` (the body's numbering) each cut by `cuts`; where a cut goes through
+// one, its pieces' corners come after the part's own.
+pub fn part_mesh(body: &Body, i: usize, tris: impl Iterator<Item = [u32; 3]>, joints: &[[u16; 4]], weights: &[[f32; 4]], cuts: &Cuts) -> Mesh {
+    let p = &body.parts[i];
+    let range = p.vertex_start..p.vertex_start + p.vertex_count;
+    let mut pos: Vec<Vec3> = body.position[range.clone()].to_vec();
+    let mut nor: Vec<Vec3> = body.normal[range.clone()].to_vec();
+    let mut uv: Vec<Vec2> = body.uv[range.clone()].to_vec();
+    let mut j: Vec<[u16; 4]> = joints[range.clone()].to_vec();
+    let mut w: Vec<[f32; 4]> = weights[range].to_vec();
+    let start = p.vertex_start as u32;
+    let mut index = Vec::new();
+    let mut pieces = Vec::new();
+    for t in tris {
+        let c = t.map(|v| Corner { p: body.position[v as usize], n: body.normal[v as usize], uv: body.uv[v as usize], j: joints[v as usize], w: weights[v as usize] });
+        if !cuts.touching(&c) {
+            index.extend(t.map(|v| v - start));
+            continue;
+        }
+        pieces.clear();
+        cuts.apply(c, &mut pieces);
+        for corner in pieces.iter().flatten() {
+            index.push(pos.len() as u32);
+            pos.push(corner.p);
+            nor.push(corner.n);
+            uv.push(corner.uv);
+            j.push(corner.j);
+            w.push(corner.w);
+        }
+    }
+    if index.is_empty() {
+        index.extend([0, 0, 0]);
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nor)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(j))
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, w)
+        .with_inserted_indices(Indices::U32(index));
+    mesh.generate_skinned_mesh_bounds().ok();
+    mesh
 }
 
 // Each corner's normal the mean of its triangles' (Babylon's ComputeNormals). (Bevy's own smooth normals weigh each
@@ -245,65 +212,34 @@ pub fn normals(mesh: &mut Mesh) {
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nor);
 }
 
-// Triangles as a skinned mesh of a part's own: corners in order, three a triangle.
-pub fn mesh_of(tris: &[[Corner; 3]]) -> Mesh {
-    let n = (tris.len() * 3).max(3);
-    let all = || tris.iter().flat_map(|t| t.iter());
-    let empty = tris.is_empty();
-    let pick = |f: &dyn Fn(&Corner) -> [f32; 3], d: [f32; 3]| if empty { vec![d; 3] } else { all().map(f).collect::<Vec<_>>() };
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pick(&|c| c.p.to_array(), [0.0; 3]))
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, pick(&|c| c.n.to_array(), [0.0, 1.0, 0.0]))
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, if empty { vec![[0.0f32; 2]; 3] } else { all().map(|c| c.uv.to_array()).collect() })
-        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(if empty { vec![[0; 4]; 3] } else { all().map(|c| c.j).collect() }))
-        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, if empty { vec![[1.0f32, 0.0, 0.0, 0.0]; 3] } else { all().map(|c| c.w).collect() })
-        .with_inserted_indices(Indices::U32((0..n as u32).collect()));
-    mesh.generate_skinned_mesh_bounds().ok();
-    mesh
-}
-
 // The person's own skin and clothes: the body's corners' bones and weights as they are now (what the body keeps round a
 // limb cut off is carried by the bone it hung from), its triangles (a triangle gone to a piece cut off has its corners
-// made one), the cuts and openings in it, and the windows the skin under the clothes is seen through; each drawn part's
-// own mesh once any of that has changed it, and the skin under the clothes' meshes.
+// made one), and the cuts in it; each drawn part's entity (the skin under the clothes too) and its own mesh once a cut
+// has changed it; the parts to make again.
 #[derive(Component)]
 pub struct Flesh {
     pub joints: Vec<[u16; 4]>,
     pub weights: Vec<[f32; 4]>,
     pub drawn: Vec<u32>,
     pub planes: Vec<Plane>,
-    pub holes: Vec<Lens>,
-    pub cloth_holes: Vec<Lens>,
-    pub windows: Vec<Window>,
-    // Each drawn part's entity and its own mesh; each under part's entity and mesh, once a window shows some of it.
     pub own: Vec<(usize, Entity, Option<Handle<Mesh>>)>,
-    pub under: Vec<(usize, Entity, Handle<Mesh>)>,
-    // Parts to make again.
     pub stale: Vec<bool>,
 }
 
 impl Flesh {
-    pub fn new(body: &Body, person: &Person) -> Flesh {
+    // `parts`: each drawn part's index and entity (skin.rs's list, with the skin under the clothes, or person.rs's).
+    pub fn new(body: &Body, parts: &[(usize, Entity)]) -> Flesh {
         Flesh {
             joints: body.joints.clone(),
             weights: body.weights.iter().map(|w| w.map(|x| x as f32 / 255.0)).collect(),
             drawn: body.index.clone(),
             planes: Vec::new(),
-            holes: Vec::new(),
-            cloth_holes: Vec::new(),
-            windows: Vec::new(),
-            own: person.parts.iter().map(|&(i, e)| (i, e, None)).collect(),
-            under: Vec::new(),
+            own: parts.iter().map(|&(i, e)| (i, e, None)).collect(),
             stale: vec![false; body.parts.len()],
         }
     }
 
-    pub fn corner(&self, body: &Body, v: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) -> Corner {
-        let v = v as usize;
-        Corner { p: body.position[v], n: body.normal[v], uv: body.uv[v], j: joints[v], w: weights[v] }
-    }
-
-    // Every part with a triangle within `r` of `at` to be made again.
+    // Every skin or cloth part with a corner within `r` of `at` to be made again.
     pub fn touch(&mut self, body: &Body, at: Vec3, r: f32) {
         for (i, p) in body.parts.iter().enumerate() {
             if self.stale[i] || !(p.kind == "skin" || p.kind == "cloth") {
@@ -319,75 +255,58 @@ impl Flesh {
     }
 
     // What part `i` of the body draws now: its triangles still the body's, each cut by every plane it is near to the
-    // body's side, the openings taken out (skin and clothes; anything else is not cut, as the TS's hider was only on
-    // those), and for the skin under the clothes only what a window shows.
-    pub fn part(&self, body: &Body, i: usize) -> Vec<[Corner; 3]> {
+    // body's side (skin and clothes; anything else is not cut, as the TS's hider was only on those).
+    pub fn part(&self, body: &Body, i: usize) -> Mesh {
         let p = &body.parts[i];
         let cut = p.kind == "skin" || p.kind == "cloth";
         let sides = vec![1.0; self.planes.len()];
-        let holes: &[Lens] = if !cut { &[] } else if p.kind == "cloth" { &self.cloth_holes } else { &self.holes };
-        let cuts = Cuts { planes: if cut { &self.planes } else { &[] }, sides: &sides, holes, cloth: p.kind == "cloth" };
-        let mut out = Vec::new();
-        for t in self.drawn[p.index_start..p.index_start + p.index_count].chunks_exact(3) {
-            if t[0] == t[1] && t[0] == t[2] {
-                continue;
-            }
-            let c = [0, 1, 2].map(|k| self.corner(body, t[k], &self.joints, &self.weights));
-            if p.under {
-                let mid = (c[0].p + c[1].p + c[2].p) / 3.0;
-                if !self.windows.iter().any(|w| w.shows(mid)) {
-                    continue;
-                }
-            }
-            cuts.apply(c, &mut out);
-        }
-        out
+        let cuts = Cuts { planes: if cut { &self.planes } else { &[] }, sides: &sides, cloth: p.kind == "cloth" };
+        let tris = self.drawn[p.index_start..p.index_start + p.index_count].chunks_exact(3).filter(|t| !(t[0] == t[1] && t[0] == t[2])).map(|t| [t[0], t[1], t[2]]);
+        part_mesh(body, i, tris, &self.joints, &self.weights, &cuts)
     }
 
-    // Each part changed made again: into its own mesh (made the first time, filled in place after), the skin under
-    // the clothes into a mesh of its own beside the parts, with the skin's material.
-    #[allow(clippy::too_many_arguments)]
-    pub fn rebuild(&mut self, body: &Body, commands: &mut Commands, meshes: &mut Assets<Mesh>, handles: &mut Query<&mut Mesh3d>,
-                   materials: &Query<&MeshMaterial3d<StandardMaterial>>, skin: &SkinnedMesh, space: Entity) {
+    // Each part changed made again: into its own mesh, made the first time, filled in place after.
+    pub fn rebuild(&mut self, body: &Body, meshes: &mut Assets<Mesh>, handles: &mut Query<&mut Mesh3d>) {
         for i in 0..self.stale.len() {
             if !std::mem::take(&mut self.stale[i]) {
                 continue;
             }
-            let mesh = mesh_of(&self.part(body, i));
-            if body.parts[i].under {
-                match self.under.iter().find(|u| u.0 == i) {
-                    Some((_, _, h)) => {
+            for k in 0..self.own.len() {
+                if self.own[k].0 != i {
+                    continue;
+                }
+                let mesh = self.part(body, i);
+                match &self.own[k].2 {
+                    Some(h) => {
                         if let Some(mut m) = meshes.get_mut(h.id()) {
                             *m = mesh;
                         }
                     }
                     None => {
-                        // (The skin's own material: the first drawn skin part's.)
-                        let Some(material) = self.own.iter().find(|o| body.parts[o.0].kind == "skin").and_then(|o| materials.get(o.1).ok()) else { continue };
                         let h = meshes.add(mesh);
-                        let e = commands.spawn((Mesh3d(h.clone()), material.clone(), skin.clone(), DynamicSkinnedMeshBounds, ChildOf(space))).id();
-                        self.under.push((i, e, h));
+                        if let Ok(mut m) = handles.get_mut(self.own[k].1) {
+                            m.0 = h.clone();
+                        }
+                        self.own[k].2 = Some(h);
                     }
-                }
-                continue;
-            }
-            let Some(o) = self.own.iter_mut().find(|o| o.0 == i) else { continue };
-            match &o.2 {
-                Some(h) => {
-                    if let Some(mut m) = meshes.get_mut(h.id()) {
-                        *m = mesh;
-                    }
-                }
-                None => {
-                    let h = meshes.add(mesh);
-                    if let Ok(mut m) = handles.get_mut(o.1) {
-                        m.0 = h.clone();
-                    }
-                    o.2 = Some(h);
                 }
             }
         }
     }
+}
+
+// Each person's flesh changed since made again, once a frame.
+fn rebuild(mut people: Query<(&Person, &mut Flesh)>, mut meshes: ResMut<Assets<Mesh>>, mut handles: Query<&mut Mesh3d>) {
+    for (person, mut flesh) in &mut people {
+        if flesh.stale.iter().any(|&s| s) {
+            let body = person.body.clone();
+            flesh.rebuild(&body, &mut meshes, &mut handles);
+        }
+    }
+}
+
+pub fn plugin(app: &mut App) {
+    app.add_systems(PostUpdate, rebuild.after(crate::dismember::taken_system));
 }
 
 #[cfg(test)]
@@ -406,38 +325,9 @@ mod tests {
         let pl = [Plane { c: Vec3::ZERO, n: Vec3::X, radius: 5.0, tore: false }];
         let area = |list: &[[Corner; 3]]| list.iter().map(|t| (t[1].p - t[0].p).cross(t[2].p - t[0].p).length() / 2.0).sum::<f32>();
         let (mut body, mut piece) = (Vec::new(), Vec::new());
-        Cuts { planes: &pl, sides: &[1.0], holes: &[], cloth: false }.apply(t, &mut body);
-        Cuts { planes: &pl, sides: &[-1.0], holes: &[], cloth: false }.apply(t, &mut piece);
+        Cuts { planes: &pl, sides: &[1.0], cloth: false }.apply(t, &mut body);
+        Cuts { planes: &pl, sides: &[-1.0], cloth: false }.apply(t, &mut piece);
         assert!((area(&body) - 0.5).abs() < 1e-5 && (area(&piece) - 0.5).abs() < 1e-5);
         assert!(body.iter().flatten().all(|c| c.p.x <= 1e-6) && piece.iter().flatten().all(|c| c.p.x >= -1e-6));
     }
-
-    // A lens 10 cm by 4 takes its middle out of a sheet and leaves its far corners.
-    #[test]
-    fn lens_hole() {
-        let l = Lens { at: Vec3::ZERO, ex: Vec3::X, ey: Vec3::Z, half: [0.05, 0.02], depth: 0.02 };
-        assert!(l.holds(Vec3::ZERO) && !l.holds(Vec3::new(0.0, 0.03, 0.0)) && !l.holds(Vec3::new(0.06, 0.0, 0.0)));
-        let mut out = Vec::new();
-        holed([c(Vec3::new(-0.1, -0.1, 0.0)), c(Vec3::new(0.1, -0.1, 0.0)), c(Vec3::new(0.0, 0.1, 0.0))], &[l], &mut out);
-        assert!(out.iter().all(|t| !l.holds((t[0].p + t[1].p + t[2].p) / 3.0)) && out.len() > 10);
-    }
-}
-
-// Each person's flesh changed since (an opening cut in it: viscera.rs) made again, once a frame.
-#[allow(clippy::type_complexity)]
-fn rebuild(mut commands: Commands, mut people: Query<(&Person, &mut Flesh)>, mut meshes: ResMut<Assets<Mesh>>, mut handles: Query<&mut Mesh3d>,
-           materials: Query<&MeshMaterial3d<StandardMaterial>>, skins: Query<&SkinnedMesh>, parents: Query<&ChildOf>) {
-    for (person, mut flesh) in &mut people {
-        if !flesh.stale.iter().any(|&s| s) {
-            continue;
-        }
-        let first = person.parts[0].1;
-        let (Ok(skin), Ok(space)) = (skins.get(first), parents.get(first).map(|c| c.parent())) else { continue };
-        let body = person.body.clone();
-        flesh.rebuild(&body, &mut commands, &mut meshes, &mut handles, &materials, skin, space);
-    }
-}
-
-pub fn plugin(app: &mut App) {
-    app.add_systems(PostUpdate, rebuild.after(crate::viscera::update_system));
 }

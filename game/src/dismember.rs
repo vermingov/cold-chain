@@ -32,7 +32,7 @@ use serde_json::json;
 
 use crate::anatomy::{in_loop, loop_area, section, SectionPoint, Traced};
 use crate::behaviour::Behaviour;
-use crate::flesh::{mesh_of, Corner, Cuts, Flesh, Plane, Window};
+use crate::flesh::{part_mesh, Cuts, Flesh, Plane};
 use crate::npc::{self, Crossing, Happened, Hurt, Kind};
 use crate::person::{Body, Person};
 use crate::ragdoll::Ragdoll;
@@ -463,7 +463,12 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
 
     // The meshes: the body's and the piece's, split at the plane.
     if world.get::<Flesh>(who).is_none() {
-        let f = Flesh::new(body, world.get::<Person>(who).unwrap());
+        // (Every drawn part: skin.rs's list has the skin under the clothes, which person.rs leaves out.)
+        let parts: Vec<(usize, Entity)> = match world.get::<crate::skin::Skin>(who) {
+            Some(sk) => sk.materials.iter().map(|m| (m.0, m.1)).collect(),
+            None => world.get::<Person>(who).unwrap().parts.clone(),
+        };
+        let f = Flesh::new(body, &parts);
         world.entity_mut(who).insert(f);
     }
     let t_split = std::time::Instant::now();
@@ -616,71 +621,67 @@ fn split(world: &mut World, who: Entity, body: &Body, limb: Limb, side: &str, c:
             flesh.weights[v] = w;
         }
     }
-    // The cut and its window in the clothes, the skin under them seen round the cut where the sleeve or trouser leg ends
-    // with it.
+    // The cut, and its window in the clothes: the skin under them seen round the cut where the sleeve or trouser leg ends
+    // with it (skin.rs's hider).
     flesh.planes.push(Plane { c, n, radius: reach, tore: how != How::Blade });
-    flesh.windows.push(Window { at: c, n, radius: reach, depth: 0.012 });
+    if let Some(mut sk) = world.get_mut::<crate::skin::Skin>(who) {
+        sk.window(c, n, reach, 0.012);
+    }
     let k = flesh.planes.len() - 1;
     // Every part the cut touches made again, and every part that lost triangles.
-    for (pi, p) in body.parts.iter().enumerate() {
-        if !piece[pi].is_empty() || (p.under && p.kind == "skin") {
+    for (pi, l) in piece.iter().enumerate() {
+        if !l.is_empty() {
             flesh.stale[pi] = true;
         }
     }
     flesh.touch(body, c, reach);
 
-    // The piece: per part, its own copy of the corners it uses, carried wholly by the limb's bones, cut by this plane to
-    // its side and by earlier ones to the body's (hider.ts keeps).
+    // The piece: per part, its corners carried wholly by the limb's bones, its triangles cut by this plane to its side and
+    // by earlier ones to the body's (hider.ts keeps).
     let mut sides = vec![1.0; k + 1];
     sides[k] = -1.0;
-    let piece_tris: Vec<(usize, Vec<[Corner; 3]>)> = piece.iter().enumerate().filter(|(_, l)| !l.is_empty()).map(|(pi, list)| {
+    let (mut piece_j, mut piece_w) = (before_j, before_w);
+    for list in &piece {
+        for &v in list {
+            let v = v as usize;
+            let (mut j, mut w) = (piece_j[v], piece_w[v]);
+            if reweigh(&mut j, &mut w, &|b| !gone[b], root) {
+                piece_j[v] = j;
+                piece_w[v] = w;
+            }
+        }
+    }
+    let piece_meshes: Vec<(usize, Mesh)> = piece.iter().enumerate().filter(|(_, l)| !l.is_empty()).map(|(pi, list)| {
         let p = &body.parts[pi];
         let cut = p.kind == "skin" || p.kind == "cloth";
-        let cuts = Cuts { planes: if cut { &flesh.planes } else { &[] }, sides: &sides, holes: &[], cloth: p.kind == "cloth" };
-        let mut out = Vec::new();
-        for t in list.chunks_exact(3) {
-            let corners = [0, 1, 2].map(|q| {
-                let v = t[q] as usize;
-                let (mut j, mut w) = (before_j[v], before_w[v]);
-                reweigh(&mut j, &mut w, &|b| !gone[b], root);
-                Corner { p: body.position[v], n: body.normal[v], uv: body.uv[v], j, w }
-            });
-            if p.under {
-                let mid = (corners[0].p + corners[1].p + corners[2].p) / 3.0;
-                if !flesh.windows[k].shows(mid) {
-                    continue;
-                }
-            }
-            cuts.apply(corners, &mut out);
-        }
-        (pi, out)
+        let cuts = Cuts { planes: if cut { &flesh.planes } else { &[] }, sides: &sides, cloth: p.kind == "cloth" };
+        (pi, part_mesh(body, pi, list.chunks_exact(3).map(|t| [t[0], t[1], t[2]]), &piece_j, &piece_w, &cuts))
     }).collect();
 
-    // Spawned beside the person's parts, in their materials; the body's own parts made again.
+    // Spawned beside the person's parts, in their own materials (skin.rs's, or person.rs's before it has made them); the
+    // body's own parts made again.
     let mut entities = Vec::new();
-    let mut state: bevy::ecs::system::SystemState<(Commands, ResMut<Assets<Mesh>>, Query<&mut Mesh3d>, Query<&MeshMaterial3d<StandardMaterial>>, Query<&SkinnedMesh>, Query<&Person>, Query<&ChildOf>)> =
+    #[allow(clippy::type_complexity)]
+    let mut state: bevy::ecs::system::SystemState<(Commands, ResMut<Assets<Mesh>>, Query<&mut Mesh3d>, Query<&MeshMaterial3d<crate::skin::Flesh>>,
+                                                   Query<&MeshMaterial3d<StandardMaterial>>, Query<&SkinnedMesh>, Query<&ChildOf>)> =
         bevy::ecs::system::SystemState::new(world);
     {
-        let (mut commands, mut meshes, mut handles, materials, skins, people, parents) = state.get_mut(world).unwrap();
-        let person = people.get(who).unwrap();
-        let first = person.parts[0].1;
+        let (mut commands, mut meshes, mut handles, own, plain, skins, parents) = state.get_mut(world).unwrap();
+        let first = flesh.own[0].1;
         let skin = skins.get(first).unwrap().clone();
         let space = parents.get(first).unwrap().parent();
-        let skin_material = person.parts.iter().find(|p| body.parts[p.0].kind == "skin").and_then(|p| materials.get(p.1).ok()).cloned();
-        for (pi, tris) in piece_tris {
-            if tris.is_empty() {
-                continue;
-            }
-            let material = match person.parts.iter().find(|p| p.0 == pi) {
-                Some(p) => materials.get(p.1).ok().cloned(),
-                None if body.parts[pi].under => skin_material.clone(),
-                None => None,
+        for (pi, mesh) in piece_meshes {
+            let Some(&(_, part, _)) = flesh.own.iter().find(|o| o.0 == pi) else { continue };
+            let mesh = meshes.add(mesh);
+            let e = commands.spawn((Mesh3d(mesh), skin.clone(), DynamicSkinnedMeshBounds, ChildOf(space))).id();
+            match (own.get(part), plain.get(part)) {
+                (Ok(m), _) => commands.entity(e).insert(m.clone()),
+                (_, Ok(m)) => commands.entity(e).insert(m.clone()),
+                _ => continue,
             };
-            let Some(material) = material else { continue };
-            let mesh = meshes.add(mesh_of(&tris));
-            entities.push(commands.spawn((Mesh3d(mesh), material, skin.clone(), DynamicSkinnedMeshBounds, ChildOf(space))).id());
+            entities.push(e);
         }
-        flesh.rebuild(body, &mut commands, &mut meshes, &mut handles, &materials, &skin, space);
+        flesh.rebuild(body, &mut meshes, &mut handles);
     }
     state.apply(world);
     let weights = flesh.weights_for_medicine();
@@ -863,9 +864,11 @@ fn ends(world: &mut World, who: Entity, body: &Body, limb: Limb, side: &str, c: 
         du += body.uv[q.a as usize].distance(body.uv[q.b as usize]);
         dp += body.position[q.a as usize].distance(body.position[q.b as usize]);
     }
-    if let Some(mut h) = world.get_mut::<Hurt>(who) {
-        h.happened.push(Happened::Rim { uvs, scale: du / dp.max(1e-9), width: if torn { 0.022 } else { 0.005 }, depth: if torn { 0.55 } else { 0.22 }, torn });
-    }
+    world.resource_scope(|world, mut rng: Mut<Rng>| {
+        if let Some(mut sk) = world.get_mut::<crate::skin::Skin>(who) {
+            sk.rim(&uvs, du / dp.max(1e-9), if torn { 0.022 } else { 0.005 }, if torn { 0.55 } else { 0.22 }, torn, &mut rng);
+        }
+    });
     Ends { entities, vessels, e1, e2, skin_points: skin.len() }
 }
 
