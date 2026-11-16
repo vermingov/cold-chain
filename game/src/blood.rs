@@ -1483,11 +1483,23 @@ fn person_at(w: &mut World, i: usize) -> Entity {
 // A wound made with `missile` at bone `bone` of person `i`, `offset` from its head (the TS's space), coming along `dir`
 // (Bevy's) from `back` metres before it; what it cut, into the log.
 #[allow(clippy::too_many_arguments)]
-fn wound(w: &mut World, name: &str, i: usize, bone: &'static str, offset: [f32; 3], dir: Vec3, back: f32, missile: &crate::wounds::Missile, pellets: &[[f32; 3]]) {
+fn wound(w: &mut World, name: &str, i: usize, bone: &'static str, offset: [f32; 3], aim: Option<&'static str>, dir: Vec3, back: f32,
+         missile: &crate::wounds::Missile, pellets: &[[f32; 3]]) {
     let who = person_at(w, i);
     let res = crate::npc::with(w, who, |npc| {
         let b = npc.bone_index(bone);
-        let target = npc.world_of(npc.body().bones[b].head, b, None).0 + crate::babylon(offset[0], offset[1], offset[2]);
+        let mut target = npc.world_of(npc.body().bones[b].head, b, None).0 + crate::babylon(offset[0], offset[1], offset[2]);
+        // (Aimed at the vessel named, where it passes nearest: the body settles a few millimetres differently from run to
+        // run, and an artery is as wide as that.)
+        if let Some(vessel) = aim {
+            let near = npc.traced.tubes.iter().filter(|t| t.name.contains(vessel)).flat_map(|t| t.points.iter())
+                .map(|&(rest, _, bone)| npc.world_of(rest, bone, None).0)
+                .min_by(|p, q| p.distance(target).total_cmp(&q.distance(target)));
+            if let Some(p) = near {
+                // Its place across the line of the blow; the blow still starts where it would.
+                target = p - dir * dir.dot(p - target);
+            }
+        }
         let one = [[0.0; 3]];
         let pellets = if pellets.is_empty() { &one[..] } else { pellets };
         for o in pellets {
@@ -1578,12 +1590,12 @@ pub fn scenario() -> Vec<Step> {
             energy, mass, speed: Some(speed), calibre, channel, soft, hard, pellets: Some(pellets), ..default()
         };
         let ahead = crate::babylon(0.0, 0.0, 1.0);
-        wound(w, "femoral nick", 0, "upperleg01.R", [0.035, -0.07, 0.0], ahead, 0.5, &knife, &[]);
-        wound(w, "neck shot, lying", 1, "neck01", [0.0, 0.0, 0.0], Vec3::NEG_Y, 0.6, &gun(480.0, 0.008, 360.0, 0.009, 0.006, 12.0, 110.0, 1), &[]);
+        wound(w, "femoral nick", 0, "upperleg01.R", [0.035, -0.07, 0.0], Some("right femoral artery"), ahead, 0.5, &knife, &[]);
+        wound(w, "neck shot, lying", 1, "neck01", [0.0, 0.0, 0.0], None, Vec3::NEG_Y, 0.6, &gun(480.0, 0.008, 360.0, 0.009, 0.006, 12.0, 110.0, 1), &[]);
         let pellets = [[-0.03, -0.03, 0.0], [0.0, -0.03, 0.0], [0.03, -0.03, 0.0], [-0.03, 0.0, 0.0], [0.0, 0.0, 0.0], [0.03, 0.0, 0.0], [-0.03, 0.03, 0.0],
                        [0.0, 0.03, 0.0], [0.03, 0.03, 0.0]];
-        wound(w, "shotgun chest", 2, "spine01", [0.04, 0.05, 0.0], ahead, 1.5, &gun(170.0, 0.0035, 400.0, 0.0084, 0.005, 9.0, 90.0, 9), &pellets);
-        wound(w, "knife belly", 3, "spine03", [0.05, 0.02, 0.0], ahead, 0.5, &knife, &[]);
+        wound(w, "shotgun chest", 2, "spine01", [0.04, 0.05, 0.0], None, ahead, 1.5, &gun(170.0, 0.0035, 400.0, 0.0084, 0.005, 9.0, 90.0, 9), &pellets);
+        wound(w, "knife belly", 3, "spine03", [0.05, 0.02, 0.0], None, ahead, 0.5, &knife, &[]);
         // The cough: the same man, awake, with 40 ml in his left lung's airways, as a lung bleeding into its bronchi
         // puts there (throat.rs: 15% of a lung wound's bleeding); he coughs it up, frothy, as a spray.
         let who = person_at(w, 3);
