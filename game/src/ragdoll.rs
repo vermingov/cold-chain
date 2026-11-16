@@ -520,10 +520,10 @@ const SPREAD: [&str; 3] = ["belly", "chest", "head"];
 const ANGULAR: [JointAxis; 3] = [JointAxis::AngX, JointAxis::AngY, JointAxis::AngZ];
 
 // A turn `q` (in a joint's parent's frame) as the joint's three angles, `frame` the joint's axes (the hinge it bends
-// about, the limb's own length, and across both) as a turn of the parent's. Rapier's generic joint reads a turn on each
-// axis as twice the arcsine of the quaternion's part along it (joint_constraint_helper.rs motor_angular; its limits the
-// same angle, measured from the middle of the range), not as Havok's three turns one after another that ragdoll.ts
-// worked out: for a turn about one axis they are the angle itself, and a target is put in the measure the motor reads.
+// about, the limb's own length, and across both) as a turn of the parent's. Rapier's generic joint's motors read a turn
+// on each axis as twice the arcsine of the quaternion's part along it (joint_constraint_helper.rs motor_angular), not as
+// Havok's three turns one after another that ragdoll.ts worked out: for a turn about one axis they are the angle itself,
+// and a target is put in the measure the motor reads. Its limits read another measure (`ranges`).
 pub fn joint_angles(q: Quat, frame: Quat) -> [f32; 3] {
     let mut l = frame.inverse() * q * frame;
     if l.w < 0.0 {
@@ -548,7 +548,7 @@ pub struct Seg {
     pub def: Segment,
     pub entity: Entity,
     // The joint's friction, a joint of its own beside the segment's (its motors are the muscles').
-    friction: Option<Entity>,
+    pub friction: Option<Entity>,
     // Where its body is (its bone's head, and its turn), and how it moves: read after every physics step. `was` is how
     // it was moving before the last one (thuds.rs: what it met something at).
     pub now: Transform,
@@ -939,7 +939,7 @@ impl Ragdoll {
                 if let Some(Ok(mut j)) = s.friction.map(|e| joints.get_mut(e)) {
                     let g: &mut GenericJoint = j.data.as_mut();
                     for axis in ANGULAR {
-                        g.set_motor_max_force(axis, s.grip);
+                        g.set_motor_max_force(axis, if std::env::var("CC_NOGRIP").is_ok() { 0.0 } else { s.grip });
                     }
                 }
             }
@@ -957,6 +957,51 @@ impl Ragdoll {
             for i in 0..3 {
                 let z = if i == 0 { s.zero } else { 0.0 };
                 g.set_limits(ANGULAR[i], [lo[i] - z, hi[i] - z]);
+            }
+        }
+    }
+
+    // Every joint's range put where its own angles put it, in the measure Rapier's limits read, as the joint is turned
+    // now: given every physics step. Rapier's limit rows read a turn about each axis as twice the arctangent of the
+    // quaternion's part along it over its real part (joint_constraint_helper.rs `recentered_angle`), not twice the
+    // arcsine its motors read and the ranges here are in. For a turn about one axis the two are the same; for a turn
+    // about two they are far apart: a dead arm thrown up and out, bent 1.79 of a 3.05 range and twisted -0.34 of 1.48,
+    // read 2.54 bent against Rapier's 2.53 and -1.49 twisted against -1.48. It was held at two limits it was nowhere near
+    // by rows whose push (the plain axis) is right only for a turn about one, and the arm and the forearm on it shook at 1
+    // to 2 rad/s and never came to rest (the dead scenario's 0.3 to 0.6 rad/s against the TS's 0.10). Each bound is the
+    // turn with that axis's part at the bound and the others as they are, so a limit row comes on when the joint's own
+    // angle reaches it; one the others leave no room to reach is open. Only a change is sent: a body at rest keeps its
+    // limits, and Rapier lets it sleep.
+    pub fn ranges(&self, joints: &mut Query<&mut ImpulseJoint>) {
+        for (k, s) in self.segs.iter().enumerate() {
+            if s.def.parent.is_none() || s.locked {
+                continue;
+            }
+            let mut l = Quat::from_rotation_x(-s.zero) * s.frame.inverse() * self.relative(k) * s.unneutral * s.frame;
+            if l.w < 0.0 {
+                l = -l;
+            }
+            let part = [l.x, l.y, l.z];
+            let want: [[f32; 2]; 3] = std::array::from_fn(|i| {
+                let others: f32 = (0..3).filter(|&j| j != i).map(|j| part[j] * part[j]).sum();
+                let z = if i == 0 { s.zero } else { 0.0 };
+                [s.lo[i] - z, s.hi[i] - z].map(|b| {
+                    let c = (b / 2.0).sin();
+                    let w2 = 1.0 - c * c - others;
+                    if w2 <= 0.0 { std::f32::consts::PI.copysign(b) } else { 2.0 * c.atan2(w2.sqrt()) }
+                })
+            });
+            let Ok(j) = joints.get(s.entity) else { continue };
+            let g: &GenericJoint = j.data.as_ref();
+            let near = (0..3).all(|i| g.raw.limits(ANGULAR[i]).is_some_and(|m| (m.min - want[i][0]).abs() < 0.005 && (m.max - want[i][1]).abs() < 0.005));
+            if near {
+                continue;
+            }
+            if let Ok(mut j) = joints.get_mut(s.entity) {
+                let g: &mut GenericJoint = j.data.as_mut();
+                for i in 0..3 {
+                    g.set_limits(ANGULAR[i], want[i]);
+                }
             }
         }
     }
@@ -981,9 +1026,10 @@ impl Ragdoll {
             let most = if up < half { 60.0 - 15.0 * up / half } else { 45.0 - 25.0 * (up - half) / half } * crate::person::RAD;
             // (Behind the body is +Z here, -Z in the TS.)
             let past = d.z.clamp(-1.0, 1.0).asin() - most;
-            if past <= 0.0 {
+            if past <= 0.0 || std::env::var("CC_NOCAPSULE").is_ok() {
                 continue;
             }
+            if std::env::var("CC_PROBE").is_ok() { println!("C {side} past={past:.3}"); }
             // About the axis that brings the arm forward again, in the world.
             let ahead = self.segs[chest].now.rotation * Vec3::NEG_Z;
             let axis = v.cross(ahead);
@@ -1336,7 +1382,7 @@ impl Ragdoll {
 
 // The physics steps' order for the body: after each step every ragdoll reads where it is (`Read`); before the next,
 // the people push on what they push on and the player pulls on what they hold (`Push`, behaviour.rs), the shoulders'
-// capsules pull, and all of it goes to Rapier (`Give`).
+// capsules pull, and all of it goes to Rapier with the joints' ranges as they are turned now (`Give`).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Steps {
     Read,
@@ -1353,6 +1399,12 @@ fn read(time: Res<Time>, mut ragdolls: Query<&mut Ragdoll>, bodies: Query<(&Tran
 fn give(mut ragdolls: Query<&mut Ragdoll>, mut bodies: Query<(&Transform, &Velocity, &mut ExternalImpulse)>) {
     for mut rd in &mut ragdolls {
         rd.give(&mut bodies);
+    }
+}
+
+fn ranges(ragdolls: Query<&Ragdoll>, mut joints: Query<&mut ImpulseJoint>) {
+    for rd in &ragdolls {
+        rd.ranges(&mut joints);
     }
 }
 
@@ -1381,6 +1433,22 @@ fn solver(mut contexts: Query<&mut RapierContextSimulation, Added<RapierContextS
     for mut c in &mut contexts {
         c.integration_parameters.warmstart_joints = true;
         c.integration_parameters.num_solver_iterations = SOLVER_PASSES;
+        // EXPERIMENT (not to commit)
+        if std::env::var("CC_NORECYCLE").is_ok() {
+            c.integration_parameters.contact_recycling = false;
+        }
+        if std::env::var("CC_COULOMB").is_ok() {
+            c.integration_parameters.friction_model = FrictionModel::Coulomb;
+        }
+        if std::env::var("CC_NOWARM").is_ok() {
+            c.integration_parameters.warmstart_joints = false;
+        }
+        if let Ok(v) = std::env::var("CC_ITER") {
+            c.integration_parameters.num_solver_iterations = v.parse().unwrap();
+        }
+        if let Ok(v) = std::env::var("CC_RECYCLE") {
+            c.integration_parameters.normalized_contact_recycle_distance = v.parse().unwrap();
+        }
     }
 }
 const SOLVER_PASSES: usize = 16;
@@ -1388,5 +1456,5 @@ const SOLVER_PASSES: usize = 16;
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, solver).configure_sets(FixedUpdate, (Steps::Push, Steps::Give).chain().before(PhysicsSet::SyncBackend))
         .configure_sets(FixedUpdate, Steps::Read.after(PhysicsSet::Writeback))
-        .add_systems(FixedUpdate, (read.in_set(Steps::Read), shoulders.in_set(Steps::Push), give.in_set(Steps::Give)));
+        .add_systems(FixedUpdate, (read.in_set(Steps::Read), shoulders.in_set(Steps::Push), (give, ranges).in_set(Steps::Give)));
 }
