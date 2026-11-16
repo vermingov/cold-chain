@@ -108,7 +108,7 @@ pub fn steps(part: &str) -> Vec<Step> {
     let all = part.is_empty();
     let mut s = Vec::new();
     s.push(Step::Do(Box::new(|w: &mut World| {
-        w.spawn((Lamp, PointLight { intensity: 2.5 * crate::map::CANDELA, range: 3.0, radius: 0.05, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, -50.0, 0.0)));
+        w.spawn((Lamp, PointLight { intensity: 0.8 * crate::map::CANDELA, range: 3.0, radius: 0.05, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, -50.0, 0.0)));
     })));
     // The people settled into their stance.
     s.push(Step::Wait(90));

@@ -6,7 +6,7 @@
 // heart's grooves and on the colon, and a fine unevenness that catches the light. Blood lying on it is laid over the
 // organ's colour as a film of blood is (fluid.ts's Beer-Lambert colour): a thin film reddens, a thick one is dark.
 //
-// `look.w` says what is drawn: 1 an organ, 0 a rope of bowel out of the belly (its picture its own, its blood the
+// `wet.look.w` says what is drawn: 1 an organ, 0 a rope of bowel out of the belly (its picture its own, its blood the
 // corners' alpha).
 
 import bevy_pbr::render::{
@@ -15,8 +15,12 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
 };
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> base: vec4<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var<uniform> look: vec4<f32>;
+// (viscera.rs Wet: its two fields are one uniform.)
+struct Wet {
+    base: vec4<f32>,
+    look: vec4<f32>,
+}
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> wet: Wet;
 
 fn wet_hash(p: vec3<f32>) -> f32 {
     return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
@@ -62,7 +66,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
     let mm = in.color.a;
-    if look.w < 0.5 {
+    if wet.look.w < 0.5 {
         // A rope of bowel: its own picture (the corners' colour is white), blood over it.
         pbr_input.material.base_color = vec4(blood_over(pbr_input.material.base_color.rgb, mm, 1.0), 1.0);
     } else {
@@ -75,10 +79,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         // twentieth of a cell wide: drawn only where that is a pixel or more.
         let r1 = 1.0 - abs(wet_noise(p * vec3(90.0, 140.0, 90.0)) * 2.0 - 1.0);
         let r2 = 1.0 - abs(wet_noise(p * 260.0 + 3.1) * 2.0 - 1.0);
-        let vessel = (smoothstep(0.93, 0.985, r1) * fade(1400.0, px) + 0.6 * smoothstep(0.95, 0.99, r2) * fade(2600.0, px)) * look.x;
-        let spots = smoothstep(0.55, 0.75, wet_noise(p * 150.0)) * look.y * fade(300.0, px);
-        let fatty = smoothstep(0.58, 0.72, wet_noise(p * 28.0 + 7.7)) * look.z;
-        var albedo = base.rgb * (0.82 + 0.3 * broad) * (0.92 + 0.12 * mid);
+        let vessel = (smoothstep(0.93, 0.985, r1) * fade(1400.0, px) + 0.6 * smoothstep(0.95, 0.99, r2) * fade(2600.0, px)) * wet.look.x;
+        let spots = smoothstep(0.55, 0.75, wet_noise(p * 150.0)) * wet.look.y * fade(300.0, px);
+        let fatty = smoothstep(0.58, 0.72, wet_noise(p * 28.0 + 7.7)) * wet.look.z;
+        var albedo = wet.base.rgb * (0.82 + 0.3 * broad) * (0.92 + 0.12 * mid);
         albedo *= 1.0 - 0.35 * spots;
         albedo = mix(albedo, vec3(0.62, 0.36, 0.09), fatty);
         albedo = mix(albedo, vec3(0.2, 0.012, 0.01), clamp(vessel, 0.0, 0.85));

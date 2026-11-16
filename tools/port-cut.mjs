@@ -2,7 +2,7 @@
 // views, by the same calls (dismember.ts chop and blast, wounds.ts pierce and blow, viscera.ts slashed, bones.ts
 // _through), each picture lit by the same lamp by the eye.
 //   npx vite --port 8685 --host 127.0.0.1 &
-//   CHROMIUM=/opt/pw-browsers/chromium... node tools/port-cut.mjs <dir> [limbs|belly|bones] [url]
+//   CHROMIUM=/opt/pw-browsers/chromium... node tools/port-cut.mjs <dir> [limbs,belly,bones] [url]
 import { open } from './rig.mjs';
 
 const OUT = process.argv[2];
@@ -13,9 +13,11 @@ const frame = () => rig.eval('window.__sandbox.world.frame');
 const frames = async (n) => { const f0 = await frame(); await rig.until(`window.__sandbox.world.frame >= ${f0 + n}`, 900000); };
 const shot = async (name) => { await frames(4); await rig.shot(`${OUT}/${name}.png`); console.log('shot', name); };
 const all = part === 'all';
+const want = (p) => all || part.split(',').includes(p);
 try {
     await rig.until('window.__sandbox && window.__sandbox.world.npcs.length === 4', 600000);
     await rig.eval('document.getElementById("start")?.remove()');
+    console.log('booted', await frame());
     await rig.until('window.__sandbox.world.frame > 90', 900000);
     await rig.eval(`(async () => {
       const S = window.__sandbox, V = BABYLON.Vector3;
@@ -35,7 +37,7 @@ try {
       window.__C = { S, V, D, W, VI, between, look, end, facing, lamp };
       return true; })()`);
     const npc = (i) => `__C.S.world.npcs[${i}]`;
-    if (all || part === 'limbs') {
+    if (want('limbs')) {
         console.log('forearm', await rig.eval(`(() => { const { D, V, between } = __C, n = ${npc(0)};
           const t = performance.now(); const off = D.chop(n, between(n, 'lowerarm01.R', 'wrist.R', 0.55), new V(-1, -0.3, 0).normalize(), 90); return [off, performance.now() - t]; })()`));
         await frames(2);
@@ -60,7 +62,7 @@ try {
         await rig.eval(`__C.facing(${npc(2)}, 0, false, 0.4)`); await shot('neck_stump');
         await rig.eval(`__C.facing(${npc(2)}, 0, true, 0.4)`); await shot('head');
     }
-    if (all || part === 'belly') {
+    if (want('belly')) {
         console.log('charge', await rig.eval(`(() => { const { W, V, between } = __C, n = ${npc(3)}, p = between(n, 'spine03', 'spine03', 0).add(new V(0.03, -0.02, 0)), dir = new V(0, 0, 1);
           const t = performance.now(); const r = W.pierce(n, p.subtract(dir.scale(0.6)), dir, { name: 'charge', energy: 170 * 9 * 0.95, mass: 0.0035 * 9, speed: 400, calibre: 0.022, channel: 0.024, soft: 42, hard: 120 }, 1.2);
           return [r.energy, performance.now() - t, n.viscera.openings.length]; })()`));
@@ -79,7 +81,7 @@ try {
         await frames(300);
         await opening(0, -1, 'w.normal.scale(0.5).add(new V(0, 0.6, 0)).normalize().scale(0.5)'); await shot('belly_slit');
     }
-    if (all || part === 'bones') {
+    if (want('bones')) {
         console.log('shin', await rig.eval(`(() => { const { W, V, between } = __C, n = ${npc(3)}, p = between(n, 'lowerleg01.L', 'foot.L', 0.5), dir = new V(0, 0, 1);
           const skin = n.surface(p.subtract(dir.scale(0.4)), dir, 0.6).find((h) => h.kind === 'skin');
           if (skin) { W.blow(n, skin.point, dir, 0.79, 15.5); W.blow(n, skin.point, dir, 0.79, 18); }
@@ -98,7 +100,7 @@ try {
         await rig.eval(`(() => { __C.lamp.position.y = -50; __C.S.player.spawn(0, -1.5, { toward: [0, 0.6, 2.2], eye: 1.65 }); })()`); await shot('xray_all');
         await rig.key('KeyX'); await rig.key('KeyX', false);
     }
-    if (all || part === 'limbs') {
+    if (want('limbs')) {
         console.log('blast', await rig.eval(`(() => { const n = ${npc(2)}, at = n.ragdoll.byName.get('footL').node.position.add(new __C.V(0.2, 0, 0));
           const t = performance.now(); const gone = __C.D.blast(n, at, 0.25); return [gone, performance.now() - t]; })()`));
         await frames(60);
