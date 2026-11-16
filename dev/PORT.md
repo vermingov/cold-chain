@@ -301,3 +301,20 @@ Not taken here: `Welling`, `Runs`, `Blot` (skin's: film.rs, runs.rs), `Bled`, `E
 ### For cut (dismember.rs, viscera.rs)
 dismember.ts sprayed from a fresh stump (`blood.spray`) and ran from a stump's end (`blood.run`); viscera.ts dripped
 (`blood.drip`): the same calls on the `Blood` resource. Rapier bodies are not used: the drops are blood.rs's own.
+
+### On the GPU
+- The floor (floor.rs, floor.wesl): the TS's 12.5 mm grid over the whole hall, kept only for the 32-by-32-cell tiles
+  blood has reached (woken where it lands, round it, and where the flow asks: the `want` flags), at most 1024 of them, in
+  buffers by tile: depth, age, the floor's own lie (made on the CPU when a tile wakes, the TS's noise in f64), and what each
+  cell gives its four neighbours. A frame's blood onto and off the floor is one pass (`apply`, one invocation, the ops in
+  order); a step (every 1/30 s, at most one a frame, as the TS) is `flow` (what each cell gives), `gather` (what each takes,
+  so the order of the cells does not show, as the TS's change-then-settle) and `settle` (ages taken, the display written).
+  The material reads only the display (rgba8: the depth's square root, the wetness), exactly as the TS's puddleMap.
+- The clothes (soak.rs, soak.wesl): each body's grid of 8 mm cubes of cloth as the TS made it (cubes with cloth only, six
+  neighbours each, the empty cubes round the cloth copying their neighbour), once a body; per person the blood in each
+  cube, its age, what has gathered to drip. `apply` (the frame's blood in and out), then each step (1/8 s) `flow`, `gather`
+  and `encode` (the 3D field the cloth material reads) over every cube of cloth. The TS's 1200-cubes-a-step budget and its
+  sleeping cubes were a CPU budget: every cube is worked out every step here, so a great soaking spreads as fast as the
+  TS's small ones did. Drops gathered at hems come back by readback each step and fall from where that cube is now.
+- The CPU's copies: the floor's depths and ages every 0.2 s (only the awake tiles), each wet person's cloth every 0.5 s.
+  Between copies the CPU keeps what it added and took itself.

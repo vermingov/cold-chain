@@ -1529,9 +1529,9 @@ fn wait(s: &mut Vec<Step>, frames: u32) {
     s.push(set(0, 1.0));
 }
 
-// The five cases at once, one person each (the fifth, a cough, comes of the third's chest wound): a knife nicking the
-// femoral artery of a man standing; a pistol through the neck of a man lying on his back; a shotgun into a chest; a
-// knife into a belly; then each seen at 0, 2, 10, 30 and 120 seconds.
+// The five cases at once: a knife nicking the femoral artery of a man standing; a pistol through the neck of a man lying
+// on his back; a shotgun into a chest; a knife into a belly, and that man, awake, with blood put in his airway to cough
+// up; then each seen at 0, 2, 10, 30 and 120 seconds.
 pub fn scenario() -> Vec<Step> {
     let mut s = Vec::new();
     // (The help off the picture: H in the game.)
@@ -1569,6 +1569,11 @@ pub fn scenario() -> Vec<Step> {
                        [0.0, 0.03, 0.0], [0.03, 0.03, 0.0]];
         wound(w, "shotgun chest", 2, "spine01", [0.04, 0.05, 0.0], ahead, 1.5, &gun(170.0, 0.0035, 400.0, 0.0084, 0.005, 9.0, 90.0, 9), &pellets);
         wound(w, "knife belly", 3, "spine03", [0.05, 0.02, 0.0], ahead, 0.5, &knife, &[]);
+        // The cough: the same man, awake, with 40 ml in his left lung's airways, as a lung bleeding into its bronchi
+        // puts there (throat.rs: 15% of a lung wound's bleeding); he coughs it up, frothy, as a spray.
+        let who = person_at(w, 3);
+        crate::npc::with(w, who, |npc| npc.throat().take(crate::vitals::Into::Airway, Some(crate::vitals::Side::L), 40.0));
+        log(w, json!({ "event": "wound", "name": "blood in the airway", "result": "40 ml, left" }));
     })));
     let mut at = 0.0;
     for t in [0.0f32, 2.0, 10.0, 30.0, 120.0] {

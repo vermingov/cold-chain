@@ -27,9 +27,11 @@ try {
       return true; })()`);
     // Settle on their feet, as the port's scenario starts after its line-up stands.
     await rig.eval('__tick(60)');
+    // (By body, as the port's scenario picks them: the TS's list is in the order they were made, not their places.)
+    await rig.eval(`(() => { window.__who = (i) => __sandbox.world.npcs.find((n) => n.person.bodyName.split('+')[0] === ['oldman', 'sexton', 'buyer', 'hood'][i]); return true; })()`);
     const frames = async (n) => { for (let k = 0; k < n; k += 600) await rig.eval(`__tick(${Math.min(600, n - k)})`); };
     // The second person out cold and pushed over backwards (north): five seconds to settle.
-    await rig.eval(`(() => { const n = __sandbox.world.npcs[1]; n.vitals.out = 1e9; const c = n.ragdoll.byName.get('chest');
+    await rig.eval(`(() => { const n = __who(1); n.vitals.out = 1e9; const c = n.ragdoll.byName.get('chest');
       n.ragdoll.push('chest', new BABYLON.Vector3(0, 0, 60), c.node.position.clone()); n.knockDown(); return true; })()`);
     await frames(300);
     const res = await rig.eval(`(async () => {
@@ -37,7 +39,7 @@ try {
       const arm = (k) => WE.ARMS.find((a) => a.key === k);
       const out = [];
       const wound = (name, i, bone, offset, dir, back, m, pellets = [[0, 0, 0]]) => {
-        const npc = S.world.npcs[i], b = npc.person.byName[bone];
+        const npc = __who(i), b = npc.person.byName[bone];
         const target = npc.worldOf(b.head, b).at.add(V.FromArray(offset));
         for (const o of pellets) W.pierce(npc, target.add(V.FromArray(o)).subtract(dir.scale(back)), dir, { ...m }, back + (m.reach ?? 2));
         out.push({ name, target: target.asArray(), bleeds: npc.vitals.bleeds.map((b) => ({ name: b.name, rate: b.rate, arterial: b.arterial, spurts: b.spurts })) });
@@ -48,6 +50,7 @@ try {
       const P = [[-0.03, -0.03, 0], [0, -0.03, 0], [0.03, -0.03, 0], [-0.03, 0, 0], [0, 0, 0], [0.03, 0, 0], [-0.03, 0.03, 0], [0, 0.03, 0], [0.03, 0.03, 0]];
       wound('shotgun chest', 2, 'spine01', [0.04, 0.05, 0], ahead, 1.5, arm('shotgun').gun, P);
       wound('knife belly', 3, 'spine03', [0.05, 0.02, 0], ahead, 0.5, knife);
+      __who(3).throat.take({ into: 'airway', side: 'L' }, 40);
       return out; })()`);
     log.push({ event: 'wounds', res });
     const view = async (name, x, z, toward, eye) => {
@@ -59,8 +62,8 @@ try {
         await frames(Math.round((t - at) * 60));
         at = t + 0.5;
         log.push({ event: 'blood', t, drops: await rig.eval('__sandbox.world.blood.n'), streams: await rig.eval('__sandbox.world.blood.streams.size'),
-            soaked: await rig.eval('__sandbox.world.npcs.map((n) => +Array.from(n.soak.ml).reduce((a, b) => a + b, 0).toFixed(1))'),
-            lost: await rig.eval('__sandbox.world.npcs.map((n) => +(n.vitals.full - n.vitals.volume).toFixed(3))') });
+            soaked: await rig.eval('[0, 1, 2, 3].map((i) => +Array.from(__who(i).soak.ml).reduce((a, b) => a + b, 0).toFixed(1))'),
+            lost: await rig.eval('[0, 1, 2, 3].map((i) => +(__who(i).vitals.full - __who(i).vitals.volume).toFixed(3))') });
         const x = (i) => (i - 1.5) * 1.5;
         const T = String(t).padStart(3, '0');
         await view(`blood_${T}_femoral`, x(0) - 1.0, 0.6, [x(0), 0.6, 2.2], 1.5);
