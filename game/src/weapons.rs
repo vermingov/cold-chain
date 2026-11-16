@@ -1666,8 +1666,8 @@ pub fn act(mut cx: Cx) {
         sweep(&mut cx, dt);
         let act = cx.weapons.action.as_ref().unwrap();
         if act.t >= act.length {
-            // The cuts drawn along every place each crossed the skin (npc.slash).
-            // port: phase 3 (npc.slash draws the cut along them: marks); the wound under each crossing is pierce's, already made.
+            // The cuts drawn along every place each crossed the skin (npc.slash: marks.rs); the wound under each crossing
+            // is pierce's, already made.
             let act = cx.weapons.action.take().unwrap();
             let sweep = cx.eye().left().as_vec3();
             let ahead = cx.eye().forward().as_vec3();
@@ -1685,6 +1685,7 @@ pub fn act(mut cx: Cx) {
                         .collect();
                     crate::viscera::slashed(w, who, &skin, depth);
                 });
+                cx.npc(who, |npc| npc.slash_through(&hits, depth, sweep));
                 cx.weapons.log.push(json!({ "slash": label, "points": hits.iter().map(|p| p.to_array()).collect::<Vec<_>>(), "depth": depth, "sweep": sweep.to_array() }));
             }
         }

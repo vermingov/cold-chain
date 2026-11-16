@@ -137,6 +137,9 @@ pub enum Happened {
     Lip { edge: Vec<Crossing>, width: f32 },
     // The tongue torn through (throat.rs's card on it).
     Tongue { hit: Crossing, size: f32 },
+    // marks.ts cut: a blade drawn through the skin from `a` to `b`, `deep` m into it, opening `gapes` of its full gape
+    // (npc.slash's stretches, and skin split by a blow: marks.rs).
+    Slit { a: Crossing, b: Crossing, deep: f32, gapes: f32 },
 }
 
 // When a person last cried out and how much it hurt then (npc.ts `_said`).
@@ -885,7 +888,7 @@ fn update(time: Res<Time>, frames: Res<FrameCount>, mut dice: ResMut<Dice>, mut 
 }
 
 // Each person made (person.rs, sandbox.rs) given what medicine keeps of them, the frame after.
-fn fit(mut commands: Commands, anatomy: Res<Anatomy>, mut dice: ResMut<Dice>, mut facts: Local<std::collections::HashMap<String, Arc<Facts>>>,
+pub fn fit(mut commands: Commands, anatomy: Res<Anatomy>, mut dice: ResMut<Dice>, mut facts: Local<std::collections::HashMap<String, Arc<Facts>>>,
        people: Query<(Entity, &Person, &Transform, &Vitals), Without<Hurt>>) {
     for (e, person, root, vitals) in &people {
         let body = &person.body;
@@ -968,7 +971,7 @@ pub fn renew(world: &mut World, who: Entity, clock: f32) {
 }
 
 // What hurt did is there for the frame it happened in, for whatever draws, plays or moves it to take; then it goes.
-fn forget(mut people: Query<&mut Hurt>) {
+pub fn forget(mut people: Query<&mut Hurt>) {
     for mut h in &mut people {
         h.happened.clear();
     }

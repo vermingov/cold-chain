@@ -167,6 +167,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "wounds" => s = wounds(),
         "cut" => s = crate::cut_scenario::steps(""),
         "cut-limbs" | "cut-belly" | "cut-bones" => s = crate::cut_scenario::steps(&name[4..]),
+        // The look of hurt on the skin (port/skin): skin.rs.
+        "skin" => s = crate::skin::scenario(),
         _ => return body(name),
     }
     Some(s)
@@ -458,6 +460,14 @@ fn each(i: Option<usize>, f: impl Fn(&mut Ragdoll, &mut Behaviour, &mut Rng) + S
             }
         });
     }))
+}
+
+// Steps put next, before the rest (for a step that works out what it will do when it comes to it).
+pub fn push_front(w: &mut World, steps: VecDeque<Step>) {
+    let mut runner = w.resource_mut::<Runner>();
+    for s in steps.into_iter().rev() {
+        runner.steps.push_front(s);
+    }
 }
 
 // The player put `back` metres off person `i`'s chest, `side` to their right of the line from them to the hall's south

@@ -51,6 +51,11 @@ const SETTLES: f32 = 21600.0; // seconds for that to slow to a third, as it clot
 const SINKS: f32 = 1.7e-7; // m/s: how fast blood that shows creeps downhill
 const TRACKS: f32 = 5e-7; // m/s: and deep blood, along the planes between the layers (brow to lids in a day)
 const SPLITS: f32 = 1.6; // damage over bone past which skin splits under one more blow
+const MET: f32 = 0.012; // m: a layer standing further off the skin than this is never met by its swelling
+const SQUEEZE: f32 = 0.3; // of the swelling a tight dressing presses back (a compression bandage's job)
+const RECORDS: usize = 16; // recent blows whose shape (a bat's tramlines, a hard blow's pale middle) is drawn
+// Rows of the person's table (skin.rs) kept for layers carried by the swelling that are meshes of their own (dressings).
+pub const RIDER_ROWS: usize = 32;
 
 fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
@@ -86,6 +91,27 @@ fn broke(t: &str) -> Option<(f32, f32, f32, Option<&'static str>)> {
         "basilar" => (0.0, 0.02, 0.0, Some("both")),
         _ => return None,
     })
+}
+
+// How a facial fracture moves the face over it: pushed in along the skin's normal, or shoved sideways (m).
+fn moves(t: &str) -> (f32, f32) {
+    match t {
+        "nasal" => (0.0, 0.0045),
+        "zygoma" | "lefort1" => (0.003, 0.0),
+        "lefort2" | "depressed" => (0.004, 0.0),
+        "lefort3" => (0.005, 0.0),
+        "chin" | "body" => (0.0, 0.002),
+        _ => (0.0, 0.0),
+    }
+}
+
+// A layer over the skin carried out by its swelling (bruise.ts Rider): for each of its corners, the place of the skin
+// under it (or none), how far it stands off that skin past where it lies on it, and where its shift is kept (`out`).
+struct Rider {
+    slots: Vec<u32>,
+    place: Vec<i32>,
+    gap: Vec<f32>,
+    tight: f32,
 }
 
 pub struct EyeLids {
@@ -133,6 +159,28 @@ pub struct Bruise {
     seen: usize,
     nose: Option<Option<Vec3>>,
     unknown: usize,
+    // --- what is drawn of it (skin.rs, skin.wesl) ---
+    // Each place's corners (the skin's, and the brows' on it), and which of them have normals pointing in.
+    v_start: Vec<usize>,
+    v_list: Vec<u32>,
+    flip: Vec<i8>,
+    // How far the bone under each place has moved (a facial fracture), and how hard what lies on it presses on it.
+    shift: Vec<Vec3>,
+    press: Vec<f32>,
+    // What was last written of each place: redness, blood, blue, swelling.
+    sent: Vec<Vec4>,
+    // Each corner's tint, shift and tilt as the person's table holds them (and past the body's corners, the riders'
+    // shifts), and those changed since skin.rs last took them.
+    pub out: Vec<[Vec4; 3]>,
+    dirty: Vec<bool>,
+    pub changed: Vec<u32>,
+    riders: Vec<Option<Rider>>,
+    carry: bool,
+    // The first slot of `out` not yet given to a rider.
+    slots: usize,
+    // A recent blow's shape: where (rest) and how wide, which way a bat lay and what kind (2 a bat's tramlines, 1 a hard
+    // blow's ring), which way the skin faced and when.
+    pub records: Vec<[Vec4; 3]>,
 }
 
 impl Npc<'_> {
@@ -218,6 +266,44 @@ impl Npc<'_> {
             at[c] += 1;
         }
         b.e_start = degree;
+        // The brows ride on the skin they grow from: each of their corners is one of the nearest place's. (The lashes grow
+        // from the lids' margins, which do not swell.)
+        for p in body.parts.iter().filter(|p| p.kind == "brows") {
+            for v in p.vertex_start..p.vertex_start + p.vertex_count {
+                let mut best = 0.02;
+                for (i, d) in b.around(body.position[v], 0.02) {
+                    if d < best {
+                        best = d;
+                        node_of[v] = i;
+                    }
+                }
+            }
+        }
+        let mut per = vec![0usize; m + 1];
+        for &i in node_of.iter().filter(|&&i| i != usize::MAX) {
+            per[i + 1] += 1;
+        }
+        for i in 0..m {
+            per[i + 1] += per[i];
+        }
+        b.v_list = vec![0; per[m]];
+        b.flip = vec![1; n];
+        let mut fill = per[..m].to_vec();
+        for (v, &i) in node_of.iter().enumerate() {
+            if i == usize::MAX {
+                continue;
+            }
+            b.v_list[fill[i]] = v as u32;
+            fill[i] += 1;
+            b.flip[v] = if body.normal[v].dot(b.nor[i]) < 0.0 { -1 } else { 1 };
+        }
+        b.v_start = per;
+        b.shift = vec![Vec3::ZERO; m];
+        b.press = vec![0.0; m];
+        b.sent = vec![Vec4::ZERO; m];
+        b.slots = n;
+        b.out = vec![[Vec4::ZERO; 3]; n + crate::bruise::RIDER_ROWS * crate::skin::WIDE / crate::skin::PER_CORNER];
+        b.dirty = vec![false; b.out.len()];
         for v in [&mut b.lax, &mut b.damage, &mut b.ery, &mut b.ery_t, &mut b.leak, &mut b.pool, &mut b.blood, &mut b.age, &mut b.oed, &mut b.oed_t, &mut b.h, &mut b.last] {
             *v = vec![0.0; m];
         }
@@ -302,6 +388,19 @@ impl Npc<'_> {
         for p in body.parts.iter().filter(|p| p.kind == "teeth") {
             for v in p.vertex_start..p.vertex_start + p.vertex_count {
                 put(body.position[v], &mut b.bone);
+            }
+        }
+        // What lies on the skin is carried out by its swelling where the swelling reaches it: the clothes and the hair
+        // (corners of this same body), and dressings (dressing.rs). A sleeve standing off is met only once the skin has
+        // come out to it, a tight one at once; and a tight layer presses back. (Hair presses on nothing.)
+        for hair in [false, true] {
+            let layers: Vec<u32> = body.parts.iter()
+                .filter(|p| if hair { p.kind == "hair" } else { p.worn })
+                .flat_map(|p| (p.vertex_start as u32)..(p.vertex_start + p.vertex_count) as u32)
+                .collect();
+            let at: Vec<Vec3> = layers.iter().map(|&v| body.position[v as usize]).collect();
+            if !at.is_empty() {
+                b.ride(&at, 0.0, if hair { 0.0 } else { 0.3 }, Some(layers));
             }
         }
         self.hurt.bruise = b;
@@ -450,7 +549,9 @@ impl BruiseOf<'_, '_> {
             }
             b.wake(i);
         }
-        // port: phase 3 bruise (the blow's shape for the shader: a bat's tramlines, a hard blow's pale middle).
+        let kind = if rod { 2.0 } else if peak > 0.6 { 1.0 } else { 0.0 };
+        let clock = self.0.hurt.bruise.clock;
+        self.b().record(rest, if rod { contact * 0.55 } else { contact }, axis, n, kind, clock);
         if let Some(i) = worst {
             self.split(i, worst_hit, rod.then_some(axis));
         }
@@ -496,7 +597,14 @@ impl BruiseOf<'_, '_> {
         if path.len() < 2 {
             return;
         }
-        // port: phase 3 marks (the split cut along `path`, deepest in its middle: marks.cut).
+        // Torn along `path`, deepest in its middle (marks.rs draws it).
+        let deep = 0.0025 + 0.002 * hit.clamp(0.0, 1.0);
+        let last = (path.len() - 1) as f32;
+        for k in 0..path.len() - 1 {
+            let t = (k as f32 + 0.5) / last;
+            let s = (std::f32::consts::PI * t).sin();
+            self.0.hurt.happened.push(crate::npc::Happened::Slit { a: path[k].clone(), b: path[k + 1].clone(), deep: deep * (0.5 + 0.5 * s), gapes: 0.4 + 0.5 * s });
+        }
         let mid = path[path.len() / 2].clone();
         // The scalp and face bleed far more than skin anywhere else split as far.
         let bleed = self.0.vitals.bleed(Bleed::new("laceration", if head { 0.0007 } else { 0.0001 }).clots(0.012).mark(Some(mid.clone())));
@@ -595,12 +703,18 @@ impl BruiseOf<'_, '_> {
             if br.how == "shot" {
                 continue;
             }
+            let (push, shove) = moves(&br.r#type);
             let b = self.b();
             for (i, dist) in b.around(br.at, wide * 2.5) {
                 let w = (-(dist * dist) / (2.0 * wide * wide)).exp();
                 b.oed_t[i] += swell * w * b.lax[i] * SWELL * 1.5;
                 b.leak[i] += blood * w * LEAK * b.lax[i];
                 b.damage[i] += swell * w * 0.5;
+                // The face over it moved as the bone under it was.
+                let near = (-(dist * dist) / (2.0 * (wide * 0.7).powi(2))).exp();
+                let sideways = if br.dir.x == 0.0 { 1.0 } else { br.dir.x.signum() };
+                b.shift[i] += -b.nor[i] * push * near + Vec3::X * sideways * shove * near;
+                b.sent[i].w = f32::NAN;
                 b.wake(i);
             }
             // Blood tracks round the eyes from a broken nose or midface, and from the skull's floor (raccoon eyes).
@@ -655,6 +769,9 @@ impl BruiseOf<'_, '_> {
         b.wait -= dt;
         if b.wait <= 0.0 {
             b.wait = TICK;
+            if b.carry {
+                b.carried();
+            }
             // An eye swells shut: how swollen the tissue of the lids is, whatever their margins do.
             let swollen: Vec<f32> = b.eyes.iter().map(|e| {
                 let sum: f32 = e.lid.iter().map(|&i| {
@@ -716,10 +833,7 @@ impl BruiseOf<'_, '_> {
                 self.spread(i, if flow > 0.0 { dt } else { dt * 0.3 }, g);
             }
             let b = &mut self.0.hurt.bruise;
-            // How far it stands swollen out (the look's to draw).
-            let cap = 0.003 + 0.006 * b.lax[i];
-            let swollen = b.oed[i] + HAEMATOMA * (b.pool[i] + b.blood[i]);
-            b.h[i] = cap * (1.0 - (-swollen / cap).exp()) * b.rim[i];
+            b.touch(i);
             // What is still changing stays on the clock; what has settled leaves it.
             let busy = b.leak[i] > 0.0 || b.pool[i] > 2e-3 || b.ery_t[i] > 0.004 || (b.ery[i] - b.ery_t[i] * flow.min(1.0)).abs() > 0.004
                 || (flow > 0.0 && b.oed_t[i] - b.oed[i] > 2e-5) || (b.blood[i] > 0.01 && b.age[i] < 3.0 * BLUES);
@@ -768,5 +882,172 @@ impl BruiseOf<'_, '_> {
                 b.wake(j);
             }
         }
+    }
+}
+
+// --- what is drawn of it ----------------------------------------------------------------------------------------------
+//
+// skin.wesl's vertex shader moves each corner out by its swelling (and the bone under it) before the skeleton moves it,
+// and tips its normal by the swelling's slope; its fragment shader colours the skin by what is in it. Both read each
+// corner's numbers from the person's table (skin.rs), written here only where they changed enough to see.
+
+impl Bruise {
+    // Place `i` drawn again if it changed enough to see, and the places round it if its swelling did (it bends their
+    // normals too).
+    fn touch(&mut self, i: usize) {
+        let cap = 0.003 + 0.006 * self.lax[i];
+        let swollen = self.oed[i] + HAEMATOMA * (self.pool[i] + self.blood[i]);
+        let h = cap * (1.0 - (-swollen / cap).exp()) * self.rim[i] * (1.0 - SQUEEZE * self.press[i]);
+        self.h[i] = h;
+        let w = self.sent[i];
+        let blue = 1.0 - (-self.age[i] / BLUES).exp();
+        let moved = !((h - w.w).abs() < 6e-5);
+        if !moved && (self.ery[i] - w.x).abs() < 0.004 && (self.blood[i] - w.y).abs() < 0.004 && (blue - w.z).abs() < 0.02 {
+            return;
+        }
+        self.sent[i] = Vec4::new(self.ery[i], self.blood[i], blue, h);
+        self.write(i);
+        if moved {
+            for e in self.e_start[i]..self.e_start[i + 1] {
+                self.write(self.e_to[e]);
+            }
+        }
+    }
+
+    // What the shader reads at place `i`'s corners: its colour (redness, blood showing, how blue that blood has gone,
+    // swelling in cm), how far it moved (swollen out along its normal, and the bone under it moved), and how its normal
+    // tips with the swelling's slope (the change to each neighbour along the way to it, over how far).
+    fn write(&mut self, i: usize) {
+        let (p, h) = (self.pos[i], &self.h);
+        let mut g = Vec3::ZERO;
+        let mut wsum = 0.0;
+        for e in self.e_start[i]..self.e_start[i + 1] {
+            let j = self.e_to[e];
+            let x = self.pos[j] - p;
+            g += x * (h[j] - h[i]);
+            wsum += x.length_squared();
+        }
+        let n = self.nor[i];
+        if wsum > 0.0 {
+            g *= 2.0 / wsum;
+        }
+        g -= n * g.dot(n);
+        let s = n * h[i] + self.shift[i];
+        let tint = Vec4::new(self.ery[i], self.blood[i], self.sent[i].z, h[i] * 100.0);
+        self.carry = true;
+        for k in self.v_start[i]..self.v_start[i + 1] {
+            let v = self.v_list[k] as usize;
+            let f = -(self.flip[v] as f32);
+            self.out[v] = [tint, s.extend(0.0), (g * f).extend(0.0)];
+            self.mark(v);
+        }
+    }
+
+    fn mark(&mut self, v: usize) {
+        if !self.dirty[v] {
+            self.dirty[v] = true;
+            self.changed.push(v as u32);
+        }
+    }
+
+    // What skin.rs takes each frame: the corners changed (their `out` read, and they are clean again).
+    pub fn taken(&mut self, v: u32) {
+        self.dirty[v as usize] = false;
+    }
+
+    // A layer over the skin to be carried out by its swelling: corners at rest positions `at`, standing `base` m off the
+    // skin where they lie on it, pressing on it by `tight` (0 to 1) where they do; its shifts kept in `out` at `slots`
+    // (corners of the body), or given slots of its own (a mesh of its own: a dressing, whose first slot is returned
+    // with the rider's number). None if there is no room left for it.
+    pub fn ride(&mut self, at: &[Vec3], base: f32, tight: f32, slots: Option<Vec<u32>>) -> Option<(usize, u32)> {
+        let slots = match slots {
+            Some(s) => s,
+            None => {
+                if self.slots + at.len() > self.out.len() {
+                    return None;
+                }
+                self.slots += at.len();
+                ((self.slots - at.len()) as u32..self.slots as u32).collect()
+            }
+        };
+        let mut place = vec![-1i32; at.len()];
+        let mut gap = vec![0.0f32; at.len()];
+        for (k, &p) in at.iter().enumerate() {
+            let mut best = MET;
+            for (i, d) in self.around(p, MET) {
+                let off = (p - self.pos[i]).dot(self.nor[i]);
+                if off > -0.003 && d < best {
+                    best = d;
+                    place[k] = i as i32;
+                    gap[k] = (off - base).max(0.0);
+                }
+            }
+        }
+        let first = slots.first().copied().unwrap_or(0);
+        self.riders.push(Some(Rider { slots, place, gap, tight }));
+        self.pressed();
+        self.carry = true;
+        self.carried();
+        Some((self.riders.len() - 1, first))
+    }
+
+    pub fn unride(&mut self, k: usize) {
+        if let Some(r) = self.riders.get_mut(k) {
+            *r = None;
+            self.pressed();
+        }
+    }
+
+    // How hard what lies on each place presses on it: a tight layer touching it all of its own `tight`, nothing from one
+    // standing 3 mm or more off. Places whose press changed are put back on the clock to swell to it.
+    fn pressed(&mut self) {
+        let was = std::mem::replace(&mut self.press, vec![0.0; self.count]);
+        for r in self.riders.iter().flatten() {
+            for (k, &i) in r.place.iter().enumerate() {
+                if i >= 0 {
+                    let i = i as usize;
+                    self.press[i] = self.press[i].max(r.tight * (1.0 - smooth(0.0, 0.003, r.gap[k])));
+                }
+            }
+        }
+        for i in 0..self.count {
+            if self.press[i] != was[i] && self.oed[i] + self.pool[i] + self.blood[i] > 0.0 {
+                self.wake(i);
+            }
+        }
+    }
+
+    // Every layer moved out by as much of the swelling under it as reaches it.
+    fn carried(&mut self) {
+        self.carry = false;
+        for r in 0..self.riders.len() {
+            let Some(rider) = self.riders[r].take() else { continue };
+            for (k, &i) in rider.place.iter().enumerate() {
+                if i < 0 {
+                    continue;
+                }
+                let i = i as usize;
+                let out = (self.h[i] - rider.gap[k]).max(0.0);
+                let x = self.nor[i] * out + self.shift[i];
+                let v = rider.slots[k] as usize;
+                if (self.out[v][1].truncate() - x).abs().element_sum() < 2e-5 {
+                    continue;
+                }
+                self.out[v][1] = x.extend(0.0);
+                self.mark(v);
+            }
+            self.riders[r] = Some(rider);
+        }
+    }
+
+    // A recent blow's shape, for the shader. Kind 0 (nothing to draw but the field itself) is not kept.
+    fn record(&mut self, at: Vec3, wide: f32, axis: Vec3, n: Vec3, kind: f32, clock: f32) {
+        if kind == 0.0 {
+            return;
+        }
+        if self.records.len() == RECORDS {
+            self.records.remove(0);
+        }
+        self.records.push([at.extend(wide), axis.extend(kind), n.extend(clock)]);
     }
 }

@@ -21,10 +21,13 @@ mod dressing;
 mod fist;
 mod eyes;
 mod flesh;
+mod film;
 mod graphics;
+mod hider;
 mod hands;
 mod hud;
 mod map;
+mod marks;
 mod models;
 mod muzzle;
 mod motor;
@@ -36,9 +39,11 @@ mod poses;
 mod profiler;
 mod ragdoll;
 mod rng;
+mod runs;
 mod sandbox;
 mod scenario;
 mod shards;
+mod skin;
 mod solids;
 mod sound;
 mod surfaces;
@@ -156,7 +161,10 @@ fn main() -> AppExit {
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
     // The body opened: broken bones drawn, limbs cut off, bellies opened (phase 3, port/cut).
-    .add_plugins((shards::plugin, dismember::plugin, viscera::plugin, wall::plugin, flesh::plugin));
+    .add_plugins((shards::plugin, dismember::plugin, viscera::plugin, wall::plugin, flesh::plugin))
+    // The look of hurt on the skin: wounds, blood on and running down it, bruising, holes in the clothes (phase 3,
+    // port/skin).
+    .add_plugins((skin::plugin, runs::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {
