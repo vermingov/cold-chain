@@ -1593,3 +1593,23 @@ pub fn scenario() -> Vec<Step> {
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The sheet's blur keeps what it is given (a flat field stays flat, a point is spread evenly over the box), and a
+    // filled polygon covers as much as its area.
+    #[test]
+    fn sheet() {
+        let flat = blurred(&vec![0.5; 64], 8, 8, 2);
+        assert!(flat.iter().all(|v| (v - 0.5).abs() < 1e-5));
+        let mut point = vec![0.0; 81];
+        point[40] = 1.0;
+        let spread = blurred(&point, 9, 9, 1);
+        assert!((spread[40] - 1.0 / 9.0).abs() < 1e-5 && (spread.iter().sum::<f32>() - 1.0).abs() < 1e-4);
+        let mut c = Canvas { w: 32, h: 32, a: vec![0.0; 1024], row: vec![0.0; 32] };
+        c.fill(&[Vec2::new(4.0, 4.0), Vec2::new(20.0, 4.0), Vec2::new(20.0, 14.0), Vec2::new(4.0, 14.0)], 1.0, [0, 0, 32, 32]);
+        assert!((c.a.iter().sum::<f32>() - 160.0).abs() < 1.0);
+    }
+}
