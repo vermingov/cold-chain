@@ -3,6 +3,10 @@
 The user's word (2026-11-15): port the whole game to Bevy (https://bevy.org/) first; none of the below until the port
 is done and the user has been asked. In their words, then what each means here.
 
+The user said go (2026-11-16): "continue with the port, and then get started on finishing the things that didn't get
+finished on the Babylon version, and then do the rest of what I asked". So, in this order: finish phase 4 of the port;
+then item 7 (what was stopped mid-way in the TS); then items 1-6.
+
 1. **The viewmodel and the player's body in the 3D world.** "The viewmodel should actually be in the 3D world, same
    with my character, like I should be able to push the NPCs with my body, and I should be able to put my gun up
    against the NPCs so it isn't just my view but actually where it is and where it will function."
