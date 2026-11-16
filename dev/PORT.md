@@ -695,9 +695,13 @@ steps wait. Anything new that is drawn only after an event belongs on the list w
 
 `warm::Pipelines` (a resource) counts what the render world's cache has made (`made`) and is still making (`waiting`);
 with `note` on it keeps what each new one was made for (its label and vertex shader switches).
-`cargo run -- --scenario warm --out <dir>` waits for the warm-up, then plays a fight (each kind of weapon at the line-up,
-a grenade, an eye shot, blood left to run, the x-ray) and logs `made_after_warm_up`, which should be 0, and the new
-pipelines' descriptions if not.
+`cargo run -- --scenario warm --out <dir>` waits for the warm-up, then plays a fight (`warm::FIGHT`: each kind of
+weapon at the line-up as a player uses it, a grenade; then an eye shot, blood left to run, the x-ray) and logs
+`made_after_warm_up`, which should be 0, after each weapon and at the end, with the new pipelines' descriptions if not.
+The warm-up rehearses the same fight on fresh people (as the TS's rehearsed its shots): what found the gaps was the fight
+before it was rehearsed. Each gap was a different kind of thing, not a different place: the muzzle's sparks (a gun fired
+before it was up in view), a flash's card, the bowel a shotgun lets out over seconds (viscera.rs's ropes), an arm taken
+off by a sword's own cut (flesh.rs). Something new that only a rare event draws still needs its step here.
 
 ### Building beside other worktrees (found by port/face)
 Worktrees sharing one CARGO_TARGET_DIR share the crate's fingerprint (the package is the same, only its path differs), so
