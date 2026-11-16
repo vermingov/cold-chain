@@ -273,6 +273,10 @@ pub struct Dressing {
     pub capacity: f32,
     pub held: f32,
     pub since: f32,
+    // How many of the person's cuts (dismember.rs) it has been through (None until `severed` first sees it), and whether
+    // it has come away with one (kept in the list, so that the look's list, skin.rs's, keeps its places).
+    pub seen: Option<usize>,
+    pub off: bool,
 }
 
 // Two directions square to unit `n` and to each other, the first as near to up as it can be.
@@ -360,7 +364,7 @@ impl Npc<'_> {
     // for the look left to phase 3). None where nothing can be put on (a stump: phase 3's, with the cutting).
     fn dressing(&self, mark: &Crossing) -> Option<Dressing> {
         let body = self.body();
-        let layer = self.hurt.dressings.iter().filter(|d| d.covers.covers(mark.rest)).count();
+        let layer = self.hurt.dressings.iter().filter(|d| !d.off && d.covers.covers(mark.rest)).count();
         let lift = 0.0028 + layer as f32 * 0.003;
         // Where on the head or neck a wound is: 'face' (below the brows, in front: a pad taped on), 'scalp' (the forehead
         // above the brows, the temples, the crown, the back: a pad held by a roller bandage wound round the head), 'neck'
@@ -384,7 +388,7 @@ impl Npc<'_> {
             }
             at = body.bones[b].parent;
         }
-        let make = |kind, covers, per: f32, area: f32| Some(Dressing { mark: mark.clone(), kind, covers, per, capacity: area * 1e4 * per, held: 0.0, since: 0.0 });
+        let make = |kind, covers, per: f32, area: f32| Some(Dressing { mark: mark.clone(), kind, covers, per, capacity: area * 1e4 * per, held: 0.0, since: 0.0, seen: None, off: false });
         match region {
             Some("face") | Some("neck") => {
                 let (ex, ey) = frame(mark.rest_normal);
@@ -480,7 +484,7 @@ impl Npc<'_> {
         }).collect();
         let step = std::f32::consts::TAU / COLS as f32;
         let round: f32 = (0..COLS).map(|k| (middle[k] * step.cos() - middle[(k + 1) % COLS]).hypot(middle[k] * step.sin())).sum();
-        Some(Dressing { mark: mark.clone(), kind: "wrap", covers: Covers::Band { mid, m, o }, per: GAUZE_WRAP, capacity: round * BAND * 1e4 * GAUZE_WRAP, held: 0.0, since: 0.0 })
+        Some(Dressing { mark: mark.clone(), kind: "wrap", covers: Covers::Band { mid, m, o }, per: GAUZE_WRAP, capacity: round * BAND * 1e4 * GAUZE_WRAP, held: 0.0, since: 0.0, seen: None, off: false })
     }
 
     // Blood out of the wound under dressing `d` this frame (bleed `b`, `ml`): into the gauze until it is full, then out
@@ -498,15 +502,112 @@ impl Npc<'_> {
         }
     }
 
-    // A new wound under a dressing (shot through it): its blood goes into the gauze too, but nothing presses on it.
-    // port: phase 3 dismember (a dressing on a limb cut off since goes with the piece or comes away).
+    // A new wound under a dressing (shot through it): its blood goes into the gauze too, but nothing presses on it. (A
+    // limb cut off since it was put on is `severed`'s.)
     pub fn dressings_update(&mut self, dt: f32) {
         for k in 0..self.hurt.dressings.len() {
+            if self.hurt.dressings[k].off {
+                continue;
+            }
             self.hurt.dressings[k].since += dt;
             let covers = self.hurt.dressings[k].covers.clone();
             for b in &mut self.vitals.bleeds {
                 if b.dressing.is_none() && b.source.mark.as_ref().is_some_and(|m| covers.covers(m.rest)) {
                     b.dressing = Some(k);
+                }
+            }
+        }
+    }
+}
+
+// A limb cut off since a dressing was put on (dressing.ts `_severed`, dismember.rs's cuts). Cut through, it comes away (it
+// is cut through as the limb is): its bleeds are undressed and it is no longer drawn. Wholly on the piece, it goes with
+// it; wholly on the body, it stays; either way its corners are carried only by the bones of their side, as the skin's are.
+#[allow(clippy::type_complexity)]
+pub fn severed(
+    mut people: Query<(&crate::person::Person, &mut crate::npc::Hurt, &mut crate::vitals::Vitals, &crate::dismember::Dismember, Option<&crate::skin::Skin>)>,
+    mut drawn: Query<(&Mesh3d, &mut Visibility)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (person, mut hurt, mut vitals, dismember, skin) in &mut people {
+        let cuts = &dismember.cuts;
+        let bones = &person.body.bones;
+        for k in 0..hurt.dressings.len() {
+            let seen = *hurt.dressings[k].seen.get_or_insert(cuts.len());
+            if hurt.dressings[k].off || seen >= cuts.len() {
+                continue;
+            }
+            // (Nothing to carry: the look has not made its mesh yet, a frame or so after it is put on, and it waits for it;
+            // or it makes none, as for a bandage round the head, which stays with the head.)
+            let entity = skin.and_then(|s| s.dressings.get(k)).map(|d| d.0).filter(|&e| e != Entity::PLACEHOLDER);
+            let Some(mut mesh) = entity.and_then(|e| drawn.get(e).ok()).and_then(|(m, _)| meshes.get_mut(&m.0)) else {
+                if skin.is_none_or(|s| s.dressings.len() > k) {
+                    hurt.dressings[k].seen = Some(cuts.len());
+                }
+                continue;
+            };
+            let rest: Vec<Vec3> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+                Some(VertexAttributeValues::Float32x3(p)) => p.iter().map(|&p| Vec3::from(p)).collect(),
+                _ => continue,
+            };
+            let weights: Vec<[f32; 4]> = match mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT) {
+                Some(VertexAttributeValues::Float32x4(w)) => w.clone(),
+                _ => continue,
+            };
+            let Ok(VertexAttributeValues::Uint16x4(joints)) = mesh.try_attribute_mut(Mesh::ATTRIBUTE_JOINT_INDEX) else { continue };
+            let mut gone_off = false;
+            for cut in &cuts[seen..] {
+                let gone = |i: usize| {
+                    let mut at = Some(i);
+                    while let Some(b) = at {
+                        if b == cut.tip {
+                            return true;
+                        }
+                        at = bones[b].parent;
+                    }
+                    false
+                };
+                let (mut touched, mut past, mut before) = (false, 0, 0);
+                for (v, p) in rest.iter().enumerate() {
+                    if (0..4).any(|i| weights[v][i] > 0.0 && gone(joints[v][i] as usize)) {
+                        touched = true;
+                    }
+                    if (*p - cut.c).dot(cut.n) > 0.0 {
+                        past += 1;
+                    } else {
+                        before += 1;
+                    }
+                }
+                if !touched {
+                    continue;
+                }
+                if past > 0 && before > 0 {
+                    gone_off = true;
+                    break;
+                }
+                let piece = past > 0;
+                let to = if piece { cut.tip } else { cut.prox } as u16;
+                for (v, j) in joints.iter_mut().enumerate() {
+                    for i in 0..4 {
+                        if weights[v][i] > 0.0 && gone(j[i] as usize) != piece {
+                            j[i] = to;
+                        }
+                    }
+                }
+            }
+            hurt.dressings[k].seen = Some(cuts.len());
+            if gone_off {
+                hurt.dressings[k].off = true;
+                for b in &mut vitals.bleeds {
+                    if b.dressing == Some(k) {
+                        b.dressing = None;
+                        b.dressed = None;
+                    }
+                }
+                if let Some(e) = entity {
+                    if let Ok((_, mut shown)) = drawn.get_mut(e) {
+                        *shown = Visibility::Hidden;
+                    }
                 }
             }
         }

@@ -986,7 +986,7 @@ pub fn forget(mut people: Query<&mut Hurt>) {
 }
 
 pub fn plugin(app: &mut App) {
-    app.insert_resource(Dice(12345)).add_systems(First, forget).add_systems(Update, (fit, update).chain());
+    app.insert_resource(Dice(12345)).add_systems(First, forget).add_systems(Update, (fit, update, crate::dressing::severed).chain());
 }
 
 #[cfg(test)]
