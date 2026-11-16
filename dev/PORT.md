@@ -353,27 +353,26 @@ included, is taken): `Spray`, `Stream` (keyed by person and bleed, each bleed ke
 npc.ts `_aims`; throat.rs's vomit is `bleed: None`), `Soak` (into soak.rs), `Spatter` (npc.ts `spatter`, ported here).
 Not taken here: `Welling`, `Runs`, `Blot` (skin's: film.rs, runs.rs), `Bled`, `Edge`, `Charge` (cut's).
 
-### For the skin (film.rs, runs.rs): the hand-over
+### With the skin (skin.rs, film.rs, runs.rs)
 - Drops that land on bare skin are pushed onto the person's `Hurt::happened` as medicine's own `Blot { hit, r, wet }` and
-  (over 0.008 ml) `Runs { hit, ml, from: None }`, in Update (`blood::Bleeding`): read them after it (PostUpdate) as you
-  read medicine's. Bodies lying in blood push `Blot` the same way. Drops on clothes go into soak.rs; nothing for you.
-- What runs off the skin comes back through the `Blood` resource: `blood.drip(at, ml, fluid::across(ml))` (a drop let go
-  at a chin, a fingertip, the low end of a run), `blood.run(at, litres_per_s, dt)` (a flow with nowhere to go: gathers into
-  drips, or into the floor below 4 cm), `blood.fill(at, litres)` (straight into the pool under `at`), and
-  `blood.bead(at, normal, along, r, h, hang)` once a frame for each bead drawn running on skin (runs.ts's beads were drawn
-  by blood.ts; at most 400).
-- A run reaching clothes: `soak.add(rest, ml) -> bool` on the person's `soak::Soak` component (false: no cloth there);
-  `soak.fullness(rest)` (0 dry, 1 full, more standing; marks.ts asked it).
-- The clothes' material is soak.rs's: every cloth part of every person is given its own
-  `ExtendedMaterial<StandardMaterial, soak::Cloth>` (cloth.wesl, with its own vertex stage passing the rest position on)
-  the frame after they are made. Holes in the clothes (hider.ts) belong in that material too: extend `Cloth` and
-  cloth.wesl rather than giving the clothes a second material.
+  (over 0.008 ml) `Runs { hit, ml, from: None }`, in Update (`blood::Bleeding`); skin.rs draws them in PostUpdate as it
+  draws medicine's. Bodies lying in blood push `Blot` the same way. Drops on clothes go into soak.rs.
+- runs.rs's messages are taken in Update: `runs::Drip` (a drop let go from the skin: blood.rs flies it), `runs::Pooled`
+  (into the floor) and `runs::Soaked` (into the person's `soak::Soak`). runs.rs draws its own beads.
+- The clothes' soak is drawn by skin.rs's material: `Wounded` has `soak` (binding 107, the person's 3D field; sampler 108),
+  `soak_at` (109, the field's corner at rest) and `soak_scale` (110, one over its size), a dry 1-texel field
+  (`soak::DRY`) until soak.rs `wire` gives a person's clothes their own; skin.wesl's CLOTH branch calls fluid.wesl
+  `stained` after the scorch (three lines).
+- The `Blood` resource for anyone else: `blood.drip(at, ml, fluid::across(ml))`, `blood.run(at, litres_per_s, dt)` (a flow
+  with nowhere to go: gathers into drips, or into the floor below 4 cm), `blood.fill(at, litres)`, `blood.spray(..)`;
+  `soak.add(rest, ml) -> bool`, `soak.fullness(rest)` on the person's `Soak`.
 
 ### For cut (dismember.rs, viscera.rs)
 dismember.ts sprayed from a fresh stump (`blood.spray`) and ran from a stump's end (`blood.run`); viscera.ts dripped
 (`blood.drip`): the same calls on the `Blood` resource. Rapier bodies are not used: the drops are blood.rs's own.
 
 ### On the GPU
+(The shaders: floor.wesl, puddle.wesl, soak.wesl, stain.wesl, fluid.wesl; the clothes' look is in skin.wesl.)
 - The floor (floor.rs, floor.wesl): the TS's 12.5 mm grid over the whole hall, kept only for the 32-by-32-cell tiles
   blood has reached (woken where it lands, round it, and where the flow asks: the `want` flags), at most 1024 of them, in
   buffers by tile: depth, age, the floor's own lie (made on the CPU when a tile wakes, the TS's noise in f64), and what each
@@ -401,8 +400,6 @@ clothes passes (Bevy's render diagnostics, timestamp queries; on lavapipe these 
 the same in the TS game (people picked by body; its world.npcs order is not the line-up's) and writes the same views.
 
 ### Not done, and why
-- Blood on skin (film.rs, runs.rs) is port/skin's: until it lands, a wound on bare skin (the neck shot here) puts nothing
-  on the floor, and the chin stays clean after a cough; drops landing on skin are handed over and go no further.
 - Drops are drawn without the hall reflected (plain StandardMaterial): beads a few millimetres across; the pools and marks
   carry it.
 - The reflection is rendered once, when the hall is loaded, with whatever stands in it then left out (people are not on

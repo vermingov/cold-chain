@@ -76,3 +76,54 @@ fn fresnel(nv: f32) -> f32 {
     let f0 = 0.022;
     return f0 + (1.0 - f0) * pow(1.0 - clamp(nv, 0.0, 1.0), 5.0);
 }
+
+// The blood in the clothes (soak.rs's field, kept over the person at rest), read as a cubic B-spline (eight trilinear
+// reads, after Sigg and Hadwiger) rather than straight between cubes: a stain's edge comes out a smooth curve, not the
+// grid's 8 mm steps (soak.ts GLSL_SOAK).
+fn soak_read(field: texture_3d<f32>, s: sampler, u: vec3<f32>) -> vec4<f32> {
+    let size = vec3<f32>(textureDimensions(field));
+    let t = u * size - 0.5;
+    let i = floor(t);
+    let f = t - i;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+    let w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+    let w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+    let w3 = f3 / 6.0;
+    let g1 = w2 + w3;
+    let a = (i - 0.5 + w1 / (w0 + w1)) / size;
+    let b = (i + 1.5 + w3 / g1) / size;
+    return mix(
+        mix(mix(textureSampleLevel(field, s, vec3(a.x, a.y, a.z), 0.0), textureSampleLevel(field, s, vec3(b.x, a.y, a.z), 0.0), g1.x),
+            mix(textureSampleLevel(field, s, vec3(a.x, b.y, a.z), 0.0), textureSampleLevel(field, s, vec3(b.x, b.y, a.z), 0.0), g1.x), g1.y),
+        mix(mix(textureSampleLevel(field, s, vec3(a.x, a.y, b.z), 0.0), textureSampleLevel(field, s, vec3(b.x, a.y, b.z), 0.0), g1.x),
+            mix(textureSampleLevel(field, s, vec3(a.x, b.y, b.z), 0.0), textureSampleLevel(field, s, vec3(b.x, b.y, b.z), 0.0), g1.x), g1.y), g1.z);
+}
+
+// Cloth of colour `albedo` at `rest` with the blood the field holds there (hider.ts HIDER_SOAK): a stain whose edge is
+// the weave's, red where a little has wicked in and dark where the cloth is full, wet-dark and with a sheen where blood
+// stands on it, drying brown with a darker tide line at its edge. The new colour, and how much it shines (0 to 1).
+fn stained(albedo: vec3<f32>, rest: vec3<f32>, field: texture_3d<f32>, s: sampler, origin: vec3<f32>, scale: vec3<f32>) -> vec4<f32> {
+    // The grid is 8 mm: read it a little off where this point is, by a smooth noise, so that a stain's edge wanders as
+    // the weave makes it and does not follow the grid.
+    let sp = rest + (vec3(noise3(rest * 55.0), noise3(rest * 55.0 + 17.0), noise3(rest * 55.0 + 31.0)) - 0.5) * 0.014;
+    let sk = soak_read(field, s, (sp - origin) * scale);
+    let full = sk.r * sk.r * 1.3;
+    if full <= 0.002 {
+        return vec4(albedo, 0.0);
+    }
+    let n1 = noise3(rest * 160.0);
+    let n2 = noise3(rest * 420.0);
+    // Where the cloth has drunk blood its fibres are full of it; past its edge they are dry. A little that reached a dry
+    // patch (a mist, a fleck) shows as specks where fibres caught it.
+    var cover = smoothstep(0.14, 0.26, full + (n1 - 0.5) * 0.16 + (n2 - 0.5) * 0.06);
+    cover = max(cover, step(1.0 - full * 3.0, n2) * smoothstep(0.004, 0.03, full));
+    let wet = sk.g;
+    let mm = clamp(full, 0.15, 1.0) * 0.55 * (0.8 + 0.4 * n1);
+    var c = blood_over(albedo * mix(1.0, 0.8, wet), mm, wet);
+    // Drying, blood is drawn to the edge of the stain and leaves it darker there (a tide line).
+    let rim = smoothstep(0.14, 0.2, full) * (1.0 - smoothstep(0.22, 0.4, full)) * (1.0 - wet);
+    c = mix(c, blood_over(albedo, mm + 0.3, 0.0), rim * 0.7);
+    return vec4(mix(albedo, c, cover), cover * smoothstep(1.0, 1.25, full) * wet);
+}

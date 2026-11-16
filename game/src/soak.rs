@@ -11,7 +11,7 @@
 // Kept on a grid of 8 mm cubes over the person at rest (their clothes' own picture can give both legs one place). The
 // TS worked it out on the CPU, at most 1200 cubes a step, and sent the bricks that changed to a 3D texture; here every
 // cube of a person's clothes is worked out on the GPU each step (soak.wesl) and the texture written there, and the
-// clothes' material (cloth.wesl) reads it by the rest position of each point it draws: red how full the cloth is, green
+// clothes' material (skin.rs's, skin.wesl's cloth through fluid.wesl `stained`) reads it by the rest position of each point it draws: red how full the cloth is, green
 // how wet it still is. What the CPU needs back (drops to let fall from hems; how full the cloth is, for wiping it on the
 // floor) comes back by readback.
 
@@ -24,7 +24,6 @@ use bevy::asset::RenderAssetUsages;
 use bevy::core_pipeline::schedule::camera_driver;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine3A;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete, ReadbackOnce};
 use bevy::render::render_asset::RenderAssets;
@@ -35,7 +34,6 @@ use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQue
 use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
 use bevy::render::texture::GpuImage;
 use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup, RenderSystems};
-use bevy::shader::ShaderRef;
 
 use crate::fluid::across;
 use crate::person::{Body, Person};
@@ -269,6 +267,8 @@ pub struct Soak {
     reading: bool,
     // Drops to let fall, (cube, ml), brought back.
     falls: Vec<(u32, f32)>,
+    // Its clothes shown it (`wire`).
+    wired: bool,
 }
 
 impl Soak {
@@ -306,35 +306,20 @@ impl Soak {
     }
 }
 
-// The clothes' material with the blood in them (cloth.wesl).
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
-pub struct Cloth {
-    #[texture(100, dimension = "3d")]
-    #[sampler(101)]
-    field: Handle<Image>,
-    #[uniform(102)]
-    origin: Vec4,
-    #[uniform(103)]
-    scale: Vec4,
+// A field with nothing in it, for clothes until their own is made (skin.rs `Wounded::soak`).
+pub const DRY: Handle<Image> = bevy::asset::uuid_handle!("6f0c2a3e-8a51-4b7e-9c1d-b1d0d5a0a7e1");
+
+fn dry(mut images: ResMut<Assets<Image>>) {
+    let mut image = Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![0; 4], TextureFormat::Rgba8Unorm,
+                               RenderAssetUsages::RENDER_WORLD);
+    image.sampler = ImageSampler::linear();
+    let _ = images.insert(&DRY, image);
 }
 
-impl MaterialExtension for Cloth {
-    fn vertex_shader() -> ShaderRef {
-        "embedded://cold_chain/cloth.wesl".into()
-    }
-    fn fragment_shader() -> ShaderRef {
-        "embedded://cold_chain/cloth.wesl".into()
-    }
-}
-
-pub type ClothMaterial = ExtendedMaterial<StandardMaterial, Cloth>;
-
-// Everyone made is given their clothes' blood: the grid of their body (made once a body), their own field, and their
-// clothes drawn with it (each part's own material, from the one it was made with).
-#[allow(clippy::too_many_arguments)]
+// Everyone made is given their clothes' blood: the grid of their body (made once a body) and their own field, which
+// their clothes' material (skin.rs) is given by `wire`.
 fn make(mut commands: Commands, people: Query<(Entity, &Person), Without<Soak>>, mut grids: Local<HashMap<String, Arc<Grid>>>,
-        mut buffers: ResMut<Assets<ShaderBuffer>>, mut images: ResMut<Assets<Image>>, standard: Res<Assets<StandardMaterial>>,
-        mut cloths: ResMut<Assets<ClothMaterial>>, parts: Query<&MeshMaterial3d<StandardMaterial>>) {
+        mut buffers: ResMut<Assets<ShaderBuffer>>, mut images: ResMut<Assets<Image>>) {
     for (who, person) in &people {
         let body = &person.body;
         let grid = grids.entry(body.name.clone()).or_insert_with(|| Arc::new(Grid::new(body, &mut buffers))).clone();
@@ -359,22 +344,6 @@ fn make(mut commands: Commands, people: Query<(Entity, &Person), Without<Soak>>,
         };
         let state = buffer(count * 16);
         let drips = buffer(16 + MOST_DRIPS * 8);
-        for (i, e) in &person.parts {
-            if body.parts[*i].kind != "cloth" {
-                continue;
-            }
-            let Ok(m) = parts.get(*e) else { continue };
-            let Some(base) = standard.get(&m.0) else { continue };
-            let material = cloths.add(ExtendedMaterial {
-                base: base.clone(),
-                extension: Cloth {
-                    field: field.clone(),
-                    origin: grid.o.extend(0.0),
-                    scale: (Vec3::ONE / (Vec3::new(nx as f32, ny as f32, nz as f32) * VOX)).extend(0.0),
-                },
-            });
-            commands.entity(*e).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(material));
-        }
         // The drops gathered at hems, every frame: each step's once (a few kilobytes).
         commands.spawn((Readback::buffer(drips.clone()), ChildOf(who))).observe(move |e: On<ReadbackComplete>, mut soaks: Query<&mut Soak>| {
             let Ok(mut soak) = soaks.get_mut(who) else { return };
@@ -405,7 +374,37 @@ fn make(mut commands: Commands, people: Query<(Entity, &Person), Without<Soak>>,
             asked: 0.0,
             reading: false,
             falls: Vec::new(),
+            wired: false,
         });
+    }
+}
+
+// Each person's clothes (their skin.rs materials) shown the blood in them, once both are made.
+fn wire(mut people: Query<(&mut Soak, &crate::skin::Skin)>, mut flesh: ResMut<Assets<crate::skin::Flesh>>) {
+    for (mut soak, skin) in &mut people {
+        if soak.wired {
+            continue;
+        }
+        soak.wired = true;
+        let n = soak.grid.n.map(|v| v as f32);
+        for (_, _, h, mode) in &skin.materials {
+            if *mode != crate::skin::CLOTH {
+                continue;
+            }
+            let Some(mut m) = flesh.get_mut(h) else { continue };
+            m.extension.soak = soak.field.clone();
+            m.extension.soak_at = soak.grid.o.extend(0.0);
+            m.extension.soak_scale = (Vec3::ONE / (Vec3::from_array(n) * VOX)).extend(0.0);
+        }
+    }
+}
+
+// Blood a run on the skin brought to the clothes (runs.rs).
+fn soaked(mut runs: MessageReader<crate::runs::Soaked>, mut people: Query<&mut Soak>) {
+    for r in runs.read() {
+        if let Ok(mut soak) = people.get_mut(r.person) {
+            soak.add(r.rest, r.ml);
+        }
     }
 }
 
@@ -665,8 +664,7 @@ fn run(mut context: RenderContext, soaks: Res<Soaks>, pipelines: Res<Pipelines>,
 
 pub fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "soak.wesl");
-    bevy::asset::embedded_asset!(app, "cloth.wesl");
-    app.add_plugins(MaterialPlugin::<ClothMaterial>::default()).add_systems(Update, make).add_systems(PostUpdate, update);
+    app.add_systems(Startup, dry).add_systems(Update, (make, wire, soaked)).add_systems(PostUpdate, update);
     let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
     render
         .init_resource::<Soaks>()

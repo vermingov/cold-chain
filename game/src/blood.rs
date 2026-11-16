@@ -44,7 +44,6 @@ use crate::vitals::{Dice, Vitals};
 
 const MOST: usize = 3000; // drops in the air at once
 const ROPES: usize = 600; // pieces of streams drawn at once
-const BEADS: usize = 400; // beads on skin drawn at once (runs.rs)
 const SPLATS: usize = 8000; // marks on the room before the oldest go
 const CHUNK: usize = 400; // marks to a mesh
 const TILES: [usize; 2] = [4, 5]; // the splash sheet: columns, rows
@@ -128,7 +127,6 @@ pub struct Blood {
     tops: HashMap<i64, f32>,
     // Blood for the floor from callers without it (runs.rs, dismember.rs): (where, ml, poured).
     to_floor: Vec<(Vec3, f32, bool)>,
-    beads: Vec<Affine3A>,
     crowd: Vec<Crowd>,
     contact: HashMap<(Entity, usize), Vec3>,
     lain: HashMap<(Entity, usize), (Option<Crossing>, Vec3)>,
@@ -160,7 +158,6 @@ impl Blood {
             wet_since: HashMap::new(),
             tops: HashMap::new(),
             to_floor: Vec::new(),
-            beads: Vec::with_capacity(BEADS),
             crowd: Vec::new(),
             contact: HashMap::new(),
             lain: HashMap::new(),
@@ -296,23 +293,6 @@ impl Blood {
     // A pool on the floor under `at` takes `litres` more.
     pub fn fill(&mut self, at: Vec3, litres: f32) {
         self.to_floor.push((at, litres * 1000.0, false));
-    }
-
-    // A bead of blood on skin this frame (runs.rs): at `at`, the skin facing `normal`, `r` across and `h` high, running
-    // along `along` (stretched that way a little), hanging (`hang`, a drop about to fall: drawn pulled down).
-    pub fn bead(&mut self, at: Vec3, normal: Vec3, along: Vec3, r: f32, h: f32, hang: f32) {
-        if self.beads.len() >= BEADS {
-            return;
-        }
-        let across = normal.cross(along).normalize();
-        let way = across.cross(normal).normalize();
-        let mut centre = at + normal * (h * 0.25);
-        if hang > 0.0 {
-            centre.y -= hang * 0.5;
-        }
-        // The bead's own axes: across it, out of the skin, along its way (a sphere squashed onto the skin).
-        let out = if hang > 0.0 { normal + Vec3::new(0.0, -hang / h.max(1e-4), 0.0) } else { normal };
-        self.beads.push(Affine3A::from_cols((across * r).into(), (out * h).into(), (way * r * 1.3).into(), centre.into()));
     }
 
     // --- where it lands ----------------------------------------------------------------------------------------------
@@ -994,8 +974,7 @@ impl MaterialExtension for Stain {
 struct Drawn {
     drops: Vec<Entity>,
     ropes: Vec<Entity>,
-    beads: Vec<Entity>,
-    shown: [usize; 3],
+    shown: [usize; 2],
     chunks: Vec<Handle<Mesh>>,
 }
 
@@ -1003,7 +982,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
          mut stains: ResMut<Assets<ExtendedMaterial<StandardMaterial, Stain>>>, hall: Res<crate::wet::Hall>) {
     let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
     let mut blood = Blood::new();
-    // Blood in the air, and beads of it on skin: a deep red that shines.
+    // Blood in the air: a deep red that shines.
     let air = materials.add(StandardMaterial {
         base_color: Color::linear_rgb(0.16, 0.007, 0.006),
         perceptual_roughness: 0.06,
@@ -1018,7 +997,6 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     };
     let drops = pool(Sphere::new(0.5).mesh().uv(8, 5), MOST, "drop");
     let ropes = pool(Cylinder::new(0.5, 1.0).mesh().resolution(7).build(), ROPES, "stream");
-    let beads = pool(Sphere::new(0.5).mesh().uv(10, 7), BEADS, "bead");
     let sheet = images.add(splash_sheet(&mut blood.rng));
     let material = stains.add(ExtendedMaterial {
         base: StandardMaterial {
@@ -1052,14 +1030,14 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::default(), NoFrustumCulling, NotShadowCaster, Name::new("blood marks")));
         chunks.push(mesh);
     }
-    commands.insert_resource(Drawn { drops, ropes, beads, shown: [0; 3], chunks });
+    commands.insert_resource(Drawn { drops, ropes, shown: [0; 2], chunks });
     commands.insert_resource(blood);
 }
 
 // What is in the air drawn: each drop long along its way (as far as it moves in a sixtieth of a second, as the eye sees
-// it), each stream as ropes between its points still joined, the beads on skin; and the marks that changed.
-fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&mut Transform, &mut Visibility)>, mut beads: Query<&mut GlobalTransform>,
-        mut meshes: ResMut<Assets<Mesh>>) {
+// it), each stream as ropes between its points still joined; and the marks that changed. (The beads running on skin are
+// runs.rs's.)
+fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&mut Transform, &mut Visibility)>, mut meshes: ResMut<Assets<Mesh>>) {
     let start = Instant::now();
     let b = &mut *blood;
     let d = &mut *drawn;
@@ -1108,21 +1086,6 @@ fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&
     }
     hide(&d.ropes, ropes, d.shown[1].max(ropes), &mut things);
     d.shown[1] = ropes;
-    // (A bead is a sphere squashed onto the skin and, hanging, sheared down: its own axes, written as its world
-    // transform; its Transform is never changed, so Bevy leaves that alone.)
-    let count = b.beads.len();
-    for (k, m) in b.beads.drain(..).enumerate() {
-        if let Ok(mut g) = beads.get_mut(d.beads[k]) {
-            *g = GlobalTransform::from(m);
-        }
-        if let Ok((_, mut v)) = things.get_mut(d.beads[k])
-            && *v != Visibility::Inherited
-        {
-            *v = Visibility::Inherited;
-        }
-    }
-    hide(&d.beads, count, d.shown[2].max(count), &mut things);
-    d.shown[2] = count;
     // The marks that changed: their whole mesh written again.
     for (c, changed) in b.changed.iter_mut().enumerate() {
         if !*changed {
@@ -1472,6 +1435,17 @@ fn blurred(a: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
     out
 }
 
+// What the runs on the skin let go (runs.rs): a drop falling from a chin, a fingertip, the low end of a run; and blood
+// that ran down to the floor, into the pool there.
+fn from_skin(mut blood: ResMut<Blood>, mut drips: MessageReader<crate::runs::Drip>, mut pooled: MessageReader<crate::runs::Pooled>) {
+    for d in drips.read() {
+        blood.drip(d.at, d.ml, across(d.ml));
+    }
+    for p in pooled.read() {
+        blood.to_floor.push((p.at, p.ml, false));
+    }
+}
+
 // K: the room cleared, its blood with it.
 fn clear(mut blood: ResMut<Blood>, mut floor: ResMut<Floor>) {
     blood.clear();
@@ -1490,7 +1464,7 @@ pub fn plugin(app: &mut App) {
     app.add_plugins(MaterialPlugin::<ExtendedMaterial<StandardMaterial, Stain>>::default())
         .add_systems(Startup, setup.after(crate::wet::make))
         .add_systems(First, take.before(crate::npc::forget))
-        .add_systems(Update, (update.in_set(Bleeding), clear.run_if(bevy::input::common_conditions::input_just_pressed(KeyCode::KeyK))))
+        .add_systems(Update, ((from_skin, update).chain().in_set(Bleeding), clear.run_if(bevy::input::common_conditions::input_just_pressed(KeyCode::KeyK))))
         .add_systems(PostUpdate, (shed, draw).chain().before(bevy::transform::TransformSystems::Propagate));
 }
 
