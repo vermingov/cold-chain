@@ -706,7 +706,7 @@ impl<'a> Npc<'a> {
 
     // Blood out of each wound, as much as is coming out of it this frame, to where it goes: an artery open to the air
     // throws it as a stream; anything else comes out into the clothes over the wound, or onto the skin, and runs.
-    // port: phase 3 blood. What goes where is worked out here; blood.rs, soak.rs and runs.rs take it from `happened`.
+    // What goes where is worked out here; blood.rs, soak.rs and runs.rs take it from `happened`.
     fn bleed(&mut self, dt: f32) {
         // Bleeding inside the body gets out through a wound in its wall only once enough has gathered in there to reach
         // the hole, and then the more the wound faces down: a small hole is held shut by the tissue round it, and blood

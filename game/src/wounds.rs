@@ -388,7 +388,7 @@ pub fn pierce(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> 
     let speed = ((2.0 * m.energy) / m.mass.max(1e-4)).sqrt();
     npc.hit(enter.point, dir * (m.mass * speed * share.sqrt()), if m.blade { 0.2 } else { 1.0 });
     // (No spatter from a blade: a stab or a cut throws nothing out of the wound; what flies comes off the blade, weapons.rs.)
-    // port: phase 3 blood (npc.spatter).
+    // (npc.spatter: thrown by blood.rs `take`.)
     if !m.slash && !m.blade {
         let range = if m.name.is_some() { f32::INFINITY } else { enter_t - MUZZLE };
         npc.hurt.happened.push(Happened::Spatter { enter: enter.clone(), dir, exit: exit_at, energy: m.energy, exited, range });

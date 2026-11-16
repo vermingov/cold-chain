@@ -12,12 +12,15 @@ mod anatomy;
 mod arm;
 mod arsenal;
 mod behaviour;
+mod blood;
 mod bones;
 mod bruise;
 mod dressing;
 mod fist;
 mod eyes;
 mod film;
+mod floor;
+mod fluid;
 mod graphics;
 mod hider;
 mod hands;
@@ -39,6 +42,7 @@ mod runs;
 mod sandbox;
 mod scenario;
 mod skin;
+mod soak;
 mod solids;
 mod sound;
 mod surfaces;
@@ -47,6 +51,7 @@ mod teeth;
 mod throat;
 mod vitals;
 mod weapons;
+mod wet;
 mod wounds;
 
 use std::path::PathBuf;
@@ -154,7 +159,9 @@ fn main() -> AppExit {
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
     // The look of hurt on the skin: wounds, blood on and running down it, bruising, holes in the clothes (phase 3,
     // port/skin).
-    .add_plugins((skin::plugin, runs::plugin));
+    .add_plugins((skin::plugin, runs::plugin))
+    // Blood out of the body: drops, streams, the floor's pools, the clothes' stains (phase 3, port/blood).
+    .add_plugins((fluid::plugin, wet::plugin, floor::plugin, soak::plugin, blood::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

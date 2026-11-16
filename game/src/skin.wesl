@@ -16,6 +16,7 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
 };
+import cold_chain::fluid::stained;
 
 // info: how this part is drawn (skin.rs SKIN, UNDER, CLOTH, CARRIED) and its first corner in the body.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> info: vec4<u32>;
@@ -27,6 +28,11 @@ import bevy_pbr::render::{
 // spread (m), how dry it is, and two phases for its uneven edge.
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> picture: vec4<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(106) var<uniform> stain: vec4<f32>;
+// The blood in the clothes (soak.rs): its field over the person at rest, the field's corner and one over its size.
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var soak_field: texture_3d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var soak_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var<uniform> soak_origin: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var<uniform> soak_scale: vec4<f32>;
 
 const SKIN: u32 = 0u;
 const UNDER: u32 = 1u;
@@ -865,6 +871,10 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
             scorched = max(scorched, (1.0 - smoothstep(wipe - 0.05, wipe, r)) * 1.14);
         }
         albedo = mix(albedo, vec3(0.02, 0.012, 0.01), min(1.0, scorched * 0.85));
+        // The blood in it (soak.rs, fluid.wesl `stained`), shining where it stands on the cloth.
+        let soaked = stained(albedo, rest, soak_field, soak_sampler, soak_origin.xyz, soak_scale.xyz);
+        albedo = soaked.rgb;
+        rough = 1.0 - mix(1.0 - rough, 0.6, soaked.a);
     }
 
     if mode == SKIN || mode == UNDER {

@@ -165,6 +165,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "sound" => s = crate::sound::scenario(),
         "arsenal-use" => s = crate::weapons::scenario(),
         "wounds" => s = wounds(),
+        "blood" => s = crate::blood::scenario(),
         // The look of hurt on the skin (port/skin): skin.rs.
         "skin" => s = crate::skin::scenario(),
         // Gunshot wounds, in and out, close up (port/wound): skin.rs.
