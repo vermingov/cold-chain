@@ -282,20 +282,21 @@ fn rehearse(app: &mut App) {
     });
     // A stab and a cut, a blow with the bat, a punch; a thing thrown, and the grenade.
     for (key, button, part, far) in [("knife", 0u8, "belly", 0.7), ("sword", 2, "forearmL", 0.7), ("bat", 0, "head", 0.7), ("fists", 2, "head", 0.5)] {
-        add(app, "blades and blows", 3, move |w| {
+        add(app, "blades and blows", 50, move |w| {
             take(w, key);
             aim(w, 3, part, far);
         });
         add(app, "blades and blows", 20, move |w| press(w, button));
         add(app, "blades and blows", 30, move |w| release(w, button));
     }
-    add(app, "things thrown", 3, |w| {
+    // (each given time to come up into the hand before it is thrown, as the guns are)
+    add(app, "things thrown", 50, |w| {
         take(w, "throw");
         aim(w, 1, "chest", 3.0);
     });
     add(app, "things thrown", 3, |w| press(w, 0));
     add(app, "things thrown", 60, |w| release(w, 0));
-    add(app, "the grenade", 3, |w| {
+    add(app, "the grenade", 50, |w| {
         take(w, "grenade");
         aim(w, 3, "chest", 6.0);
     });
@@ -400,6 +401,11 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
         s.push(Step::Wait(hold));
         s.push(Step::Do(Box::new(move |w: &mut World| release(w, button))));
         s.push(Step::Wait(40));
+        // (what each made, if anything)
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            let made = w.resource::<Pipelines>().made.load(Ordering::SeqCst) - w.resource::<Before>().0;
+            log(w, json!({ "event": "after", "what": key, "made_after_warm_up": made }));
+        })));
     };
     fight("pistol", 1, "chest", 2.5, 0, 2);
     fight("shotgun", 2, "belly", 2.0, 0, 2);
