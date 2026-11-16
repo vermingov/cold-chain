@@ -14,6 +14,8 @@ import bevy_pbr::render::{
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
 };
+// Blood over a surface (fluid.wesl, fluid.ts bloodOver): `mm` deep, `wet` 1 fresh, 0 dried.
+import cold_chain::fluid::blood_over;
 
 // (viscera.rs Wet: its two fields are one uniform.)
 struct Wet {
@@ -32,14 +34,6 @@ fn wet_noise(p: vec3<f32>) -> f32 {
     f = f * f * (3.0 - 2.0 * f);
     return mix(mix(mix(wet_hash(i), wet_hash(i + vec3(1.0, 0.0, 0.0)), f.x), mix(wet_hash(i + vec3(0.0, 1.0, 0.0)), wet_hash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
                mix(mix(wet_hash(i + vec3(0.0, 0.0, 1.0)), wet_hash(i + vec3(1.0, 0.0, 1.0)), f.x), mix(wet_hash(i + vec3(0.0, 1.0, 1.0)), wet_hash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y), f.z);
-}
-
-// Blood `mm` millimetres deep over a surface of colour `under` (fluid.ts bloodOver): `wet` 1 fresh, 0 dried.
-fn blood_over(under: vec3<f32>, mm: f32, wet: f32) -> vec3<f32> {
-    let mu = mix(vec3(3.6, 9.0, 10.5), vec3(3.0, 24.0, 28.0), wet);
-    let deep = mix(vec3(0.03, 0.01, 0.0065), vec3(0.075, 0.004, 0.0035), wet);
-    let through = exp(-mu * 2.0 * mm);
-    return under * through + deep * (1.0 - through);
 }
 
 // Each scale fades to its middle where a pixel covers more than half of one of its cells: finer than that it can only

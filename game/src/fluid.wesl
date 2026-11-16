@@ -3,10 +3,19 @@
 //
 // Linear: how much of each of red, green and blue a millimetre of it lets through (as an absorption, per mm), and the
 // colour of so much of it that nothing shows through. Fresh, it passes red and stops green and blue almost at once: a
-// smear is bright red over what is under it, a pool dark red. Dried, it is methaemoglobin and brown.
+// smear is red over what is under it, a pool dark red. Dried, it is methaemoglobin and brown.
+// Fresh blood's numbers are whole blood's (haemoglobin 150 g/l, three quarters saturated, as venous blood and a wound's
+// mix of venous and arterial are): its absorption from Prahl's tables of haemoglobin's extinction, its scattering from
+// Bosschaart et al. 2014 (Lasers Med Sci 29:453, whole blood's reduced scattering about 1.5/mm in red, 2/mm in green and
+// blue). Blood scatters as well as absorbs, so light is spent going into it as fast as diffusion theory says
+// (sqrt(3 mu_a (mu_a + mu_s')): about 2, 36 and 40 per mm in red, green and blue; red is kept at the TS's 3, a little
+// darker, for the arterial share's wider spread), and what comes back from a depth of it is its own diffuse reflectance
+// (exp(-8 sqrt(mu_a / 3(mu_a + mu_s'))), Jacques 1996): about 0.075 in red and 0.012 in green and blue. Green and blue
+// were 24, 28 and 0.004 in the TS: too little to stop a smear's thin edge from going orange, and so little light back
+// from a pool that it read as a pure, glowing red.
 fn blood_over(under: vec3<f32>, mm: f32, wet: f32) -> vec3<f32> {
-    let mu = mix(vec3(3.6, 9.0, 10.5), vec3(3.0, 24.0, 28.0), wet);
-    let deep = mix(vec3(0.03, 0.01, 0.0065), vec3(0.075, 0.004, 0.0035), wet);
+    let mu = mix(vec3(3.6, 9.0, 10.5), vec3(3.0, 36.0, 40.0), wet);
+    let deep = mix(vec3(0.03, 0.01, 0.0065), vec3(0.075, 0.012, 0.011), wet);
     let through = exp(-mu * 2.0 * mm);
     return under * through + deep * (1.0 - through);
 }

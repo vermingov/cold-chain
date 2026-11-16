@@ -158,7 +158,7 @@ impl Npc<'_> {
     // weapons.rs). The cut follows the skin from one place it crossed to the next, through places laid back on the skin
     // in between, so it runs round a face and does not cut across it. Each stretch of it is a `Happened::Slit` for
     // marks.rs to draw.
-    // port: phase 3 dismember and viscera (npc.ts's swung and slashed come first: port/cut's to call here).
+    // (npc.ts's swung and slashed came first: weapons.rs calls dismember::swung and viscera::slashed before this.)
     pub fn slash(&mut self, hits: &[Crossing], deep: f32, sweep: Option<Vec3>) {
         let skin: Vec<Crossing> = hits.iter().filter(|h| h.kind == Kind::Skin).cloned().collect();
         if skin.is_empty() {

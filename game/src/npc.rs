@@ -588,7 +588,7 @@ impl<'a> Npc<'a> {
 
     // A fresh wound in bare skin wells up: a little blood in and round it at once, more as it bleeds. (Under clothes
     // nothing shows yet: the cloth takes up the blood as it comes.)
-    // port: phase 3 blood (film.blot, runs.start).
+    // skin.rs draws it as npc.ts welling did: a blot of film (0.25 mm, 3 mm and more across) and a run of a third of it.
     pub fn welling(&mut self, hit: Option<&Crossing>, ml: f32) {
         let Some(hit) = hit else { return };
         if hit.cloth.is_some() {
