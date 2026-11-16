@@ -348,8 +348,11 @@ fn shot_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
 // up the hole (wounds.md 4.7: a small way in bleeds little outside); a way out, torn and bigger, fills sooner and higher.
 // What comes over the top runs off down the skin (runs.rs).
 fn blood_level(s: Shot, age: f32) -> f32 {
-    if s.kind == EXIT || s.kind == CHARGE {
-        return 3.0 - 2.2 * (1.0 - exp(-age / 15.0));
+    if s.kind == EXIT {
+        return 5.0 - 4.2 * (1.0 - exp(-age / 20.0));
+    }
+    if s.kind == CHARGE {
+        return 9.0 - 8.0 * (1.0 - exp(-age / 25.0));
     }
     return 6.0 - 5.5 * (1.0 - exp(-age / 30.0));
 }
@@ -486,7 +489,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     if s.kind == EXIT {
         open = max(s.a.w, s.a.y) * 1000.0;
     }
-    let ao = exp(-max(depth - 0.3, 0.0) / (open * 0.9 + 0.3));
+    let ao = exp(-max(depth - 0.3, 0.0) / (open * 0.55 + 0.25));
     var c = albedo;
     var tissue_rough = 0.32;
     var coat = 0.0;
@@ -501,14 +504,14 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         c *= mix(vec3(1.0), vec3(0.86, 0.66, 0.68), bruise);
         // The scraped ring, mottled; fresh it is moist and shines a little.
         let scraped = (1.0 - smoothstep(0.85, 1.05, ring)) * step(0.0, d);
-        let raw = mix(vec3(0.60, 0.27, 0.21), vec3(0.36, 0.16, 0.10), dried) * (0.85 + 0.3 * mix(0.5, noise2(q * 3.0 + s.seed), fine));
+        let raw = mix(vec3(0.50, 0.20, 0.15), vec3(0.33, 0.14, 0.09), dried) * (0.85 + 0.3 * mix(0.5, noise2(q * 3.0 + s.seed), fine));
         c = mix(c, to_linear(raw), scraped * 0.92);
         coat = max(coat, scraped * 0.35 * (1.0 - dried));
         tissue_rough = mix(0.4, 0.75, dried);
         // Down its wall: the skin's cut edge, then the fat, then muscle, darkening to nothing; blood over all of it.
         var wall = mix(dermis, fat, smoothstep(1.8, 2.6, h));
         wall = mix(wall, to_linear(muscle) * 2.2, smoothstep(5.0, 7.0, h));
-        wall = blood_over(to_linear(wall), 0.06 + 0.05 * smoothstep(0.5, 3.0, h), wet);
+        wall = blood_over(to_linear(wall), 0.1 + 0.15 * smoothstep(0.5, 3.0, h), wet);
         if s.kind == CHARGE {
             // The crater's floor: fat and muscle torn together.
             wall = blood_over(to_linear(mix(fat, muscle, smoothstep(0.35, 0.6, noise2(q * 0.5 + s.seed)))), 0.08, wet);
@@ -553,7 +556,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         // The skin's cut edge seen over the lip (the turned-out dermis, pale), then the fat bulging between, glistening and
         // filmed with blood, red muscle where it is torn deeper, and the track black-red.
         let edge = smoothstep(-0.1, 0.12, inside);
-        c = mix(c, to_linear(dermis) * 0.85, edge);
+        c = mix(c, blood_over(to_linear(dermis) * 0.8, 0.05, wet), edge);
         var deep = mix(fat, muscle, at.z);
         deep = blood_over(to_linear(deep), 0.025 + 0.06 * (1.0 - at.w) + 0.1 * at.z, wet);
         let thick = max(s.a.x * 1000.0, 1.5);

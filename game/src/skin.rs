@@ -1006,7 +1006,7 @@ fn photograph(at: &'static str) -> Step {
             steps.push_back(Step::Wait(3));
             // (the vitals of whoever is looked at come up again with each new face: put away again)
             steps.push_back(Step::Do(Box::new(|w: &mut World| {
-                let mut q = w.query_filtered::<&mut Visibility, With<Text>>();
+                let mut q = w.query_filtered::<&mut Visibility, Or<(With<Text>, (With<Node>, Without<ImageNode>, Without<ChildOf>))>>();
                 for mut v in q.iter_mut(w) {
                     *v = Visibility::Hidden;
                 }
@@ -1090,7 +1090,7 @@ fn undress(w: &mut World) {
             skin.window(Vec3::ZERO, Vec3::Y, 5.0, 5.0);
         }
     }
-    w.spawn((Lamp, PointLight { intensity: 3000.0, range: 6.0, shadow_maps_enabled: false, ..default() }, Transform::default()));
+    w.spawn((Lamp, PointLight { intensity: crate::map::CANDELA, range: 6.0, shadow_maps_enabled: false, ..default() }, Transform::default()));
 }
 
 fn shoot_them(w: &mut World) {
@@ -1127,7 +1127,8 @@ fn shoot_them(w: &mut World) {
                 said.push(format!("stopped {} energy {:.0}", p.stopped, p.energy));
             }
             views.push((format!("{name}_in"), who, first.clone()));
-            if let Some(out) = skins.get(1).filter(|c| c.t < first.t + 0.3) {
+            // (the way out: the last skin it crosses within 30 cm, not the inside of the mouth on its way)
+            if let Some(out) = skins.iter().rfind(|c| c.t < first.t + 0.3).filter(|c| c.t > first.t) {
                 views.push((format!("{name}_out"), who, out.clone()));
             }
             format!("{} scale {:.2} {}", weapon, first.scale, said.join(", "))
