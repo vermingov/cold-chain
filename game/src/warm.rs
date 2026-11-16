@@ -388,6 +388,9 @@ fn rehearse(app: &mut App) {
             crate::dismember::sever(w, who, crate::dismember::Limb::Head, "", None, None, crate::dismember::How::Blade);
         }
     });
+    // (the pieces cut off, wherever they fell, drawn once before the room is reset under them)
+    add(app, "the pieces", 3, show_all);
+    add(app, "the pieces", 2, hide_again);
     // A shotgun into a fresh belly from two metres, watched for four seconds: the bowel it lets out (viscera.rs's ropes,
     // their own mesh layout) comes out over seconds, after the steps above have looked away.
     add(app, "the bowel", 60, |w| {
