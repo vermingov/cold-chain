@@ -519,8 +519,20 @@ pub fn years_of(slider: f32) -> f32 {
     if slider < 0.5 { 1.0 + slider * 48.0 } else { 25.0 + (slider - 0.5) * 130.0 }
 }
 
+// A long bone's line in rest space (BonesOf::axis, for shards.rs too).
+pub fn long_axis(body: &crate::person::Body, name: &str) -> (Vec3, Vec3, f32, usize, usize) {
+    let b = spec(&key_of(name)).unwrap();
+    let side = letter(side_of(name));
+    let [first, next, _] = b.long.unwrap();
+    let near = body.by_name[&format!("{first}.{side}")];
+    let a = body.bones[near].head;
+    let z = body.bone(&format!("{next}.{side}")).head;
+    let d = z - a;
+    (a, d.normalize(), d.length(), near, body.by_name[&crate::ragdoll::mid_of(first, side)])
+}
+
 // Some direction square to unit `u`, toward `hint` if it can be.
-fn across(u: Vec3, hint: Vec3) -> Vec3 {
+pub fn across(u: Vec3, hint: Vec3) -> Vec3 {
     let mut d = hint - u * hint.dot(u);
     if d.length_squared() < 1e-6 {
         d = u.cross(if u.y.abs() < 0.9 { Vec3::Y } else { Vec3::X });
@@ -853,15 +865,7 @@ impl BonesOf<'_, '_> {
     // A long bone's line in rest space: from its first joint `a`, along unit `u`, `length` long; and the bones that carry
     // its near and far halves.
     fn axis(&self, name: &str) -> (Vec3, Vec3, f32, usize, usize) {
-        let b = spec(&key_of(name)).unwrap();
-        let side = letter(side_of(name));
-        let [first, next, _] = b.long.unwrap();
-        let body = self.0.body();
-        let near = body.by_name[&format!("{first}.{side}")];
-        let a = body.bones[near].head;
-        let z = body.bone(&format!("{next}.{side}")).head;
-        let d = z - a;
-        (a, d.normalize(), d.length(), near, body.by_name[&crate::ragdoll::mid_of(first, side)])
+        long_axis(self.0.body(), name)
     }
 
     // Where on bone `name` a world point `at` (and a direction `dir`) is, in the person's rest space; for a long bone also
@@ -1042,7 +1046,7 @@ impl BonesOf<'_, '_> {
         let k = self.0.hurt.bones.breaks.len() - 1;
         self.0.hurt_part(name);
         self.body(k);
-        // port: phase 3 shards (`_draw`: the break drawn in the x-ray, its pieces moved, its line dark on it).
+        // (`_draw`: the break drawn in the x-ray, its pieces moved, its line dark on it: shards.rs.)
         self.0.hurt.happened.push(Happened::Drawn { break_index: k, calibre });
         self.partner(k);
         let text = self.words(k);
@@ -1707,8 +1711,8 @@ impl BonesOf<'_, '_> {
             self.0.wound(&cloth, Way::Out, 0.04);
             skin.cloth = Some(Box::new(cloth));
         }
-        // port: phase 3 shards (the end's bone taken out of the x-ray and drawn moved by `turn` about `pivot`, then `shift`).
-        self.0.hurt.happened.push(Happened::Through { break_index: k });
+        // (The end's bone taken out of the x-ray and drawn moved by `turn` about `pivot`, then `shift`: shards.rs.)
+        self.0.hurt.happened.push(Happened::Through { break_index: k, pivot, turn, shift, piece });
         let b = self.b();
         b.breaks[k].wound = Some(skin.clone());
         b.breaks[k].out = Some(point);

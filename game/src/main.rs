@@ -15,9 +15,13 @@ mod behaviour;
 mod blood;
 mod bones;
 mod bruise;
+mod cut_scenario;
+mod cutface;
+mod dismember;
 mod dressing;
 mod fist;
 mod eyes;
+mod flesh;
 mod film;
 mod floor;
 mod fluid;
@@ -41,15 +45,19 @@ mod rng;
 mod runs;
 mod sandbox;
 mod scenario;
+mod shards;
 mod skin;
 mod soak;
 mod solids;
 mod sound;
 mod surfaces;
 mod thuds;
+mod tubes;
 mod teeth;
 mod throat;
 mod vitals;
+mod wall;
+mod viscera;
 mod weapons;
 mod wet;
 mod wounds;
@@ -157,6 +165,8 @@ fn main() -> AppExit {
     .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin))
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
+    // The body opened: broken bones drawn, limbs cut off, bellies opened (phase 3, port/cut).
+    .add_plugins((shards::plugin, dismember::plugin, viscera::plugin, wall::plugin, flesh::plugin))
     // The look of hurt on the skin: wounds, blood on and running down it, bruising, holes in the clothes (phase 3,
     // port/skin).
     .add_plugins((skin::plugin, runs::plugin))
