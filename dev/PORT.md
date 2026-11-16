@@ -405,6 +405,13 @@ the same in the TS game (people picked by body; its world.npcs order is not the 
 - The reflection is rendered once, when the hall is loaded, with whatever stands in it then left out (people are not on
   its layer), as the TS's REFRESHRATE_RENDER_ONCE.
 
+### Runs of the check
+The full run (0 to 120 s, every number below) was before the hands and the skin were merged: the femoral nick then
+nicked the artery as the TS's did. After both merged, the check aims the knife at the artery itself (the body settles a
+few millimetres differently from run to run, and the bone-relative point missed it once), which severs it: 1.16 L lost
+by 30 s against the nick's 0.57. That run reached 30 s (the machine's memory limit stopped it, shared with three other
+games): the soak drawn through skin.rs's material, the cough's blood on the chin by runs.rs, the stream's arc and the pool.
+
 ### Measured (2026-11-16, the check on lavapipe, a debug build with the game's crate at opt-level 1, four people bleeding)
 - Against the TS (tools/port-blood.mjs, same wounds): blood in the clothes at 2/10/30/120 s, old man 20/102/288/616 ml
   (TS 21/102/252/1022), young man 10/30/41/75 (TS 10/27/41/86), hooded man 0.5/2.3/5.9/14 (TS 0.5/2.3/6/14); blood lost
