@@ -1888,7 +1888,8 @@ fn sight(mut cx: Cx, camera: Query<(&Camera, &GlobalTransform), With<Player>>) {
 // A stiff spring on the point that was taken hold of, damped, as strong as two arms: given every physics step, from where
 // the point is by then. (Given once a frame for the whole frame, it all came in the first of the frame's steps and none in
 // the next: someone dragged by the hand had the arm yanked out and let spring back every step.)
-// port: needs body. A person's segment held goes through the same spring on that segment's rigid body.
+// (A person taken hold of is not held here: behaviour.rs `Grabbed` gives weapons.ts's same spring to the segment held,
+// every step.)
 fn pull(weapons: Res<Weapons>, time: Res<Time>, bodies: Query<(&Transform, &Velocity)>, mut commands: Commands) {
     let Some(g) = &weapons.grab else { return };
     let Some(target) = g.target else { return };

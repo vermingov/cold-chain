@@ -25,8 +25,8 @@
 // drives the bone's end out through the skin (an open fracture).
 //
 // What the ragdoll does about a break (ranges, the mid joint let go, a joint gone limp) is asked of it through
-// `Happened::Joint` and `Happened::Broke`: ragdoll.rs and behaviour.rs (phase 2) take them. Where the TS read the
-// ragdoll's state (a segment's speed, a joint's angles) the function the body calls is said below ("port: needs body").
+// `Happened::Joint` and `Happened::Broke`: behaviour.rs takes them. Where the TS read the ragdoll's state, behaviour.rs
+// calls in after each step (`fell`, `opens`) or leaves it on the person (`Hurt::segments`, `Hurt::bends`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -1394,7 +1394,7 @@ impl BonesOf<'_, '_> {
     // body lowers under its own control is not a fall (a foot set down in a step, a knee bent to sit): while a part's
     // muscles are working on it they take the first 3 m/s of its landing, and only what is left over counts. The hip, a
     // hand put out and the feet are counted whole, with their own tests.
-    // port: needs body. The ragdoll calls this after each step for each segment (the TS's `_falls`): `was` and `now` its
+    // behaviour.rs calls this after each step for each segment (the TS's `_falls`): `was` and `now` its
     // downward speed before and after the step (m/s, negative down), `low` how high its lowest point is and `under` the
     // floor's height under it, `held` whether its muscles are working on it; `pelvis_vy`, `chest_vy` those segments' speed
     // now, `pelvis_y` how high the pelvis is.
@@ -1529,10 +1529,8 @@ impl BonesOf<'_, '_> {
     }
 
     // A blow of `force` N along `dir` landing within a few centimetres of a joint: bent sideways, or straightened past its
-    // range, the joint takes it.
-    // port: needs body. The joint's hinge and its angles now are the ragdoll's: here the hinge is the segment table's
-    // (across the body, or across the limb and the way the body faces) turned with the parent as posed, and the angles are
-    // the pose's, which for a person standing as made is straight at every joint.
+    // range, the joint takes it. (The hinge, angles and range are the ragdoll's as they are now, `Hurt::bends`; before
+    // there is a ragdoll, the segment table's hinge turned with the parent as posed, and straight.)
     fn at_joint(&mut self, point: Vec3, dir: Vec3, force: f32) {
         let segs = self.0.person.segments.clone();
         for (k, seg) in segs.iter().enumerate() {
@@ -1541,14 +1539,17 @@ impl BonesOf<'_, '_> {
                 continue;
             }
             let (Some(j), Some(parent)) = (&seg.joint, seg.parent) else { continue };
-            let along = seg.end.normalize_or(Vec3::NEG_Y);
-            let rest_hinge = match j.hinge {
-                crate::ragdoll::Hinge::X => Vec3::X,
-                crate::ragdoll::Hinge::Elbow => along.cross(Vec3::NEG_Z).normalize_or(Vec3::X),
+            let (hinge, angle, lo, hi) = match self.0.hurt.bends.as_ref().map(|b| b[k]) {
+                Some(b) => (b.hinge, b.angles[0], b.lo[0], b.hi[0]),
+                None => {
+                    let along = seg.end.normalize_or(Vec3::NEG_Y);
+                    let rest_hinge = match j.hinge {
+                        crate::ragdoll::Hinge::X => Vec3::X,
+                        crate::ragdoll::Hinge::Elbow => along.cross(Vec3::NEG_Z).normalize_or(Vec3::X),
+                    };
+                    (self.0.segment_world(parent).rotation * rest_hinge, 0.0, j.bend.1 * RAD, j.bend.2 * RAD)
+                }
             };
-            let hinge = self.0.segment_world(parent).rotation * rest_hinge;
-            let angle = 0.0; // port: needs body (ragdoll.angles)
-            let (lo, hi) = (j.bend.1 * RAD, j.bend.2 * RAD);
             // Pushed along the hinge's axis it bends sideways; across it, it only bends the wrong way if it is already
             // straight.
             if dir.dot(hinge).abs() > 0.6 {
@@ -1656,7 +1657,7 @@ impl BonesOf<'_, '_> {
 
     // A broken shaft bent far enough at the break: the end of the near half comes out through the skin at the outside of
     // the bend, where the two halves make their point.
-    // port: needs body. The ragdoll calls this after each step with `bend(segment)`: how far (degrees) the mid joint of
+    // behaviour.rs calls this once a frame with `bend(segment)`: how far (degrees) the mid joint of
     // that segment is bent now, hinge and side together (the TS's hypot of its angles).
     pub fn opens(&mut self, bend: impl Fn(&str) -> f32) {
         if self.0.hurt.age < 1.5 {
