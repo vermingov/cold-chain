@@ -407,3 +407,15 @@ the same in the TS game (people picked by body; its world.npcs order is not the 
   carry it.
 - The reflection is rendered once, when the hall is loaded, with whatever stands in it then left out (people are not on
   its layer), as the TS's REFRESHRATE_RENDER_ONCE.
+
+### Measured (2026-11-16, the check on lavapipe, a debug build with the game's crate at opt-level 1, four people bleeding)
+- Against the TS (tools/port-blood.mjs, same wounds): blood in the clothes at 2/10/30/120 s, old man 20/102/288/616 ml
+  (TS 21/102/252/1022), young man 10/30/41/75 (TS 10/27/41/86), hooded man 0.5/2.3/5.9/14 (TS 0.5/2.3/6/14); blood lost
+  the same to the millilitre (medicine's). The old man's trousers hold less at 2 minutes and drip more onto the floor: the
+  TS worked out at most 1200 cubes a step and its great soakings spread and drained slower than its own numbers say.
+- CPU a frame: taking medicine's blood 0.02-0.03 ms, drops/streams/landing/lying 0.1-0.7 ms (most of it finding the
+  skin a drop met: npc.rs `nearest_rest`, at most 16 a frame), the clothes' bookkeeping under 0.01 ms, drawing 0.02-0.05 ms,
+  the floor's under 0.01 ms.
+- GPU (timestamp queries; lavapipe runs them on the CPU, so these are upper bounds, not a graphics card's): the floor's
+  passes 0.7-2.3 ms with 15-29 tiles awake; the clothes' 0.1-0.3 ms a frame with ops only, 28 ms in a frame whose step
+  wrote all four people's fields (700,000 invocations; since then only cloth blood has reached is written).
