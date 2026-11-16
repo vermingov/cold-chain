@@ -29,6 +29,7 @@ use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete, ReadbackOnce};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{storage_buffer_read_only_sized, storage_buffer_sized, texture_storage_2d, uniform_buffer_sized};
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue};
 use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
@@ -95,6 +96,8 @@ pub struct Floor {
     plane: Option<Entity>,
     area: Option<[f32; 4]>,
     index_changed: bool,
+    // What the frame's update cost the CPU (seconds).
+    pub cost: f32,
 }
 
 impl Floor {
@@ -137,6 +140,7 @@ impl Floor {
             plane: None,
             area: None,
             index_changed: false,
+            cost: 0.0,
         }
     }
 
@@ -350,6 +354,7 @@ fn make(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut buffers: 
 // Once a frame: the clock, a step when one is due (at most one a frame, as the TS's: a slow frame runs it slower), the
 // tiles blood ran up to woken, the depths asked for again, and the plane over what has blood on it.
 fn update(mut commands: Commands, time: Res<Time>, map: Res<Map>, mut floor: ResMut<Floor>, mut planes: Query<(&mut Transform, &mut Visibility)>) {
+    let start = std::time::Instant::now();
     let dt = time.delta_secs();
     let f = &mut *floor;
     f.clock += dt;
@@ -408,6 +413,7 @@ fn update(mut commands: Commands, time: Res<Time>, map: Res<Map>, mut floor: Res
             f.reading -= 1;
         });
     }
+    f.cost = start.elapsed().as_secs_f32();
 }
 
 // --- the render world --------------------------------------------------------------------------------------------
@@ -555,6 +561,8 @@ fn run(mut context: RenderContext, gpu: Res<Gpu>, sent: Res<Sent>, cache: Res<Pi
     else {
         return;
     };
+    let diagnostics = context.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
     let encoder = context.command_encoder();
     if s.clear
         && let Some((display, depth, ages, want)) = &gpu.handles
@@ -572,6 +580,7 @@ fn run(mut context: RenderContext, gpu: Res<Gpu>, sent: Res<Sent>, cache: Res<Pi
         return;
     }
     let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor { label: Some("floor blood"), ..default() });
+    let span = diagnostics.pass_span(&mut pass, "blood_floor");
     pass.set_bind_group(0, bind, &[]);
     if !s.ops.is_empty() {
         pass.set_pipeline(apply);
@@ -584,6 +593,7 @@ fn run(mut context: RenderContext, gpu: Res<Gpu>, sent: Res<Sent>, cache: Res<Pi
             pass.dispatch_workgroups(groups, 1, 1);
         }
     }
+    span.end(&mut pass);
 }
 
 pub fn plugin(app: &mut App) {

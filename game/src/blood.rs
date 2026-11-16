@@ -138,8 +138,9 @@ pub struct Blood {
     touched: f32,
     looks: i32,
     rng: Rng,
-    // What the frame cost on the CPU (seconds): taking medicine's blood, the drops and the rest.
-    pub cost: [f32; 2],
+    // What the frame cost on the CPU (seconds): taking medicine's blood, the drops and the rest, the clothes (soak.rs),
+    // drawing.
+    pub cost: [f32; 4],
 }
 
 impl Blood {
@@ -169,7 +170,7 @@ impl Blood {
             touched: 0.0,
             looks: LOOKS,
             rng: Rng::new(0x5eed_b100),
-            cost: [0.0; 2],
+            cost: [0.0; 4],
         }
     }
 
@@ -680,7 +681,7 @@ fn update(time: Res<Time>, frames: Res<bevy::diagnostic::FrameCount>, mut blood:
         crowd(b, &people);
     }
     b.looks = LOOKS;
-    for (at, ml, pour) in std::mem::take(&mut b.to_floor) {
+    for (at, ml, pour) in b.to_floor.drain(..) {
         if pour {
             floor.pour(at.x, at.z, ml, &map);
         } else {
@@ -1002,6 +1003,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 // it), each stream as ropes between its points still joined, the beads on skin; and the marks that changed.
 fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&mut Transform, &mut Visibility)>, mut beads: Query<&mut GlobalTransform>,
         mut meshes: ResMut<Assets<Mesh>>) {
+    let start = Instant::now();
     let b = &mut *blood;
     let d = &mut *drawn;
     let show = |list: &[Entity], k: usize, t: Transform, things: &mut Query<(&mut Transform, &mut Visibility)>| {
@@ -1119,6 +1121,7 @@ fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&
             [WET[0] + (DRY[0] - WET[0]) * t, WET[1] + (DRY[1] - WET[1]) * t, WET[2] + (DRY[2] - WET[2]) * t, 1.0]
         });
     }
+    b.cost[3] = start.elapsed().as_secs_f32();
 }
 
 // --- the splash sheet ------------------------------------------------------------------------------------------------
@@ -1422,6 +1425,10 @@ fn clear(mut blood: ResMut<Blood>, mut floor: ResMut<Floor>) {
 pub struct Bleeding;
 
 pub fn plugin(app: &mut App) {
+    // (The check measures what the floor and the clothes cost the GPU.)
+    if crate::scenario::Run::from_args().is_some_and(|r| r.name.starts_with("blood")) {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     bevy::asset::embedded_asset!(app, "stain.wesl");
     app.add_plugins(MaterialPlugin::<ExtendedMaterial<StandardMaterial, Stain>>::default())
         .add_systems(Startup, setup)
@@ -1458,6 +1465,7 @@ fn wound(w: &mut World, name: &str, i: usize, bone: &'static str, offset: [f32; 
         let bleeds: Vec<_> = npc.vitals.bleeds.iter().map(|b| json!({ "name": b.name, "rate": b.rate, "arterial": b.arterial, "spurts": b.spurts, "internal": b.internal })).collect();
         json!({ "target": target.to_array(), "bleeds": bleeds })
     });
+    info!("blood check: {name}: {res:?}");
     log(w, json!({ "event": "wound", "name": name, "result": res }));
 }
 
@@ -1476,7 +1484,33 @@ fn tally(w: &mut World, t: f32) {
             json!({ "body": p.body.name, "soaked_ml": s.total(), "lost_l": v.lost(), "flow_ml_s": flow * 1000.0 })
         })
         .collect();
-    log(w, json!({ "event": "blood", "t": t, "drops": drops, "streams": streams, "floor_tiles": tiles, "cpu_ms": [cost[0] * 1000.0, cost[1] * 1000.0], "people": people }));
+    let floor_ms = w.resource::<Floor>().cost * 1000.0;
+    // What the GPU took for the floor and the clothes, last frame (Bevy's render diagnostics: timestamp queries).
+    let store = w.resource::<bevy::diagnostic::DiagnosticsStore>();
+    let gpu: serde_json::Map<String, serde_json::Value> = store
+        .iter()
+        .filter(|d| d.path().as_str().contains("blood_"))
+        .filter_map(|d| d.smoothed().map(|v| (d.path().as_str().to_string(), json!(v))))
+        .collect();
+    info!("blood check at {t} s: {drops} drops, {streams} streams, {tiles} tiles; {people:?}");
+    log(w, json!({ "event": "blood", "t": t, "drops": drops, "streams": streams, "floor_tiles": tiles,
+                   "cpu_ms": { "take": cost[0] * 1000.0, "update": cost[1] * 1000.0, "soak": cost[2] * 1000.0, "draw": cost[3] * 1000.0, "floor": floor_ms },
+                   "gpu_ms": gpu, "people": people }));
+}
+
+// `frames` gone by, drawn small and plain (on a software renderer the drawing is most of a run), then the picture as
+// the player sees it again.
+fn wait(s: &mut Vec<Step>, frames: u32) {
+    let set = |preset, level| {
+        Step::Do(Box::new(move |w: &mut World| {
+            let mut g = w.resource_mut::<crate::graphics::Graphics>();
+            g.preset = preset;
+            g.level = level;
+        }))
+    };
+    s.push(set(2, 6.0));
+    s.push(Step::Wait(frames));
+    s.push(set(0, 1.0));
 }
 
 // The five cases at once, one person each (the fifth, a cough, comes of the third's chest wound): a knife nicking the
@@ -1484,6 +1518,14 @@ fn tally(w: &mut World, t: f32) {
 // knife into a belly; then each seen at 0, 2, 10, 30 and 120 seconds.
 pub fn scenario() -> Vec<Step> {
     let mut s = Vec::new();
+    // (The help off the picture: H in the game.)
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        let mut q = w.query::<(&Text, &ChildOf)>();
+        let help: Vec<Entity> = q.iter(w).filter(|(t, _)| t.0.starts_with("Left click")).map(|(_, c)| c.parent()).collect();
+        for e in help {
+            w.entity_mut(e).insert(Visibility::Hidden);
+        }
+    })));
     // The second person out cold and down on his back: a minute to settle.
     s.push(Step::Do(Box::new(|w: &mut World| {
         let who = person_at(w, 1);
@@ -1493,11 +1535,11 @@ pub fn scenario() -> Vec<Step> {
             let (mut rd, mut b) = q.get_mut(w, who).unwrap();
             let chest = rd.by_name("chest");
             let at = rd.middle(chest);
-            rd.push(chest, Vec3::new(0.0, 0.0, -40.0), at);
+            rd.push(chest, Vec3::new(0.0, 0.0, -60.0), at);
             b.knock_down(&mut rng);
         });
     })));
-    s.push(Step::Wait(60 * 5));
+    wait(&mut s, 60 * 5);
     s.push(Step::Do(Box::new(|w: &mut World| {
         let knife = crate::wounds::Missile { energy: 70.0, mass: 0.2, calibre: 0.02, channel: 0.006, soft: 1.4, hard: 40.0, reach: Some(0.17), blade: true, edges: Some(1),
                                              taper: Some(0.04), across: Some(Vec3::NEG_Y), ..default() };
@@ -1516,7 +1558,7 @@ pub fn scenario() -> Vec<Step> {
     for t in [0.0f32, 2.0, 10.0, 30.0, 120.0] {
         let frames = ((t - at) * 60.0).round() as u32;
         if frames > 0 {
-            s.push(Step::Wait(frames));
+            wait(&mut s, frames);
         }
         // (Each view waits six frames for the eye to settle: the five are half a second apart.)
         at = t + 0.5;

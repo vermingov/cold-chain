@@ -29,6 +29,7 @@ use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete, ReadbackOnce};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::binding_types::{storage_buffer_read_only_sized, storage_buffer_sized, texture_storage_3d, uniform_buffer_sized};
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue};
 use bevy::render::storage::{GpuShaderBuffer, ShaderBuffer};
@@ -422,6 +423,7 @@ pub fn bone_worlds(person: &Person, root: &Transform, out: &mut Vec<Affine3A>) {
 // lies now), what has gathered at a hem let fall, and how full the cloth is asked for again.
 fn update(mut commands: Commands, time: Res<Time>, mut people: Query<(Entity, &Person, &Transform, &mut Soak)>, mut blood: ResMut<crate::blood::Blood>,
           mut worlds: Local<Vec<Affine3A>>) {
+    let start = std::time::Instant::now();
     let dt = time.delta_secs();
     for (who, person, root, mut soak) in &mut people {
         let soak = &mut *soak;
@@ -471,6 +473,7 @@ fn update(mut commands: Commands, time: Res<Time>, mut people: Query<(Entity, &P
             });
         }
     }
+    blood.cost[2] = start.elapsed().as_secs_f32();
 }
 
 // --- the render world --------------------------------------------------------------------------------------------
@@ -638,7 +641,10 @@ fn run(mut context: RenderContext, soaks: Res<Soaks>, pipelines: Res<Pipelines>,
     if !soaks.people.values().any(|g| busy(&g)) {
         return;
     }
+    let diagnostics = context.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
     let mut pass = context.command_encoder().begin_compute_pass(&ComputePassDescriptor { label: Some("soak"), ..default() });
+    let span = diagnostics.pass_span(&mut pass, "blood_soak");
     for g in soaks.people.values().filter(busy) {
         let s = &g.sent;
         pass.set_bind_group(0, g.bind.as_ref().unwrap(), &[]);
@@ -653,6 +659,7 @@ fn run(mut context: RenderContext, soaks: Res<Soaks>, pipelines: Res<Pipelines>,
             pass.dispatch_workgroups(g.pair_count.div_ceil(256), 1, 1);
         }
     }
+    span.end(&mut pass);
 }
 
 pub fn plugin(app: &mut App) {
