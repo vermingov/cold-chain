@@ -59,7 +59,7 @@ pub struct Insides {
     pub parts: Vec<Part>,
     pub tubes: Vec<Tube>,
     pub position: Vec<Vec3>,
-    pub normal: Vec<Vec3>,
+    pub normal: std::sync::Arc<Vec<Vec3>>,
     pub index: Vec<u32>,
 }
 
@@ -83,7 +83,7 @@ pub fn read(path: &str) -> Insides {
             points: t.path.iter().zip(t.bones).map(|(p, b)| (crate::babylon(p[0], p[1], p[2]), p[3], b)).collect(),
         }).collect(),
         position: vec3s(get("position")),
-        normal: vec3s(get("normal")),
+        normal: std::sync::Arc::new(vec3s(get("normal"))),
         index,
     }
 }
@@ -470,7 +470,7 @@ fn see(
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Anatomy>().init_resource::<Seeing>().add_systems(Update, (toggle, see).chain())
-        .add_systems(PostUpdate, regroup);
+        .add_systems(PostUpdate, crate::profiler::timed("x-ray regrouped", regroup));
 }
 
 // --- what a line through them meets ---------------------------------------------------------------------------------

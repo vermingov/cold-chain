@@ -1197,8 +1197,8 @@ fn clear(mut rds: Query<&mut Ragdoll, With<Dismember>>, mut groups: Query<&mut C
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(PostUpdate, (taken_system, place_pieces.before(crate::person::pose_people)).chain().before(crate::shards::redraw))
-        .add_systems(Update, (shaped, painted).chain())
+    app.add_systems(PostUpdate, (crate::profiler::timed("limbs cut off", taken_system), place_pieces.before(crate::person::pose_people)).chain().before(crate::shards::redraw))
+        .add_systems(Update, (crate::profiler::timed("cut meshes put in", shaped), crate::profiler::timed("cut faces put in", painted)).chain())
         .add_systems(FixedUpdate, clear.after(crate::ragdoll::Steps::Read));
 }
 

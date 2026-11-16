@@ -9,9 +9,11 @@
 // drawn again here, each small one with the half of the bone it is now part of.
 //
 // bones.rs hands each break over as `Happened::Drawn` and each end out through the skin as `Happened::Through`. A
-// person's breaks are drawn again together, once a frame at most, into three meshes made once and filled in place: the
-// bone in the x-ray, any of it out through the skin, and the lines. (The TS made two to four meshes a break and sent
-// them to the card as each came: a shotgun's blast breaks a bone a pellet.)
+// person's breaks are drawn again together into three meshes made once and filled in place: the bone in the x-ray, any
+// of it out through the skin, and the lines. (The TS made two to four meshes a break and sent them to the card as each
+// came: a shotgun's blast breaks a bone a pellet.) The drawing is done on another thread (a break cut small came to 2
+// to 4 ms of the frame, a grenade's dozen breaks to 34 ms), one person's at a time, and put in when it is done, a frame
+// or two later; what is handed over meanwhile waits for the next.
 
 use std::sync::Arc;
 
@@ -69,20 +71,55 @@ struct Drawn {
     lines: Vec<(Cut, Near)>,
 }
 
-// A person's breaks as drawn, and the three meshes they are drawn in.
+// A person's breaks as drawn, and the three meshes they are drawn in; what is waiting to be drawn, and the drawing being
+// done (which has the breaks and moves while it is).
 #[derive(Component, Default)]
 pub struct Shards {
     breaks: Vec<Option<Drawn>>,
     moves: Vec<Move>,
-    stale: bool,
     meshes: [Option<(Entity, Handle<Mesh>)>; 3],
+    waiting: Vec<(Happened, Break)>,
+    drawing: Option<bevy::tasks::Task<Done>>,
+}
+
+// A drawing done: the breaks and moves back, the x-ray's triangles to hide (offsets into the index, and the file's
+// part), and the three meshes (the bone out through the skin's only if there is any, or was).
+struct Done {
+    breaks: Vec<Option<Drawn>>,
+    moves: Vec<Move>,
+    hides: Vec<(Vec<u32>, usize)>,
+    meshes: [Option<Mesh>; 3],
+}
+
+// The x-ray's triangles as a drawing sees them: a copy of which are drawn, and those it has taken out since, to be taken
+// out of the person's own when it is put in.
+// (As Xray's own: None until anything is taken out.)
+struct Hidden {
+    drawn: Option<Vec<u32>>,
+    hides: Vec<(Vec<u32>, usize)>,
+}
+
+impl Hidden {
+    fn shows(&self, i: usize) -> bool {
+        self.drawn.as_ref().is_none_or(|d| d[i] != d[i + 1])
+    }
+
+    fn hide(&mut self, index: &[u32], tris: Vec<u32>, part: usize) {
+        let drawn = self.drawn.get_or_insert_with(|| index.to_vec());
+        for &i in &tris {
+            let i = i as usize;
+            drawn[i + 1] = drawn[i];
+            drawn[i + 2] = drawn[i];
+        }
+        self.hides.push((tris, part));
+    }
 }
 
 // Bone `name`'s triangles that `take` takes in (any corner or the middle) or that `cut` crosses, taken out of the
 // x-ray for whoever asked to draw. Those that `label` puts on more than one side of something (a break, the edge of a
 // piece) are cut down small; one left whole that `stays` keeps is left in the x-ray as it was, which is most.
 #[allow(clippy::too_many_arguments)]
-pub fn region(traced: &Traced, normal: &[Vec3], xray: &mut Xray, name: &str, take: &dyn Fn(Vec3) -> bool, cut: Option<&Cut>,
+fn region(traced: &Traced, normal: &[Vec3], xray: &mut Hidden, name: &str, take: &dyn Fn(Vec3) -> bool, cut: Option<&Cut>,
               label: &dyn Fn(Vec3) -> u64, stays: &dyn Fn(&Tri) -> bool) -> Vec<Tri> {
     let (position, index) = (&traced.position, &traced.index);
     let mut out = Vec::new();
@@ -116,7 +153,7 @@ pub fn region(traced: &Traced, normal: &[Vec3], xray: &mut Xray, name: &str, tak
             }
         }
         if !taken.is_empty() {
-            xray.hide(index, &taken, part.source);
+            xray.hide(index, taken, part.source);
         }
     }
     out
@@ -346,7 +383,7 @@ fn look(br: &Break, body: &crate::person::Body, calibre: f32) -> Look {
 
 // The break drawn: the bone round it taken out of the x-ray and drawn again as it now is, each piece with the half of the
 // bone it went with, the loose ones moved, and the line it broke along dark on it.
-fn draw(shards: &mut Shards, br: &Break, body: &crate::person::Body, traced: &Traced, normal: &[Vec3], xray: &mut Xray, calibre: f32) -> Drawn {
+fn draw(moves: &mut Vec<Move>, br: &Break, body: &crate::person::Body, traced: &Traced, normal: &[Vec3], xray: &mut Hidden, calibre: f32) -> Drawn {
     let lk = look(br, body, calibre);
     let ax = spec(&br.key).unwrap().long.map(|_| long_axis(body, &br.part));
     // What a point of the bone is on the near or far side of: the break, each line (two bits each), which piece.
@@ -385,9 +422,9 @@ fn draw(shards: &mut Shards, br: &Break, body: &crate::person::Body, traced: &Tr
         for (id, group) in groups {
             let centre = group.iter().map(|&k| tris[k].centre).sum::<Vec3>() / group.len() as f32;
             let (shift, turn) = mover(id, centre);
-            shards.moves.push(Move { about: centre, turn, shift });
+            moves.push(Move { about: centre, turn, shift });
             for k in group {
-                tris[k].moved = Some(shards.moves.len() - 1);
+                tris[k].moved = Some(moves.len() - 1);
             }
         }
     }
@@ -397,11 +434,8 @@ fn draw(shards: &mut Shards, br: &Break, body: &crate::person::Body, traced: &Tr
 }
 
 // Triangles as one mesh skinned as the x-ray is (each wholly to its triangle's bone), each put where its move sends it
-// and lifted `lift` m along its normal, with a colour a corner if `colour` is given; into `slot`'s mesh, made the first
-// time, filled in place after.
-#[allow(clippy::too_many_arguments)]
-fn sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, slot: &mut Option<(Entity, Handle<Mesh>)>, tris: &[&Tri], moves: &[Move], lift: f32,
-         colour: Option<&dyn Fn(Vec3, usize) -> [f32; 4]>, material: Handle<StandardMaterial>, skin: &SkinnedMesh, parent: Entity) {
+// and lifted `lift` m along its normal, with a colour a corner if `colour` is given.
+fn sheet(tris: &[&Tri], moves: &[Move], lift: f32, colour: Option<&dyn Fn(Vec3, usize) -> [f32; 4]>) -> Mesh {
     let n = tris.len() * 3;
     let (mut pos, mut nor, mut joints, mut colours) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::new());
     for (k, t) in tris.iter().enumerate() {
@@ -428,6 +462,13 @@ fn sheet(commands: &mut Commands, meshes: &mut Assets<Mesh>, slot: &mut Option<(
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, if empty { vec![[0.0; 4]; 3] } else { colours });
     }
     mesh.generate_skinned_mesh_bounds().ok();
+    mesh
+}
+
+// `mesh` into `slot`'s: made the first time, filled in place after.
+#[allow(clippy::too_many_arguments)]
+fn place(commands: &mut Commands, meshes: &mut Assets<Mesh>, slot: &mut Option<(Entity, Handle<Mesh>)>, mesh: Mesh, material: Handle<StandardMaterial>,
+         skin: &SkinnedMesh, parent: Entity) {
     match slot {
         // (The same asset filled again: the entity, its material and its pipeline stay as they were.)
         Some((_, h)) => {
@@ -471,7 +512,8 @@ fn looks(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
     });
 }
 
-// Every person's new breaks drawn, and their meshes made again once (`_drawAll`).
+// Every person's new breaks handed to be drawn, and their meshes made again once (`_drawAll`), on another thread: a
+// drawing done put in, and the next started with what has waited for it.
 #[allow(clippy::type_complexity)]
 pub fn redraw(
     mut commands: Commands,
@@ -484,8 +526,14 @@ pub fn redraw(
     parents: Query<&ChildOf>,
 ) {
     for (e, person, hurt, shards) in &mut people {
-        let asked: Vec<&Happened> = hurt.happened.iter().filter(|h| matches!(h, Happened::Drawn { .. } | Happened::Through { .. })).collect();
-        if asked.is_empty() && !shards.as_ref().is_some_and(|s| s.stale) {
+        let asked = hurt.happened.iter().filter(|h| matches!(h, Happened::Drawn { .. } | Happened::Through { .. }));
+        let asked: Vec<(Happened, Break)> = asked
+            .filter_map(|h| match *h {
+                Happened::Drawn { break_index, .. } | Happened::Through { break_index, .. } => Some((h.clone(), hurt.bones.breaks[break_index].clone())),
+                _ => None,
+            })
+            .collect();
+        if asked.is_empty() && shards.as_ref().is_none_or(|s| s.drawing.is_none() && s.waiting.is_empty()) {
             continue;
         }
         let Ok(mut xray) = xrays.get_mut(person.insides) else { continue };
@@ -495,21 +543,61 @@ pub fn redraw(
             Some(s) => s.into_inner(),
             None => &mut own,
         };
-        let traced = hurt.traced.clone();
-        let normal = &anatomy.bodies[&person.body.name].normal;
-        let body = &person.body;
-        for h in asked {
+        sh.waiting.extend(asked);
+        if let Some(task) = sh.drawing.as_mut() {
+            let Some(done) = bevy::tasks::futures::check_ready(task) else { continue };
+            sh.drawing = None;
+            let traced = hurt.traced.clone();
+            for (tris, part) in &done.hides {
+                xray.hide(&traced.index, tris, *part);
+            }
+            (sh.breaks, sh.moves) = (done.breaks, done.moves);
+            let bone = anatomy.look_of("bone", true, &mut materials);
+            let space = parents.get(person.insides).map(|c| c.parent()).unwrap_or(e);
+            let skin = xray.skin.clone();
+            let [kept, bare, lines] = done.meshes;
+            if let Some(m) = kept {
+                place(&mut commands, &mut meshes, &mut sh.meshes[0], m, bone, &skin, person.insides);
+            }
+            if let Some(m) = bare {
+                place(&mut commands, &mut meshes, &mut sh.meshes[1], m, looks.bare.clone(), &skin, space);
+            }
+            if let Some(m) = lines {
+                place(&mut commands, &mut meshes, &mut sh.meshes[2], m, looks.line.clone(), &skin, person.insides);
+            }
+        }
+        if !sh.waiting.is_empty() {
+            start(sh, person, hurt, &anatomy, &xray);
+        }
+        if fresh {
+            commands.entity(e).insert(own);
+        }
+    }
+}
+
+// A drawing of what has waited, on another thread, from the person's breaks as they are and a copy of the x-ray's
+// triangles.
+fn start(sh: &mut Shards, person: &Person, hurt: &Hurt, anatomy: &Anatomy, xray: &Xray) {
+    let traced = hurt.traced.clone();
+    let normal = anatomy.bodies[&person.body.name].normal.clone();
+    let body = person.body.clone();
+    let asked = std::mem::take(&mut sh.waiting);
+    let (mut breaks, mut moves) = (std::mem::take(&mut sh.breaks), std::mem::take(&mut sh.moves));
+    let bare_before = sh.meshes[1].is_some();
+    let mut xray = Hidden { drawn: xray.drawn.clone(), hides: Vec::new() };
+    sh.drawing = Some(bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+        let body = &*body;
+        for (h, br) in &asked {
             match *h {
                 Happened::Drawn { break_index, calibre } => {
-                    let d = draw(sh, &hurt.bones.breaks[break_index], body, &traced, normal, &mut xray, calibre);
-                    if sh.breaks.len() <= break_index {
-                        sh.breaks.resize_with(break_index + 1, || None);
+                    let d = draw(&mut moves, br, body, &traced, &normal, &mut xray, calibre);
+                    if breaks.len() <= break_index {
+                        breaks.resize_with(break_index + 1, || None);
                     }
-                    sh.breaks[break_index] = Some(d);
+                    breaks[break_index] = Some(d);
                 }
                 Happened::Through { break_index, pivot, turn, shift, piece } => {
-                    let br = &hurt.bones.breaks[break_index];
-                    let Some(Some(d)) = sh.breaks.get_mut(break_index) else { continue };
+                    let Some(Some(d)) = breaks.get_mut(break_index) else { continue };
                     let near = long_axis(body, &br.part).3;
                     let cut = d.cut.clone();
                     let out = move |p: Vec3| {
@@ -517,10 +605,10 @@ pub fn redraw(
                         k <= 0.0 && k > -piece
                     };
                     // (The end's bone still in the x-ray as it was, taken out to come with it.)
-                    let more = region(&traced, normal, &mut xray, &br.part, &out, None, &|_| 0, &|_| false);
+                    let more = region(&traced, &normal, &mut xray, &br.part, &out, None, &|_| 0, &|_| false);
                     d.tris.extend(more.into_iter().map(|t| Tri { owner: near, ..t }));
-                    sh.moves.push(Move { about: pivot, turn, shift });
-                    let k = sh.moves.len() - 1;
+                    moves.push(Move { about: pivot, turn, shift });
+                    let k = moves.len() - 1;
                     for t in &mut d.tris {
                         if out(t.centre) {
                             t.moved = Some(k);
@@ -531,11 +619,10 @@ pub fn redraw(
                 _ => {}
             }
         }
-        sh.stale = false;
         // All of this person's breaks, three meshes for all of them.
         let (mut kept, mut bare, mut lines) = (Vec::new(), Vec::new(), Vec::new());
         let mut red: Vec<Cut> = Vec::new();
-        for d in sh.breaks.iter().flatten() {
+        for d in breaks.iter().flatten() {
             for t in &d.tris {
                 if !t.bare {
                     kept.push(t);
@@ -548,26 +635,20 @@ pub fn redraw(
                 lines.extend(d.tris.iter().filter(|t| t.moved.is_none() && near(t.centre) && crosses(t, cut)));
             }
         }
-        let bone = anatomy.look_of("bone", true, &mut materials);
-        let space = parents.get(person.insides).map(|c| c.parent()).unwrap_or(e);
-        let skin = xray.skin.clone();
-        let moves = sh.moves.clone();
-        sheet(&mut commands, &mut meshes, &mut sh.meshes[0], &kept, &moves, 0.0, None, bone, &skin, person.insides);
         let colour = |p: Vec3, k: usize| {
             let r = (1.0 + red[k](p) / 0.015).clamp(0.0, 1.0);
             // (Bone under a film of blood, going to raw red marrow and clot at the break: sRGB's numbers, as linear.)
             [0.72 - 0.4 * r, 0.6 - 0.56 * r, 0.5 - 0.47 * r, 1.0]
         };
-        if !bare.is_empty() || sh.meshes[1].is_some() {
-            sheet(&mut commands, &mut meshes, &mut sh.meshes[1], &bare, &moves, 0.0, Some(&colour), looks.bare.clone(), &skin, space);
-        }
-        sheet(&mut commands, &mut meshes, &mut sh.meshes[2], &lines, &moves, 0.0007, None, looks.line.clone(), &skin, person.insides);
-        if fresh {
-            commands.entity(e).insert(own);
-        }
-    }
+        let meshes = [
+            Some(sheet(&kept, &moves, 0.0, None)),
+            (!bare.is_empty() || bare_before).then(|| sheet(&bare, &moves, 0.0, Some(&colour))),
+            Some(sheet(&lines, &moves, 0.0007, None)),
+        ];
+        Done { breaks, moves, hides: xray.hides, meshes }
+    }));
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, looks).add_systems(PostUpdate, redraw.before(crate::anatomy::regroup));
+    app.add_systems(Startup, looks).add_systems(PostUpdate, crate::profiler::timed("broken bones drawn", redraw).before(crate::anatomy::regroup));
 }
