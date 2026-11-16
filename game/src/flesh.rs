@@ -265,30 +265,35 @@ impl Flesh {
         part_mesh(body, i, tris, &self.joints, &self.weights, &cuts)
     }
 
-    // Each part changed made again: into its own mesh, made the first time, filled in place after.
+    // Each part changed made again.
     pub fn rebuild(&mut self, body: &Body, meshes: &mut Assets<Mesh>, handles: &mut Query<&mut Mesh3d>) {
         for i in 0..self.stale.len() {
-            if !std::mem::take(&mut self.stale[i]) {
+            if std::mem::take(&mut self.stale[i]) {
+                let mesh = self.part(body, i);
+                self.show(i, mesh, meshes, handles);
+            }
+        }
+    }
+
+    // Part `i` drawn as `mesh` (made by `part`, here or on another thread) by each entity drawing it: into its own mesh,
+    // made the first time, filled in place after.
+    pub fn show(&mut self, i: usize, mesh: Mesh, meshes: &mut Assets<Mesh>, handles: &mut Query<&mut Mesh3d>) {
+        for k in 0..self.own.len() {
+            if self.own[k].0 != i {
                 continue;
             }
-            for k in 0..self.own.len() {
-                if self.own[k].0 != i {
-                    continue;
+            match &self.own[k].2 {
+                Some(h) => {
+                    if let Some(mut m) = meshes.get_mut(h.id()) {
+                        *m = mesh.clone();
+                    }
                 }
-                let mesh = self.part(body, i);
-                match &self.own[k].2 {
-                    Some(h) => {
-                        if let Some(mut m) = meshes.get_mut(h.id()) {
-                            *m = mesh;
-                        }
+                None => {
+                    let h = meshes.add(mesh.clone());
+                    if let Ok(mut m) = handles.get_mut(self.own[k].1) {
+                        m.0 = h.clone();
                     }
-                    None => {
-                        let h = meshes.add(mesh);
-                        if let Ok(mut m) = handles.get_mut(self.own[k].1) {
-                            m.0 = h.clone();
-                        }
-                        self.own[k].2 = Some(h);
-                    }
+                    self.own[k].2 = Some(h);
                 }
             }
         }
