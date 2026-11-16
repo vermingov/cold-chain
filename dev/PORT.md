@@ -580,3 +580,14 @@ shared machine (150 to 540 ms a frame either way). The skin's fragment shader ad
 painted, five more for each of the wound and film sheets where something is, and loops over the person's holes (up to
 64), windows (64) and blow records (16) while they have any; the vertex shader three table reads a corner. CPU: the
 runs step 30 times a second (a few triangle tests a run), the bruise rows copied where they changed.
+
+Gunshot wounds (port/wound, `SKIN_TIMES=1`, each 7 cm close-up held 120 frames, against `GUNSHOT_BLANK=1`, the same
+views unhurt; lavapipe, a loaded 4-core machine): the main pass 150-290 ms a frame unhurt, 5 to 90 ms (3-40%) more with
+the wound filling much of the picture, the most for a close shot's powder pattern and the big exits (much of that is the
+film's blood runs, which only the wounded run has). Where a wound is not, a skin fragment pays one comparison (the
+wound sheet's alpha, already read). In a wound's patch: one exact texel read, six table reads a record (up to three
+overlapping), then where anything is opened the march (48 steps and 7 halvings, each a few value-noise lookups a
+record), five more for the slope and one for the colour; skin it never opened (the bruise, the powder) three probes and
+no march. So the cost goes with the wound's area on screen: nothing at a few metres (a few pixels), the most in a
+close-up. CPU: a record is six texels written once (twice for a way in, when its aim comes), and the row's clock four
+times a second; the stamp that numbers its patch is one capsule.
