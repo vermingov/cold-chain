@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bevy::ecs::system::RunSystemOnce;
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 use bevy::render::render_resource::PipelineCache;
 use bevy::render::{Render, RenderApp, RenderSystems};
@@ -65,6 +66,10 @@ pub fn ready(world: &World) -> bool {
 
 #[derive(Component)]
 struct Screen;
+
+// Drawn whether in view or not, for the warm-up only.
+#[derive(Component)]
+struct Unculled;
 
 // A frame of the warm-up, with the world in hand.
 fn drive(world: &mut World) {
@@ -222,7 +227,20 @@ pub fn release(w: &mut World, button: u8) {
 }
 
 fn rehearse(app: &mut App) {
-    add(app, "the hall", 2, |_| {});
+    // Everything in the hall drawn at once, whether in view or not (a pipeline is made for what is drawn in view: a prop
+    // first seen from the far side of the hall would be made then), and then culled again.
+    add(app, "the hall", 3, |w| {
+        let all: Vec<Entity> = w.query_filtered::<Entity, (With<Mesh3d>, Without<NoFrustumCulling>)>().iter(w).collect();
+        for e in all {
+            w.entity_mut(e).insert((NoFrustumCulling, Unculled));
+        }
+    });
+    add(app, "the hall", 2, |w| {
+        let all: Vec<Entity> = w.query_filtered::<Entity, With<Unculled>>().iter(w).collect();
+        for e in all {
+            w.entity_mut(e).remove::<(NoFrustumCulling, Unculled)>();
+        }
+    });
     // Everything that can be held, in the hand (each its own models and materials, drawn over the room: held.wesl).
     for a in crate::weapons::ARMS.iter().filter(|a| !a.key.is_empty()) {
         let key = a.key;
