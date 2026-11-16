@@ -584,6 +584,7 @@ impl Behaviour {
         }
         self.strengthen(dt);
         let v = &self.felt;
+        rd.set_flaccid(v.paralysed_arms, v.paralysed_legs);
         rd.set_tone(if v.dead || !v.beating { ragdoll::DEAD } else if self.will < 0.05 { ragdoll::OUT } else { ragdoll::ALIVE });
 
         self.com = rd.com();

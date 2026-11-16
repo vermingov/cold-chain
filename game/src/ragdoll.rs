@@ -590,6 +590,8 @@ pub struct Ragdoll {
     pub mass: f32,
     pub tone: f32,
     toned: bool,
+    // The arms', the legs' muscles cut off from the cord (paralysed): flaccid, whatever the tone of the rest.
+    flaccid: [bool; 2],
     // Off their feet: every muscle the behaviour's, nothing standing.
     pub limp: bool,
     // The bones between one segment's bone and the next that drive() leaves straight.
@@ -720,7 +722,8 @@ impl Ragdoll {
         let between = (0..body.bones.len())
             .filter(|i| !lead.contains(i) && !NOT.iter().any(|n| body.bones[*i].name.contains(n)))
             .collect();
-        let mut rd = Ragdoll { segs, attached: (0..defs.len()).collect(), mass: defs.iter().map(|d| d.mass).sum(), tone: ALIVE, toned: false, limp: false, between, apart: Vec::new(), age: 0.0, pieces: Vec::new() };
+        let mut rd = Ragdoll { segs, attached: (0..defs.len()).collect(), mass: defs.iter().map(|d| d.mass).sum(), tone: ALIVE, toned: false,
+            flaccid: [false; 2], limp: false, between, apart: Vec::new(), age: 0.0, pieces: Vec::new() };
         for k in 0..defs.len() {
             if defs[k].joint.is_some() {
                 rd.join(commands, person, k);
@@ -1078,10 +1081,22 @@ impl Ragdoll {
             }
             // (A broken shaft's mid joint keeps its grating, break_at's: given the tone, a broken shin was held at the
             // break by 4.5 N m while awake and let go when they passed out.)
-            let t = if self.cut_off(k) { DEAD } else { self.tone };
+            // (A limb paralysed by the cord is flaccid, as below a fresh cord injury (spinal shock): no tone to hold it as it
+            // lies. With the living tone in them, legs dragged in a crawl or folded by a roll stayed folded under the hips.)
+            let name = &self.segs[k].def.name;
+            let limb = if ["upperarm", "forearm", "hand"].iter().any(|n| name.starts_with(n)) { Some(0) } else if ["thigh", "shin", "foot"].iter().any(|n| name.starts_with(n)) { Some(1) } else { None };
+            let t = if self.cut_off(k) || limb.is_some_and(|l| self.flaccid[l]) { DEAD } else { self.tone };
             let s = &mut self.segs[k];
             s.grip = if lock { GRATE * s.def.mass } else { t * s.def.mass / 6.0 };
             s.grip_dirty = true;
+        }
+    }
+
+    // The arms and the legs paralysed or not (vitals' `paralysed_arms`, `paralysed_legs`): their tone, from the next set_tone.
+    pub fn set_flaccid(&mut self, arms: bool, legs: bool) {
+        if self.flaccid != [arms, legs] {
+            self.flaccid = [arms, legs];
+            self.toned = false;
         }
     }
 
