@@ -577,7 +577,7 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(each(None, |_, b, rng| b.knock_down(rng)));
             // (The player stays where they start until then: each crawls away from the eye as it was when they began.)
             s.push(Step::Wait(60 * 12));
-            film(&mut s, "crawl", 1, 8, 6, -0.3, -1.8, 1.4);
+            film(&mut s, "crawl", 1, 8, 6, -0.3, -2.6, 2.2);
             s.push(Step::Wait(60 * 10));
             s.push(situation("crawl", |_, _, _, m| m == Mode::Crawl));
         }
