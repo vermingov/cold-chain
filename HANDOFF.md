@@ -2,6 +2,34 @@
 
 Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
+## The Bevy port: where it stands (2026-11-16, end of the third cloud session; read before the rest)
+
+The game is being ported to Bevy (the user's word, 2026-11-15); the Babylon game below is the reference until the port
+is done. Branch `bevy-port` (f7ecdd1) has phases 1-4 merged: everything the TS game does, the phase-4 parity passes of
+the body/medicine, the look and performance, and the AppImage build. `dev/PORT.md` is the plan and every job's notes;
+`dev/BACKLOG.md` the user's post-port list and the order they gave.
+
+The user and a friend play-test the Linux AppImage (build: PORT.md "Performance and release builds"; no Windows build
+for now, the user's word). Their reports after the second AppImage, not yet done:
+- **Audio is "extremely laggy"** though the frame rate is fine. Likely cpal's `BufferSize::Default` on ALSA through
+  PipeWire/Pulse (sound.rs ~654-663 makes the manager with default backend settings): set a small fixed buffer with a
+  fallback, log the buffer and latency at start, check nothing else delays a sound (loading per play, a frame's lag).
+- **"The NPCs are a bit too excessive with the screaming"**: count voice starts per person per minute against the TS
+  first (a bug in sound.rs `hurts`, where a new cry now cuts the old one, could restart cries), then make it realistic
+  (screams for a big new injury, then moans and breathing, a cooldown, fewer voices at once). The unconscious and dead
+  stay silent (the `voices` scenario).
+- **An Escape menu**: pause, Resume / Settings / Quit; master, effects and voice volume, graphics (the F3 presets,
+  scale, VSync, window mode, FOV), mouse sensitivity; saved where graphics.rs keeps the F3 preset.
+
+Open from phase 4:
+- **Dead bodies buzz** (0.31 against the TS's 0.10; it came in with the phase-3 merges) and **dragging hardly moves
+  the person** (the held hand stays ~0.5 m off; the arm's muscles out-hold the pull in Rapier). Branch `port/body-fix`
+  (962af3c) has an unbuilt, unmeasured fix for the buzz in ragdoll.rs `ranges` (Rapier's per-axis angle differs from
+  the arcsine the limits used, for a turn about two axes) and tools/port-drag.mjs; the drag is not started.
+- The grenade's frame is still ~84 ms (weapons.rs `explode`: a surface test and pierce per fragment; Rapier).
+- Then: delete the Babylon game from `bevy-port` only (PORT.md "Order of work" 4), then BACKLOG item 7 (what the TS
+  left unfinished). Items 1-6 wait for the user.
+
 ## What it is
 
 A realistic ragdoll / vitals / blood sandbox in first person, Babylon.js 9.27.1 + Havok, TypeScript 7 built with Vite 8.
