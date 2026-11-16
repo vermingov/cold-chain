@@ -921,6 +921,47 @@ fn feet(b: &mut Blood, player: &Player, map: &Map, floor: &mut Floor) {
     b.mark(kind, across * if left { -0.13 } else { 0.13 }, along * 0.33, Vec3::Y, Vec3::new(eye.x + across.x * side, under, eye.z + across.z * side));
 }
 
+// The blood on the blade in hand, every frame (weapons.ts `_shed`, dev/research/stab-wounds.md sec. 2). It feels gravity
+// less the blade's own acceleration, and a drop d across stays on only while surface tension can hold it there,
+// rho (pi d^3 / 6) a < pi sigma d: so whatever is more than the smear that stays, and makes drops of
+// d = sqrt(6 sigma / (rho a)) or more, leaves, at the tip's speed and on along its path (Williams et al. 2019: cast-off
+// drops leave tangent to the weapon's path at its speed, not flung out from its middle). Held still it drips (a = g: drops
+// of 5.7 mm); a sharp stop or turn sheds a line of smaller ones. Its first stab's way back out is the first that can (none
+// before it). (The blade's blood is weapons.rs's `blades`: ml on it, ml that stays as a smear, its age.)
+fn shed(time: Res<Time>, mut blood: ResMut<Blood>, mut weapons: ResMut<crate::weapons::Weapons>, hand: Res<crate::weapons::Hand>,
+        players: Query<&Transform, With<Player>>, mut was: Local<HashMap<&'static str, (Vec3, Option<Vec3>)>>) {
+    let dt = time.delta_secs();
+    let key = weapons.arm().key;
+    let (Some(anchors), Some(eye)) = (hand.anchors.get(key), players.iter().next()) else { return };
+    if dt <= 0.0 || !weapons.blades.contains_key(key) {
+        return;
+    }
+    let at = hand.world(eye).transform_point(anchors.tip);
+    let (last, last_v) = was.get(key).copied().map_or((None, None), |(p, v)| (Some(p), v));
+    let v = last.map(|p| (at - p) / dt);
+    let a = match (v, last_v) {
+        (Some(v), Some(lv)) => Some((v - lv) / dt),
+        _ => None,
+    };
+    was.insert(key, (at, v));
+    let inside = weapons.action.as_ref().is_some_and(|x| x.how == crate::weapons::How::Stab && x.t < x.length * 0.75);
+    let b = weapons.blades.get_mut(key).unwrap();
+    let free = b.0 - b.1;
+    let (Some(a), Some(v)) = (a, v) else { return };
+    if free <= 0.0 || inside {
+        return;
+    }
+    let d = (6.0 * crate::fluid::GAMMA / (crate::fluid::RHO * Vec3::new(a.x, a.y + 9.81, a.z).length())).sqrt();
+    let each = volume(d);
+    if free < each {
+        return;
+    }
+    let ml = (free / each).floor() * each;
+    let speed = v.length();
+    b.0 -= ml;
+    blood.spray(at, if speed > 0.05 { v / speed } else { Vec3::NEG_Y }, speed, ml, 0.05, d / 0.0016);
+}
+
 // --- drawing ---------------------------------------------------------------------------------------------------------
 
 // The marks on the room as a mark's quad in its mesh: the stain's colour as it dries (vertex colour) and how dry it is
@@ -1450,7 +1491,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, setup.after(crate::wet::make))
         .add_systems(First, take.before(crate::npc::forget))
         .add_systems(Update, (update.in_set(Bleeding), clear.run_if(bevy::input::common_conditions::input_just_pressed(KeyCode::KeyK))))
-        .add_systems(PostUpdate, draw.before(bevy::transform::TransformSystems::Propagate));
+        .add_systems(PostUpdate, (shed, draw).chain().before(bevy::transform::TransformSystems::Propagate));
 }
 
 // --- the check -------------------------------------------------------------------------------------------------------
