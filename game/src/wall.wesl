@@ -15,6 +15,8 @@ import bevy_pbr::render::{
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
 };
+// Blood over a surface (fluid.wesl, fluid.ts bloodOver): `mm` deep, `wet` 1 fresh, 0 dried.
+import cold_chain::fluid::blood_over;
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> columns: array<vec4<f32>, 200>;
 
@@ -52,13 +54,6 @@ fn wall_grain(p: vec3<f32>, f0: vec3<f32>, px: f32) -> f32 {
     return mix(0.5, n * 0.6 + m * 0.4, fine) - 0.35 * seam * fine;
 }
 
-fn blood_over(under: vec3<f32>, mm: f32, wet: f32) -> vec3<f32> {
-    let mu = mix(vec3(3.6, 9.0, 10.5), vec3(3.0, 24.0, 28.0), wet);
-    let deep = mix(vec3(0.03, 0.01, 0.0065), vec3(0.075, 0.004, 0.0035), wet);
-    let through = exp(-mu * 2.0 * mm);
-    return under * through + deep * (1.0 - through);
-}
-
 fn linear(c: vec3<f32>) -> vec3<f32> {
     return pow(c, vec3(2.2));
 }
@@ -89,7 +84,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var gloss = 0.35;
     var lift = 0.0;
     var oozes = 0.0;
-    let fat_c = mix(vec3(0.82, 0.70, 0.48), vec3(0.93, 0.86, 0.66),
+    // (Fat L* 75-80, b* 20-25 and muscle beef's red-brown, as the cut faces: cutface.rs.)
+    let fat_c = mix(vec3(0.80, 0.68, 0.54), vec3(0.88, 0.80, 0.64),
                     smoothstep(0.3, 0.7, mix(0.5, wall_noise(p * 300.0 + 5.0) * 0.65 + wall_noise(p * 800.0 + 9.0) * 0.35, fade(800.0, px))));
     let lob = mix(0.5, wall_noise(p * 300.0 + 5.0), fade(300.0, px));
     if d < wa.x {
@@ -135,7 +131,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
                 f = normalize(vec3(s, -0.85, -0.15));
             }
             let g = wall_grain(p, f, px);
-            c = mix(vec3(0.30, 0.05, 0.04), vec3(0.52, 0.12, 0.09), g);
+            c = mix(vec3(0.32, 0.11, 0.10), vec3(0.52, 0.21, 0.19), g);
             if ribs {
                 c *= 0.85;
             }

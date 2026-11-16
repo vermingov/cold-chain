@@ -1684,8 +1684,9 @@ pub fn act(mut cx: Cx) {
                         .filter_map(|&p| crate::npc::with(w, who, |n| n.surface(p - ahead * 0.1, ahead, 0.2, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin)).flatten())
                         .collect();
                     crate::viscera::slashed(w, who, &skin, depth);
+                    // Then the cut along the skin, as npc.ts slash did after swung and slashed.
+                    crate::npc::with(w, who, |npc| npc.slash_through(&points, depth, sweep));
                 });
-                cx.npc(who, |npc| npc.slash_through(&hits, depth, sweep));
                 cx.weapons.log.push(json!({ "slash": label, "points": hits.iter().map(|p| p.to_array()).collect::<Vec<_>>(), "depth": depth, "sweep": sweep.to_array() }));
             }
         }

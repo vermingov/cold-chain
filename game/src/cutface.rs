@@ -6,6 +6,11 @@
 // little out of the sheath round it, with the fine grain of fibre bundles seen end on; fat in lobules; cortex round
 // marrow; and blood lying over all of it, thickest in the hollows, where the face is glossiest.
 //
+// The colours are what the tissues measure (CIE L*a*b*, D65): muscle beef's, L* 34-40, a* 22-32, b* 10-16 (AMSA's Meat
+// Color Measurement Guidelines, 2012; body-wall.md 1.6: "dark red to red-brown, beef-coloured"), fat L* 75-80, a* 5,
+// b* 20-25 ("pale cream to light yellow, not orange"), blood lying on them a pool's (fluid.wesl). The TS's muscle was
+// a* 50, b* 36 (a pure scarlet) and its fat b* 45 (orange), and lit by a lamp a stump glowed.
+//
 // The TS drew the shapes on a canvas; here they are filled by hand into the same 512 by 512 pictures, once a cut.
 
 use bevy::asset::RenderAssetUsages;
@@ -340,9 +345,9 @@ pub fn paint(skin_loop: &[Pt], solids: &[(String, String, Vec<Pt>)], vessels: &[
                     let shade = 0.84 + 0.3 * id;
                     let sheet = (1.0 - smooth(0.00015, 0.00045, edge)) * if hash((id * 977.0 + id2 * 977.0).floor() as i32, 3, seed) > 0.45 { 0.75 } else { 0.0 };
                     let f = shade * (0.86 + 0.22 * grain) * (0.72 + 0.28 * smooth(0.0, 0.0016, edge));
-                    r = 156.0 * f;
-                    g = 32.0 * f;
-                    b = 27.0 * f;
+                    r = 150.0 * f;
+                    g = 64.0 * f;
+                    b = 60.0 * f;
                     r += (212.0 - r) * sheet;
                     g += (194.0 - g) * sheet;
                     b += (186.0 - b) * sheet;
@@ -354,9 +359,9 @@ pub fn paint(skin_loop: &[Pt], solids: &[(String, String, Vec<Pt>)], vessels: &[
                     let (f1, f2, id, _) = worley(x / cell_fat + seed, y / cell_fat, seed + 5.0);
                     let edge = (f2 - f1) * cell_fat;
                     let f = (0.88 + 0.16 * id) * (0.92 + 0.12 * grain);
-                    r = 228.0 * f;
-                    g = 182.0 * f;
-                    b = 90.0 * f;
+                    r = 226.0 * f;
+                    g = 192.0 * f;
+                    b = 150.0 * f;
                     let septum = 1.0 - smooth(0.00008, 0.00025, edge);
                     r += (236.0 - r) * septum * 0.6;
                     g += (214.0 - g) * septum * 0.6;
@@ -385,9 +390,9 @@ pub fn paint(skin_loop: &[Pt], solids: &[(String, String, Vec<Pt>)], vessels: &[
             let lying = blood * smooth(wet, wet + 0.14, vn(x / 0.011 + seed * 0.3, y / 0.011) * 0.75 + broad * 0.25);
             if lying > 0.0 {
                 let dark = 0.8 + 0.3 * grain;
-                r += (92.0 * dark - r) * lying * 0.85;
-                g += (7.0 - g) * lying * 0.85;
-                b += (6.0 - b) * lying * 0.85;
+                r += (80.0 * dark - r) * lying * 0.85;
+                g += (28.0 - g) * lying * 0.85;
+                b += (27.0 - b) * lying * 0.85;
                 h += (0.49 - h) * lying * 0.6;
                 rough += (0.1 - rough) * lying;
             }
@@ -487,7 +492,7 @@ pub fn paint(skin_loop: &[Pt], solids: &[(String, String, Vec<Pt>)], vessels: &[
             let at = px((mid.0 + (p.0 - mid.0) * t, mid.1 + (p.1 - mid.1) * t));
             let a = rnd() * std::f32::consts::TAU;
             let l = m(0.002 + rnd() * 0.008);
-            let (colour, alpha) = if rnd() < 0.55 { ([150.0, 26.0, 22.0], 0.85) } else { ([36.0, 2.0, 2.0], 0.75) };
+            let (colour, alpha) = if rnd() < 0.55 { ([140.0, 58.0, 54.0], 0.85) } else { ([34.0, 9.0, 9.0], 0.75) };
             let w = m(0.0007 + rnd() * 0.0016).max(1.0);
             cv.line(at, (at.0 + a.cos() * l, at.1 + a.sin() * l), w, &mut |p| over(p, colour, alpha));
         }
