@@ -80,10 +80,12 @@ fn facing(i: usize, k: usize, piece: bool, d: f32) -> impl Fn(&mut World) -> Opt
     move |w: &mut World| {
         let who = person_at(w, i);
         let (at, n) = dismember::end_world(w, who, k, piece)?;
-        // (From the side it faces, never from under the floor: its facing laid level, and up.)
-        let level = Vec3::new(n.x, 0.0, n.z);
-        let level = if level.length() > 0.2 { level.normalize() } else { Vec3::X };
-        let off = (level + Vec3::Y * (0.5 + n.y.max(0.0))).normalize() * d;
+        // (From the side it faces, a little above it, never under the floor.)
+        let mut off = (n + Vec3::Y * 0.25).normalize() * d;
+        let ground = w.resource::<Map>().ground(at.x + off.x, at.z + off.z, f32::INFINITY);
+        if at.y + off.y < ground + 0.12 {
+            off.y = ground + 0.12 - at.y;
+        }
         look(w, at, at + off);
         let mut q = w.query_filtered::<&mut Transform, With<Lamp>>();
         for mut t in q.iter_mut(w) {

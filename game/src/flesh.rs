@@ -197,11 +197,12 @@ pub struct Cuts<'a> {
 impl Cuts<'_> {
     // Triangle `t` as what is left of it, in triangles.
     pub fn apply(&self, t: [Corner; 3], out: &mut Vec<[Corner; 3]>) {
-        let mid = (t[0].p + t[1].p + t[2].p) / 3.0;
         let mut poly: Vec<Corner> = t.to_vec();
         for (k, pl) in self.planes.iter().enumerate() {
             let side = self.sides.get(k).copied().unwrap_or(1.0);
-            if side == 0.0 || mid.distance(pl.c) > pl.radius {
+            // (Within the cut's reach: any of it, as hider.ts asked of each pixel; a big triangle of a trouser leg can have
+            // its middle out of reach and a corner well past the plane.)
+            if side == 0.0 || t.iter().all(|c| c.p.distance(pl.c) > pl.radius) {
                 continue;
             }
             poly = keep(poly, &|p| pl.past(p, self.cloth) * side);
