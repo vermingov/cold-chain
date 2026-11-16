@@ -466,7 +466,9 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
         let f = Flesh::new(body, world.get::<Person>(who).unwrap());
         world.entity_mut(who).insert(f);
     }
+    let t_split = std::time::Instant::now();
     let made = split(world, who, body, limb, side, c, n, &gone, &near, root_bone, prox, l.reach, how);
+    let split_ms = t_split.elapsed().as_secs_f32() * 1000.0;
     let Some(mut entities) = made else { return false };
 
     // The joint lets go: the piece is its own from now on, with no muscle in it.
@@ -494,7 +496,9 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
     });
 
     // Both ends closed, the blood, the hurt.
+    let t_ends = std::time::Instant::now();
     let ends = ends(world, who, body, limb, side, c, n, prox, root_bone, how);
+    let ends_ms = t_ends.elapsed().as_secs_f32() * 1000.0;
     entities.extend(ends.entities);
     let tip = root_bone;
     let spread = world.get::<Ragdoll>(who).unwrap().segs[root].spread.iter().copied().filter(|&x| x != root_bone).collect();
@@ -512,7 +516,7 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
     }
     let took = started.elapsed().as_secs_f32() * 1000.0;
     if world.contains_resource::<crate::scenario::Log>() {
-        crate::scenario::log(world, json!({ "event": "severed", "limb": limb.key(), "side": side, "how": format!("{how:?}"), "ms": took, "skin": ends.skin_points }));
+        crate::scenario::log(world, json!({ "event": "severed", "limb": limb.key(), "side": side, "how": format!("{how:?}"), "ms": took, "split_ms": split_ms, "ends_ms": ends_ms, "skin": ends.skin_points }));
     }
     true
 }
@@ -816,26 +820,40 @@ fn ends(world: &mut World, who: Entity, body: &Body, limb: Limb, side: &str, c: 
     }
     let torn = how != How::Blade;
     let seed = world.resource_mut::<Rng>().next() * 1000.0;
-    let look = crate::cutface::paint(&skin, &solids.iter().map(|s| (s.kind.clone(), s.name.clone(), s.loop_.clone())).collect::<Vec<_>>(),
-                                      &vessels.iter().map(|v| (v.kind.clone(), v.name.clone(), v.x, v.y, v.r)).collect::<Vec<_>>(), l.fat / 1000.0, torn, limb == Limb::Hand, limb == Limb::Foot,
-                                      matches!(limb, Limb::Forearm | Limb::Shin), seed);
     let bones: Vec<Vec<(f32, f32)>> = solids.iter().filter(|s| s.kind == "bone" || s.kind == "skull").map(|s| s.loop_.clone()).collect();
+    let caps = [(1.0, prox, if torn { 0.016 } else { 0.005 }), (-1.0, tip, if torn { 0.008 } else { 0.004 })];
+    // Painted off the frame (AsyncComputeTaskPool: some 30 ms of work), the two ends put in at once plain and flat, and
+    // their painted look and shape when it is done (`painted`).
+    let job = {
+        let (skin, bones) = (skin.clone(), bones.clone());
+        let solids: Vec<(String, String, Vec<(f32, f32)>)> = solids.iter().map(|s| (s.kind.clone(), s.name.clone(), s.loop_.clone())).collect();
+        let vessels: Vec<(String, String, f32, f32, f32)> = vessels.iter().map(|v| (v.kind.clone(), v.name.clone(), v.x, v.y, v.r)).collect();
+        let fat = l.fat / 1000.0;
+        bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+            let t = std::time::Instant::now();
+            let look = crate::cutface::paint(&skin, &solids, &vessels, fat, torn, limb == Limb::Hand, limb == Limb::Foot, matches!(limb, Limb::Forearm | Limb::Shin), seed);
+            let meshes = caps.map(|(facing, bone, proud)| crate::cutface::cap(c, n, e1, e2, &skin, &bones, &look, facing, bone, proud, torn));
+            (look, meshes, t.elapsed().as_secs_f32() * 1000.0)
+        })
+    };
+    let flat = crate::cutface::Look::flat(&skin, torn);
     let mut entities = Vec::new();
-    let mut state: bevy::ecs::system::SystemState<(Commands, ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>, Query<&Person>, Query<&SkinnedMesh>, Query<&ChildOf>)> =
+    let mut state: bevy::ecs::system::SystemState<(Commands, ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>, Query<&Person>, Query<&SkinnedMesh>, Query<&ChildOf>)> =
         bevy::ecs::system::SystemState::new(world);
     {
-        let (mut commands, mut meshes, mut images, mut materials, people, skins, parents) = state.get_mut(world).unwrap();
+        let (mut commands, mut meshes, mut materials, people, skins, parents) = state.get_mut(world).unwrap();
         let person = people.get(who).unwrap();
         let first = person.parts[0].1;
         let skin_mesh = skins.get(first).unwrap().clone();
         let space = parents.get(first).unwrap().parent();
-        let material = crate::cutface::material(&look, &mut images, &mut materials);
+        let material = materials.add(StandardMaterial { base_color: Color::srgb_u8(110, 18, 14), perceptual_roughness: 0.25, ..default() });
         // The stump's end faces down the limb, carried by the bone it hung from; the piece's the other way, by its own.
-        for (facing, bone, proud) in [(1.0, prox, if torn { 0.016 } else { 0.005 }), (-1.0, tip, if torn { 0.008 } else { 0.004 })] {
-            let mesh = crate::cutface::cap(c, n, e1, e2, &skin, &bones, &look, facing, bone, proud, torn);
+        for (facing, bone, proud) in caps {
+            let mesh = crate::cutface::cap(c, n, e1, e2, &skin, &bones, &flat, facing, bone, proud, torn);
             entities.push(commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), skin_mesh.clone(), DynamicSkinnedMeshBounds, ChildOf(space),
                                           Name::new(format!("{} {} {}{side}", person.label, if facing > 0.0 { "stump" } else { "end" }, limb.key())))).id());
         }
+        commands.spawn((Painting { task: job, ends: [entities[0], entities[1]] }, ChildOf(space)));
     }
     state.apply(world);
     // The skin's cut edge: its lip shows the layers it was cut through, a ragged band of them where it was torn (marks.rs).
@@ -1006,6 +1024,33 @@ fn place_pieces(time: Res<Time>, mut people: Query<(&mut Person, &Transform, &Ra
     }
 }
 
+// A cut face being painted, and the two ends it is for.
+#[derive(Component)]
+struct Painting {
+    task: bevy::tasks::Task<(crate::cutface::Look, [Mesh; 2], f32)>,
+    ends: [Entity; 2],
+}
+
+// Each cut face painted since put in its ends.
+fn painted(mut commands: Commands, mut jobs: Query<(Entity, &mut Painting)>, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>,
+           mut materials: ResMut<Assets<StandardMaterial>>, mut ends: Query<(&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>)>, log: Option<ResMut<crate::scenario::Log>>) {
+    let mut log = log;
+    for (e, mut job) in &mut jobs {
+        let Some((look, made, ms)) = bevy::tasks::futures::check_ready(&mut job.task) else { continue };
+        let material = crate::cutface::material(&look, &mut images, &mut materials);
+        for (end, mesh) in job.ends.iter().zip(made) {
+            if let Ok((mut m, mut mat)) = ends.get_mut(*end) {
+                m.0 = meshes.add(mesh);
+                mat.0 = material.clone();
+            }
+        }
+        if let Some(log) = log.as_mut() {
+            log.0.push(serde_json::json!({ "what": { "event": "cut face painted", "ms": ms } }));
+        }
+        commands.entity(e).despawn();
+    }
+}
+
 fn clear(mut rds: Query<&mut Ragdoll, With<Dismember>>, mut groups: Query<&mut CollisionGroups>) {
     for mut rd in &mut rds {
         rd.clear_pieces(&mut groups);
@@ -1014,6 +1059,7 @@ fn clear(mut rds: Query<&mut Ragdoll, With<Dismember>>, mut groups: Query<&mut C
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PostUpdate, (taken_system, place_pieces.before(crate::person::pose_people)).chain().before(crate::shards::redraw))
+        .add_systems(Update, painted)
         .add_systems(FixedUpdate, clear.after(crate::ragdoll::Steps::Read));
 }
 

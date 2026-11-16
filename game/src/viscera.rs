@@ -254,10 +254,9 @@ pub fn opening_world(world: &mut World, who: Entity, k: usize) -> Option<(Vec3, 
 
 // What of an organ came out that is nearest the line from `origin` along unit `dir`, within `far`, on anyone: something
 // to take hold of with `pull`, or None. (Out of the body, or in the opening itself: a hand can reach that.)
-pub fn pick(world: &mut World, origin: Vec3, dir: Vec3, far: f32) -> Option<Held> {
+pub fn pick<'a>(people: impl Iterator<Item = (Entity, &'a Viscera)>, origin: Vec3, dir: Vec3, far: f32) -> Option<Held> {
     let mut best: Option<(Held, f32)> = None;
-    let mut q = world.query::<(Entity, &Viscera)>();
-    for (e, v) in q.iter(world) {
+    for (e, v) in people {
         for (li, l) in v.loops.iter().enumerate() {
             for i in 2..l.count.saturating_sub(2) {
                 if !l.out[i] && !l.passing[i] {
@@ -269,7 +268,7 @@ pub fn pick(world: &mut World, origin: Vec3, dir: Vec3, far: f32) -> Option<Held
                     continue;
                 }
                 if (origin + dir * t).distance(p) < l.r * 2.2 && best.as_ref().is_none_or(|b| t < b.1) {
-                    best = Some((Held { who: e, rope: li, index: i }, t));
+                    best = Some((Held { who: e, rope: li, index: i, distance: t }, t));
                 }
             }
         }
@@ -282,22 +281,15 @@ pub struct Held {
     pub who: Entity,
     pub rope: usize,
     pub index: usize,
+    // How far from the eye it was taken hold of.
+    pub distance: f32,
 }
 
-// Pull what pick() found toward world point `to`: as a hand holding it would, and more of it comes out after it.
-pub fn pull(world: &mut World, held: Held, to: Vec3) {
-    if let Some(mut v) = world.get_mut::<Viscera>(held.who) {
-        if let Some(l) = v.loops.get_mut(held.rope) {
-            l.hold = Some((held.index, to));
-        }
-    }
-}
-
-pub fn let_go(world: &mut World, held: Held) {
-    if let Some(mut v) = world.get_mut::<Viscera>(held.who) {
-        if let Some(l) = v.loops.get_mut(held.rope) {
-            l.hold = None;
-        }
+// Pull what pick() found toward world point `to` (None: let go): as a hand holding it would, and more of it comes out
+// after it.
+pub fn pull(v: &mut Viscera, held: Held, to: Option<Vec3>) {
+    if let Some(l) = v.loops.get_mut(held.rope) {
+        l.hold = to.map(|to| (held.index, to));
     }
 }
 

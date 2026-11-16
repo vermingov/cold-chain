@@ -149,7 +149,7 @@ pub fn steps(part: &str) -> Vec<Step> {
     // 3. Two chops through the young man's neck (120 J).
     s.push(Step::Do(Box::new(|w: &mut World| {
         let who = person_at(w, 2);
-        let p = between(w, who, "neck01", "head", 0.3);
+        let p = between(w, who, "neck01", "head", 0.9);
         let mut off = false;
         let t = std::time::Instant::now();
         for _ in 0..2 {

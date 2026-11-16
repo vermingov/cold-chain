@@ -338,3 +338,66 @@ bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the break
 `stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
 `jitter` of its situation as the TS's jitter.mjs measured it, and Rapier's time a step), `keys` (K and N), `joints` (every
 joint's angles and aims, standing).
+
+## Cut (phase 3, branch port/cut)
+
+shards.rs (with bones.ts `_look` and `_drawAll`), dismember.rs, cutface.rs (its `paint`, `capMesh`, `capMaterial`),
+viscera.rs, tubes.rs (viscera.ts `_tubeLook`), wall.rs, and anatomy.rs's per-person x-ray are the TS's, number for number,
+with the reasons in the comments. flesh.rs is new: it does on the geometry what hider.ts did per pixel for these two.
+
+### What drives it
+- Medicine hands over `Happened::Drawn` and `Through` (shards.rs draws them), `Edge` (kept per limb until the swing is
+  through), `Charge` (now with the skin crossing it went in at and its calibre: a limb torn off, or the belly blown open),
+  `Bled` (blood on an organ). These are taken in PostUpdate; a scenario step runs in Last, after that, so it runs
+  `dismember::taken_system` and `shards::redraw` itself (cut_scenario.rs `taken`).
+- For the hands (wired in weapons.rs): `dismember::swung(world, who)` at the end of a swing (with `viscera::slashed(world,
+  who, &skin_crossings, depth)`), `dismember::blast(world, who, at, tnt)` for the grenade, `viscera::pick(people, eye,
+  ahead, far)` / `viscera::pull(&mut viscera, held, Some(to) | None)` for bowel taken hold of (Weapons::bowel). They run
+  from `commands.queue` with the whole World. Also: `dismember::chop`, `charge`, `sever`, `limb_at`, `place`,
+  `end_world`; `viscera::open`, `blown`, `burst`, `openings`, `opening_world`.
+- dismember.rs and viscera.rs hand on what others draw: `Happened::Rim` (the stump's skin edge for marks.rs: its outline in
+  the skin's picture), `Lip` (an opening's lips), `Spray`, `Run` (what was in a piece, out of its end), `Drip` (off bowel
+  that came out), `Sound`.
+
+### The person's flesh (flesh.rs)
+The TS kept the triangles a cut runs through in both the body's mesh and the piece's and hid each side's other half per
+pixel, cut openings out of the skin and clothes per pixel, and drew the skin under the clothes only in windows, each
+test looping over up to 64 holes and 8 cuts in every fragment of every person. Here a person gets `Flesh` (their own
+weights, triangles, cuts, openings, windows) the first time they are cut, and each touched part is made again once into a
+mesh of their own: triangles cut along the plane (new corners with the edge's picture, normal and mixed weights), openings
+cut out (triangles across a lens's edge halved down to 3 mm), the skin under the clothes put in as meshes of its own where
+a window shows it (`Flesh::under`). The same planes, radii and lenses as hider.ts, so what is drawn is what it drew. A
+person's skin and clothes materials are not touched (skin's job owns them): a wound extension there needs nothing from this.
+
+### A piece cut off
+`Ragdoll::sever` (ragdoll.rs, new): the joint and its friction let go, `attached` and the mass without the piece, a dead
+tone in it; its first segment meets nothing of any person until clear of its stump (`clear_pieces`; the TS's own bit of
+each person's has no room in Rapier's 32 groups: `ragdoll::PIECE`). `Person::placed` (person.rs, new): bones put where
+their own body is; `Person::absolute`, medicine's `bone_worlds` and `pose_people` honour it, so the piece is drawn, hit
+and bled from where it lies. `Hurt::weights` (npc.rs, new): the body's corners' bones after a cut, for `skinned` and
+`owner_of` (the TS's dismember owners).
+
+### The x-ray (anatomy.rs)
+One mesh a look for everyone of a body (23 draws a person), each person's own copy of a look only once something in it
+changes: a part hurt goes into a twin in the hurt look (`Hurt::hurt`), triangles taken round a break (`Xray::hide`) are
+left out, regrouped once a frame while seen (`regroup`). Every look's mesh has `DynamicSkinnedMeshBounds`.
+
+### Breaks drawn (shards.rs)
+Each `Drawn` break's region cut small and labelled (`region`, `split`), its pieces moved; all of a person's breaks drawn
+into three meshes made once and filled in place (bone in the x-ray, bone out through the skin with its colour going red
+at the break, the dark lines), once a frame at most however many breaks a blast made.
+
+### Bevy notes
+- Bevy 0.20's `compute_smooth_normals` weighs a corner only when its two sides' squared lengths multiplied pass f32's
+  epsilon: on a cut face or a loop of bowel every normal came out zero and drew black. flesh.rs `normals` (Babylon's).
+- Cut faces are painted off the frame (AsyncComputeTaskPool): the ends go in at once flat and plain, painted a frame or
+  two later (`Painting`).
+- Organs, ropes and the wall's inside are one extended material (organs.wesl, viscera.rs `Wet`): a corner's colour is its
+  place at rest and its alpha the blood on it. The wall's layers (wall.wesl) are a uniform of five vec4 a column.
+- Rope meshes are in the world (their points are), so `gone` despawns them when the person goes.
+
+### The check
+`cargo run -- --scenario cut --out <dir>` (or `cut-limbs`, `cut-belly`, `cut-bones`): a sword's chop through a forearm
+(one blow), a thigh (three), the neck (two); a shotgun charge at contact range into a belly; a knife drawn across a belly;
+a shin broken by a bat and bent out through the skin; a skull broken; X on; a grenade at a headless man's feet. Close shots
+lit by a lamp by the eye. tools/port-cut.mjs does the same in the TS game (same calls, same views).

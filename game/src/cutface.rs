@@ -40,6 +40,12 @@ pub struct Look {
 }
 
 impl Look {
+    // A face not yet painted: its size, and flat.
+    pub fn flat(skin: &[Pt], torn: bool) -> Look {
+        let e = resample(skin, 160).iter().fold(0.0f32, |m, p| m.max(p.0.abs()).max(p.1.abs())) * 1.06;
+        Look { albedo: Vec::new(), bump: Vec::new(), surface: Vec::new(), e, field: vec![0.42; SIZE * SIZE], torn }
+    }
+
     // Heights in metres for the cut face's own shape: the muscle swelling a few millimetres out of its sheath, bone
     // standing proud, the fat a little sunk.
     pub fn height(&self, x: f32, y: f32) -> f32 {
