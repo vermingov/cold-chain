@@ -244,6 +244,10 @@ fn encode(@builtin(global_invocation_id) id: vec3<u32>) {
     if p.x == cubes[i].cell {
         state[i].y = born;
     }
+    // (Cloth no blood has ever reached is as the field began: nothing to write.)
+    if ml <= 0.0 && born == 0.0 {
+        return;
+    }
     let full = min(OVER, ml / cap);
     let wet = select(0.0, exp(-(u.clock - born) / DRIES), ml > 0.0);
     let at = vec3(p.x % u.n.x, (p.x / u.n.x) % u.n.y, p.x / (u.n.x * u.n.y));
