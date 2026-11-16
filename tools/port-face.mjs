@@ -17,6 +17,8 @@ try {
     await rig.eval(`(async () => {
       const S = window.__sandbox; S.scene.getEngine().stopRenderLoop();
       document.getElementById('start')?.remove();
+      // (the voices: the sounds are read in on the click that starts the sandbox)
+      await S.world.start();
       for (const el of document.body.querySelectorAll('*')) if (el.tagName !== 'CANVAS' && !el.querySelector('canvas')) el.style.visibility = 'hidden';
       const W = await import('/src/sandbox/wounds.ts'), WE = await import('/src/sandbox/weapons.ts');
       let sim = 0; performance.now = () => sim * 1000;
