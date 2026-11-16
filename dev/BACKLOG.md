@@ -5,7 +5,8 @@ is done and the user has been asked. In their words, then what each means here.
 
 The user said go (2026-11-16): "continue with the port, and then get started on finishing the things that didn't get
 finished on the Babylon version, and then do the rest of what I asked". So, in this order: finish phase 4 of the port;
-then item 7 (what was stopped mid-way in the TS); then items 1-6.
+then item 7 (what was stopped mid-way in the TS). Items 1-6 wait: the user said (2026-11-16) not to start them right
+away, only to finish the port and item 7.
 
 1. **The viewmodel and the player's body in the 3D world.** "The viewmodel should actually be in the 3D world, same
    with my character, like I should be able to push the NPCs with my body, and I should be able to put my gun up
