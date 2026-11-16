@@ -44,6 +44,19 @@ port of the TS (same numbers, same comments explaining why) unless Bevy gives a 
 browser workarounds (canvas painting and texture uploads by tiles, getImageData, willReadFrequently, Firefox notes)
 are not ported: wounds, blood film and bruises are painted on the GPU (render-to-texture or compute) instead.
 
+## Performance (the user's word, 2026-11-15: optimise along the way where feasible)
+The Babylon game lagged; every job fixes its own part of that as it ports, without changing how anything looks or
+behaves, and measures it (scenario timings, the F2 profiler's rows). What the F2 logs and profiles found:
+- A shotgun blast was 110-360 ms of JS: each bone break rebuilt its meshes and made new vertex buffers (bones `_draw`),
+  `trace`/`surface` were recomputed for each of nine pellets though the body had not moved, every pellet hit built its
+  own audio chain. One redraw per person per frame, buffers updated in place, per-blast caches, merged sounds.
+- Painting wounds, film and bruises on the CPU and uploading them (170-220 ms stalls): on the GPU now.
+- The X-ray insides were ~224 submeshes a person (1055 draw calls): merge by material.
+- The first-person arms cost 29 ms a frame on a laptop (spikes to 394 ms).
+- Shader compiles on first use froze frames (the first head shot): precompile every pipeline variant at load (warm.rs).
+- Laptops were GPU-bound: keep the F3 presets and the adaptive scale honest; count draw calls by source in F2.
+Allocate nothing per frame in hot paths; per-person work in parallel where Bevy's systems allow it.
+
 ## Order of work
 1. **Foundation**: done (2026-11-15, commits on bevy-port up to "Bevy port, phase 1"). What it left and what the
    next jobs need to know is under "The foundation" below.
@@ -146,6 +159,77 @@ board is hung. Existing: `hall` (four views, the Medium and Low presets, the 40%
 front, side and face, the segment table into the log, everyone in X-ray), `arsenal` (the board wide and close). The
 TS game's matching shots: tools/port-views.mjs (the same views through tools/rig.mjs).
 
+## Sound (sound.rs), for every job that makes a noise
+The mixer is kira 0.12, used directly (Bevy's rodio audio has no filters, sends or effects; bevy_kira_audio's spatial
+sound is a gain and a pan per instance). No maintained Rust crate does HRTF: a sound with a place is panned at equal
+power between the ears (Web Audio's 'equalpower'), with the TS's distance (inverse, 1.5 m, rolloff 1.1), its wall
+muffling (`map.screened`: lowpass to 1 kHz and 0.35 of the gain) and its room (kira's reverb, calibrated to the TS's
+2.8 m critical distance by the `sound` scenario). Without a sound device nothing sounds and everything is still decided
+and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be heard can be measured.
+
+    use crate::sound::{Sound, Play};
+    fn my_system(mut sound: ResMut<Sound>, ...) {
+        sound.play("bullet-flesh", Play::at(point));                       // a burst, from a place (Bevy's space)
+        sound.play("thud", Play { gain: 0.6, rate: 1.1, at: Some(p), ..default() });
+        let cry = sound.play("scream-hood", Play { follow: Some(head_bone_entity), ..default() });   // follows it
+        cry.as_ref().map(|c| c.cut());                                     // cut off in 50 ms (knocked out, killed)
+        sound.play("step-tarmac", Play { gain: 0.8, most: 0.4, ..default() });   // one strike (`hits`), no place
+        let drag: Option<Stream> = sound.stream("drag", Some(at));         // keep it (a component, a Local)
+        drag.drive(level, rate); drag.at(new_place);                      // every frame; dropped, it stops
+    }
+- `play` returns `Option<Playing>` (None: no such recording; nothing is made up). `Playing::voice()` gives what is
+  playing (`data`: the take's samples, `from`, `length`, `rate`, `start` on `Sound::now()`'s clock): a face mouthing
+  its voice. `sound.has(name)`.
+- The same take asked for again in the same frame within a metre of any already asked is merged into it (as loud as
+  both by power): a shotgun's pellets into one body are one sound. (The TS merged only with the first; a grenade's
+  fragments into four people then made 123 sounds at once, now 8.) A `follow` or `most` sound never merges.
+- What was played and how (distance gain, wall, cutoff, pan, merged count) is pushed to `sound.heard` (Heard), which a
+  scenario may drain into its log.
+- Takes are the manifests' (assets/sounds, assets/cries); the room is 'cold' and the room tone 'room-sandbox' is driven
+  at 0.35 from the start, as sandbox.ts did. Footsteps (player.ts onStep) are sound.rs's `steps`.
+
+## The hands (weapons.rs, muzzle.rs, arm.rs, hands.rs, fist.rs, profiler.rs), for the jobs that plug into them
+- Everything a weapon does to a person goes through two functions in weapons.rs, `pierce(cx, who, origin, dir, &Missile,
+  far)` and `blow(cx, who, point, dir, mass, speed, Option<Tool>)`, which call wounds.rs's (through `Cx::npc`, the
+  borrow npc::with makes, inside the weapons' own systems) and write what was hit into `Weapons::log` (the `arsenal-use`
+  scenario's log). The fists' blow is the same call in fist.rs `punch`. What it meets is `weapons::surface` (npc.surface,
+  the first skin or clothes). A cut's crossings are logged as "slash" when the swing ends (npc.slash's drawing is phase 3).
+- The bandage and medkit: weapons.rs `medic` (the TS's Medic: aim, hold, its sounds and the hands' motion) on
+  dressing.rs `wounds` and `dress`.
+- What medicine wants heard (`Happened::Say`, `Cut`, `Sound`) is played by sound.rs `hurts`: a cry follows the head bone.
+- Where people are, for the cheap tests before npc.surface: `Cx::ends(who, person, k)` (the ragdoll's segment ends) and
+  `Cx::centre`. Taking hold of a person inserts behaviour.rs `Grabbed` (aimed every frame, removed to let go); a thing
+  is held by weapons.rs's own spring (`pull`). The grenade's blast pushes every segment (`Ragdoll::push`) and knocks
+  down whoever is within 3.5 m; a thrown thing or the grenade touching a segment (Rapier's contacts) lands a blow
+  (`landings`); a `thuds::Slam` is a blow ('wall'). The body's `thuds::Heard` and `thuds::Dragging` are played by
+  sound.rs `bodies`.
+- `// port: needs blood`: what a bloody blade sheds (weapons.ts `_shed`, blood.spray). The blade's blood (`Weapons::blades`) and its stain are here.
+- Input goes through `Weapons::queue` (`Act::Press(0|2)`, `Release`, `Select(i)`, `Reload`, `Take`, `PutBack`), which a
+  scenario can push to as the mouse and keys do.
+- The arms are the sexton's arm (People's body with its mid bones), posed by `Arm::reach` (arm.ts), put on the grips
+  each frame by hands.rs from `weapons::Holds`; the fists pose them themselves.
+- Not ported: the TS drew the held thing and the arms in a rendering group of their own over the room (depth cleared),
+  so a gun held out at a wall did not go into it; here they are drawn in the room. A shot still never starts beyond a
+  wall (`before_wall`). The AK's magazine and the shotgun's barrels are not cut out of their meshes (weapons.ts
+  `split`), so they stay put through a reload.
+- Known difference, on purpose: fist.ts mirrors the left fist's place twice (`at` is kept mirrored, and `knuckles()`
+  and `_pose` mirror it again), so in the TS both fists sit right of the middle and the left one punches from there.
+  fist.rs mirrors it once: each fist on its own side. Say if the TS's way is wanted.
+- Measured (the `sound` scenario, mixed into memory): a shot 2.8 m off is as loud in the room as itself (-28.0 dB each);
+  the room rings about 1.2 s to -60 dB (Freeverb at the 'cold' room's 1.1 s, the shot's own tail in the figure); behind
+  the cover wall a shot is cut to 0.35 and 1 kHz on its way to the ears, and the total falls only 0.6 dB, as in the TS,
+  the room's ring being unmuffled; nine 'bullet-flesh' asked for in one frame within a metre are one sound at gain 3.
+- Measured (`arsenal-use`, dev build, software Vulkan, a shared 4-core machine): a nine-pellet blast into a person 1.7
+  to 4.6 ms (the TS: 110 to 360 ms; medicine's npc.surface is cached for the frame, so the nine reuse it); the arms
+  (hands.rs `put`) 0.02 to 0.09 ms a frame, the fists 0.06, the hand's pose under 0.05 (worst single frames 3 to 6 ms
+  with other jobs building beside it; the TS's arms were 29 ms on a laptop). Casings are 40 rigid bodies a cartridge,
+  reused; bullet holes 600 entities on one mesh and material (Bevy batches them), reused. `ARSENAL_USE=grenade,shotgun`
+  runs the scenario with only those.
+- Profiler (F2): `profiler::timed("row name", system)` in place of a system gives it a row of its own; every main
+  schedule has a row for the rest of its systems, and the render world one for its own thread; under them the draw calls by pass (the render world's phases: opaque, alpha
+  masked, blended, shadow maps) and the meshes in view by what they belong to. `Notes::note(now, what)`
+  is the TS's `world.note`. F4 saves `coldchain-profile-<version>-<time>.json` in ~/Downloads (or the working directory)
+  in the TS's format; `node tools/profile-report.mjs` reads it.
 ## Medicine (phase 2, branch port/medicine)
 
 vitals.rs, wounds.rs, anatomy.rs (tracing), npc.rs, bones.rs, teeth.rs, throat.rs, eyes.rs, bruise.rs and dressing.rs's
