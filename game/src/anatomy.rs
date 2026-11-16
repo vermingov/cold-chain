@@ -132,12 +132,14 @@ pub struct Anatomy {
 }
 
 // One look's mesh of a body's x-ray, shared by everyone of that body until their own is changed: each corner of the file
-// it keeps (`local`, u32::MAX for the rest) and the parts drawn in it.
+// it keeps (`local`, u32::MAX for the rest) and the parts drawn in it. `source` is a copy of the mesh for a person's own
+// copies to be made from on another thread (`regroup`).
 pub struct LookMesh {
     pub look: usize,
     pub mesh: Handle<Mesh>,
     pub local: Vec<u32>,
     pub parts: Vec<usize>,
+    pub source: std::sync::Arc<Mesh>,
 }
 
 // The x-ray of one person's insides: the entity holding a mesh for each look, hidden until X. What is this person's own
@@ -155,10 +157,14 @@ pub struct Xray {
     // The file's parts shown hurt, and this person's own copy of the triangles (None: the file's, untouched).
     pub hurt: Vec<bool>,
     pub drawn: Option<Vec<u32>>,
-    // Looks whose triangles changed since they were last grouped.
+    // Looks whose triangles changed since they were last grouped, and those being grouped now: each look's mesh made
+    // again, and its hurt twin's (when there is anything hurt in it, or there was).
     stale: Vec<bool>,
+    regrouping: Option<bevy::tasks::Task<Regrouped>>,
     pub skin: SkinnedMesh,
 }
+
+type Regrouped = (Vec<(usize, Mesh, Option<Mesh>)>, f32);
 
 impl Xray {
     // Triangles (offsets into the index) no longer drawn in the x-ray: a broken bone drawn in pieces of its own instead.
@@ -277,7 +283,7 @@ impl Anatomy {
                             // (Its bounds kept from its bones, as the skin's are: the ragdoll takes them anywhere.)
                             .with_generated_skinned_mesh_bounds()
                             .expect("the insides skinned to their bones");
-                        LookMesh { look, mesh: meshes.add(mesh), local, parts }
+                        LookMesh { look, source: std::sync::Arc::new(mesh.clone()), mesh: meshes.add(mesh), local, parts }
                     })
                     .collect();
                 let made = std::sync::Arc::new(made);
@@ -302,6 +308,7 @@ impl Anatomy {
             hurt: vec![false; parts],
             drawn: None,
             stale: vec![false; n],
+            regrouping: None,
             skin,
         });
         xray
@@ -309,7 +316,9 @@ impl Anatomy {
 }
 
 // What medicine names hurt shown hurt in the x-ray (Hurt::hurt, anatomy.ts `hurt`), and each person's changed looks
-// regrouped, while they are seen: one draw a look, the hurt in a twin of it.
+// regrouped, while they are seen: one draw a look, the hurt in a twin of it. The grouping is done on another thread (a
+// look's copy of its mesh and its triangles sorted came to 2 to 8 ms of the frame X was pressed in), and put in when it
+// is done, a frame or two later.
 #[allow(clippy::type_complexity)]
 pub fn regroup(
     mut commands: Commands,
@@ -322,11 +331,10 @@ pub fn regroup(
     mut handles: Query<&mut Mesh3d>,
     log: Option<ResMut<crate::scenario::Log>>,
 ) {
-    let started = std::time::Instant::now();
-    let mut regrouped = 0;
     anatomy.look(0, &mut materials);
     let anatomy = anatomy.into_inner();
     let (bodies, looks_of) = (&anatomy.bodies, &anatomy.looks);
+    let mut log = log;
     for (p, h) in &people {
         let Ok(mut x) = xrays.get_mut(p.insides) else { continue };
         if h.hurt.len() > x.hurt.iter().filter(|&&b| b).count() {
@@ -339,55 +347,77 @@ pub fn regroup(
                 }
             }
         }
-        if !seeing.0 || !x.stale.iter().any(|&s| s) {
-            continue;
-        }
-        let ins = &bodies[&p.body.name];
-        let looks = x.looks.clone();
-        for (l, lm) in looks.iter().enumerate() {
-            if !std::mem::take(&mut x.stale[l]) {
-                continue;
-            }
-            regrouped += 1;
-            let (mut whole, mut hurt) = (Vec::new(), Vec::new());
-            for &pi in &lm.parts {
-                let part = &ins.parts[pi];
-                let into = if x.hurt[pi] { &mut hurt } else { &mut whole };
-                let tris = x.drawn.as_deref().unwrap_or(&ins.index);
-                for t in tris[part.index_start..part.index_start + part.index_count].chunks_exact(3) {
-                    if t[0] != t[1] {
-                        into.extend(t.iter().map(|&v| lm.local[v as usize]));
+        // A grouping done: each look's new meshes in (a person's own mesh made the first time, filled in place after).
+        if let Some(task) = x.regrouping.as_mut() {
+            let Some((done, ms)) = bevy::tasks::futures::check_ready(task) else { continue };
+            x.regrouping = None;
+            let started = std::time::Instant::now();
+            let looks = done.len();
+            let x = x.into_inner();
+            let own = |slot: &mut Option<Handle<Mesh>>, meshes: &mut Assets<Mesh>, mesh: Mesh| match slot {
+                Some(h) => {
+                    if let Some(mut m) = meshes.get_mut(h.id()) {
+                        *m = mesh;
+                    }
+                    h.clone()
+                }
+                None => slot.insert(meshes.add(mesh)).clone(),
+            };
+            for (l, whole, hurt) in done {
+                let mesh = own(&mut x.owned[l], &mut meshes, whole);
+                if let Ok(mut m) = handles.get_mut(x.entities[l]) {
+                    m.0 = mesh;
+                }
+                if let Some(hurt) = hurt {
+                    let mesh = own(&mut x.hurt_meshes[l], &mut meshes, hurt);
+                    if x.hurt_entities[l].is_none() {
+                        let material = looks_of[x.looks[l].look + LOOKS.len()].clone();
+                        let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), x.skin.clone(), DynamicSkinnedMeshBounds, ChildOf(p.insides))).id();
+                        x.hurt_entities[l] = Some(e);
                     }
                 }
             }
-            // (A copy of the shared mesh, this person's own, its triangles replaced: the corners stay as they are.)
-            let own = |slot: &mut Option<Handle<Mesh>>, meshes: &mut Assets<Mesh>, index: Vec<u32>| {
-                let h = slot.get_or_insert_with(|| {
-                    let m = meshes.get(&lm.mesh).unwrap().clone();
-                    meshes.add(m)
-                });
-                if let Some(mut m) = meshes.get_mut(h.id()) {
-                    m.insert_indices(Indices::U32(index));
-                }
-                h.clone()
-            };
-            let mesh = own(&mut x.owned[l], &mut meshes, whole);
-            if let Ok(mut m) = handles.get_mut(x.entities[l]) {
-                m.0 = mesh;
+            // (For checks: what regrouping cost the frame, and the other thread.)
+            if let Some(log) = log.as_mut() {
+                log.0.push(serde_json::json!({ "what": { "event": "xray regrouped", "looks": looks, "ms": started.elapsed().as_secs_f32() * 1000.0, "task_ms": ms } }));
             }
-            if !hurt.is_empty() || x.hurt_meshes[l].is_some() {
-                let mesh = own(&mut x.hurt_meshes[l], &mut meshes, hurt);
-                if x.hurt_entities[l].is_none() {
-                    let material = looks_of[lm.look + LOOKS.len()].clone();
-                    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), x.skin.clone(), DynamicSkinnedMeshBounds, ChildOf(p.insides))).id();
-                    x.hurt_entities[l] = Some(e);
-                }
-            }
+            continue;
         }
-    }
-    // (For checks: what regrouping cost, when it did any.)
-    if let (Some(mut log), true) = (log, regrouped > 0) {
-        log.0.push(serde_json::json!({ "what": { "event": "xray regrouped", "looks": regrouped, "ms": started.elapsed().as_secs_f32() * 1000.0 } }));
+        if !seeing.0 || !x.stale.iter().any(|&s| s) {
+            continue;
+        }
+        let stale: Vec<usize> = (0..x.stale.len()).filter(|&l| std::mem::take(&mut x.stale[l])).collect();
+        let had_hurt: Vec<bool> = x.hurt_meshes.iter().map(|m| m.is_some()).collect();
+        let (looks, traced, drawn, hurt) = (x.looks.clone(), h.traced.clone(), x.drawn.clone(), x.hurt.clone());
+        x.regrouping = Some(bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+            let t = std::time::Instant::now();
+            let tris = drawn.as_deref().unwrap_or(&traced.index);
+            let done = stale
+                .into_iter()
+                .map(|l| {
+                    let lm = &looks[l];
+                    let (mut whole, mut sore) = (Vec::new(), Vec::new());
+                    for &pi in &lm.parts {
+                        let part = &traced.source[pi];
+                        let into = if hurt[pi] { &mut sore } else { &mut whole };
+                        for t in tris[part.index_start..part.index_start + part.index_count].chunks_exact(3) {
+                            if t[0] != t[1] {
+                                into.extend(t.iter().map(|&v| lm.local[v as usize]));
+                            }
+                        }
+                    }
+                    // (A copy of the shared mesh, this person's own, its triangles replaced: the corners stay as they are.)
+                    let copy = |index: Vec<u32>| {
+                        let mut m = (*lm.source).clone();
+                        m.insert_indices(Indices::U32(index));
+                        m
+                    };
+                    let twin = (!sore.is_empty() || had_hurt[l]).then(|| copy(sore));
+                    (l, copy(whole), twin)
+                })
+                .collect();
+            (done, t.elapsed().as_secs_f32() * 1000.0)
+        }));
     }
 }
 
@@ -593,8 +623,10 @@ impl Npc<'_> {
             }
         }
 
+        // The vessels it passes, for a trace through everything (a wound's track): one through only some parts (a bone, the
+        // body's wall) is asked only where those are, and every segment of every tube held against the line is wasted on it.
         let mut vessels = Vec::new();
-        for (ti, tube) in tr.tubes.iter().enumerate() {
+        for (ti, tube) in tr.tubes.iter().enumerate().filter(|_| only.is_none()) {
             let mut best: Option<VesselHit> = None;
             let world = |i: usize| mats[tube.points[i].2].transform_point3(tube.points[i].0);
             for i in 0..tube.points.len().saturating_sub(1) {
