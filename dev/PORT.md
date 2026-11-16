@@ -403,6 +403,91 @@ at the break, the dark lines), once a frame at most however many breaks a blast 
 (one blow), a thigh (three), the neck (two); a shotgun charge at contact range into a belly; a knife drawn across a belly;
 a shin broken by a bat and bent out through the skin; a skull broken; X on; a grenade at a headless man's feet. Close shots
 lit by a lamp by the eye. tools/port-cut.mjs does the same in the TS game (same calls, same views).
+## Blood (phase 3, branch port/blood)
+
+blood.rs (drops, streams, marks on the room), floor.rs (the floor's pools), soak.rs (the clothes' stains) and fluid.rs
+(blood's numbers; fluid.wesl its colour, `blood_over`, and the noises the TS's shaders used) are the TS's blood.ts,
+floor.ts, soak.ts and fluid.ts, number for number. The floor's flow and the clothes' wicking run on the GPU as compute
+shaders (floor.wesl, soak.wesl) on buffers the materials' textures are written from; the CPU keeps only what it must ask
+(a copy of the floor's depths and each person's cloth, brought back a few times a second by Bevy's readback).
+
+### What it takes from medicine
+`blood::take` (First, before `npc::forget`, so blood from anything pushed during the last frame, a scenario's `Do` step
+included, is taken): `Spray`, `Stream` (keyed by person and bleed, each bleed keeping its own aim off the skin's normal,
+npc.ts `_aims`; throat.rs's vomit is `bleed: None`), `Soak` (into soak.rs), `Spatter` (npc.ts `spatter`, ported here).
+Not taken here: `Welling`, `Runs`, `Blot` (skin's: film.rs, runs.rs), `Bled`, `Edge`, `Charge` (cut's).
+
+### With the skin (skin.rs, film.rs, runs.rs)
+- Drops that land on bare skin are pushed onto the person's `Hurt::happened` as medicine's own `Blot { hit, r, wet }` and
+  (over 0.008 ml) `Runs { hit, ml, from: None }`, in Update (`blood::Bleeding`); skin.rs draws them in PostUpdate as it
+  draws medicine's. Bodies lying in blood push `Blot` the same way. Drops on clothes go into soak.rs.
+- runs.rs's messages are taken in Update: `runs::Drip` (a drop let go from the skin: blood.rs flies it), `runs::Pooled`
+  (into the floor) and `runs::Soaked` (into the person's `soak::Soak`). runs.rs draws its own beads.
+- The clothes' soak is drawn by skin.rs's material: `Wounded` has `soak` (binding 107, the person's 3D field; sampler 108),
+  `soak_at` (109, the field's corner at rest) and `soak_scale` (110, one over its size), a dry 1-texel field
+  (`soak::DRY`) until soak.rs `wire` gives a person's clothes their own; skin.wesl's CLOTH branch calls fluid.wesl
+  `stained` after the scorch (three lines).
+- The `Blood` resource for anyone else: `blood.drip(at, ml, fluid::across(ml))`, `blood.run(at, litres_per_s, dt)` (a flow
+  with nowhere to go: gathers into drips, or into the floor below 4 cm), `blood.fill(at, litres)`, `blood.spray(..)`;
+  `soak.add(rest, ml) -> bool`, `soak.fullness(rest)` on the person's `Soak`.
+
+### For cut (dismember.rs, viscera.rs)
+dismember.ts sprayed from a fresh stump (`blood.spray`) and ran from a stump's end (`blood.run`); viscera.ts dripped
+(`blood.drip`): the same calls on the `Blood` resource. Rapier bodies are not used: the drops are blood.rs's own.
+
+### On the GPU
+(The shaders: floor.wesl, puddle.wesl, soak.wesl, stain.wesl, fluid.wesl; the clothes' look is in skin.wesl.)
+- The floor (floor.rs, floor.wesl): the TS's 12.5 mm grid over the whole hall, kept only for the 32-by-32-cell tiles
+  blood has reached (woken where it lands, round it, and where the flow asks: the `want` flags), at most 1024 of them, in
+  buffers by tile: depth, age, the floor's own lie (made on the CPU when a tile wakes, the TS's noise in f64), and what each
+  cell gives its four neighbours. A frame's blood onto and off the floor is one pass (`apply`, one invocation, the ops in
+  order); a step (every 1/30 s, at most one a frame, as the TS) is `flow` (what each cell gives), `gather` (what each takes,
+  so the order of the cells does not show, as the TS's change-then-settle) and `settle` (ages taken, the display written).
+  The material reads only the display (rgba8: the depth's square root, the wetness), exactly as the TS's puddleMap.
+- The clothes (soak.rs, soak.wesl): each body's grid of 8 mm cubes of cloth as the TS made it (cubes with cloth only, six
+  neighbours each, the empty cubes round the cloth copying their neighbour), once a body; per person the blood in each
+  cube, its age, what has gathered to drip. `apply` (the frame's blood in and out), then each step (1/8 s) `flow`, `gather`
+  and `encode` (the 3D field the cloth material reads) over every cube of cloth. The TS's 1200-cubes-a-step budget and its
+  sleeping cubes were a CPU budget: every cube is worked out every step here, so a great soaking spreads as fast as the
+  TS's small ones did. Drops gathered at hems come back by readback each step and fall from where that cube is now.
+- The CPU's copies: the floor's depths and ages every 0.2 s (only the awake tiles), each wet person's cloth every 0.5 s.
+  Between copies the CPU keeps what it added and took itself.
+
+### The check
+`cargo run -- --scenario blood --out <dir>`: the second person knocked out and down on his back, then at once a knife
+nicking the old man's right femoral artery as he stands, a pistol shot down through the groundskeeper's neck, nine shotgun
+pellets into the young man's chest, a knife into the hooded man's belly and 40 ml put in his left airways to cough up; each
+seen at 0, 2, 10, 30 and 120 s (views half a second apart; drawn small between pictures, which on lavapipe is most of a
+run). The log has, at each time, the drops and streams in the air, the floor's awake tiles, each person's blood lost and
+in their clothes, and what blood cost: CPU per system (`take`, `update`, `soak`, `draw`, `floor`) and the GPU's floor and
+clothes passes (Bevy's render diagnostics, timestamp queries; on lavapipe these are CPU time). tools/port-blood.mjs does
+the same in the TS game (people picked by body; its world.npcs order is not the line-up's) and writes the same views.
+
+### Not done, and why
+- Drops are drawn without the hall reflected (plain StandardMaterial): beads a few millimetres across; the pools and marks
+  carry it.
+- The reflection is rendered once, when the hall is loaded, with whatever stands in it then left out (people are not on
+  its layer), as the TS's REFRESHRATE_RENDER_ONCE.
+
+### Runs of the check
+The full run (0 to 120 s, every number below) was before the hands and the skin were merged: the femoral nick then
+nicked the artery as the TS's did. After both merged, the check aims the knife at the artery itself (the body settles a
+few millimetres differently from run to run, and the bone-relative point missed it once), which severs it: 1.16 L lost
+by 30 s against the nick's 0.57. That run reached 30 s (the machine's memory limit stopped it, shared with three other
+games): the soak drawn through skin.rs's material, the cough's blood on the chin by runs.rs, the stream's arc and the pool.
+
+### Measured (2026-11-16, the check on lavapipe, a debug build with the game's crate at opt-level 1, four people bleeding)
+- Against the TS (tools/port-blood.mjs, same wounds): blood in the clothes at 2/10/30/120 s, old man 20/102/288/616 ml
+  (TS 21/102/252/1022), young man 10/30/41/75 (TS 10/27/41/86), hooded man 0.5/2.3/5.9/14 (TS 0.5/2.3/6/14); blood lost
+  the same to the millilitre (medicine's). The old man's trousers hold less at 2 minutes and drip more onto the floor: the
+  TS worked out at most 1200 cubes a step and its great soakings spread and drained slower than its own numbers say.
+- CPU a frame: taking medicine's blood 0.02-0.03 ms, drops/streams/landing/lying 0.1-0.7 ms (most of it finding the
+  skin a drop met: npc.rs `nearest_rest`, at most 16 a frame), the clothes' bookkeeping under 0.01 ms, drawing 0.02-0.05 ms,
+  the floor's under 0.01 ms.
+- GPU (timestamp queries; lavapipe runs them on the CPU, so these are upper bounds, not a graphics card's): the floor's
+  passes 0.7-2.3 ms with 15-29 tiles awake; the clothes' 0.1-0.3 ms a frame with ops only, 28 ms in a frame whose step
+  wrote all four people's fields (700,000 invocations; since then only cloth blood has reached is written).
+
 ## Skin (phase 3, branch port/skin)
 
 What hurt looks like on the skin and clothes: marks.rs, film.rs, runs.rs, hider.rs, bruise.rs's drawing half,

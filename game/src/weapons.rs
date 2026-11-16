@@ -2588,8 +2588,7 @@ fn over_room(
 }
 
 // The blade reddened by the blood on it, wet and glossy, going dull and brown as it dries.
-// port: needs blood. What leaves the blade (weapons.ts _shed: drops cast off it as it swings, at its tip's speed) is
-// blood.spray's; until it lands the blood stays on.
+// What leaves the blade (weapons.ts _shed: drops cast off it as it swings, at its tip's speed) is blood.rs `shed`'s.
 fn stain(
     weapons: Res<Weapons>,
     hand: Res<Hand>,
