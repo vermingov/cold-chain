@@ -43,9 +43,13 @@ pub struct Graphics {
     pub target: Handle<Image>,
 }
 
-// Where the preset is kept between runs (the TS kept it in the browser's localStorage).
+// Where the preset is kept between runs (the TS kept it in the browser's localStorage): ~/.config, or %APPDATA% on
+// Windows, which has no HOME.
 fn kept() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(Into::into).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(Into::into)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .or_else(|| std::env::var_os("APPDATA").map(Into::into))?;
     Some(base.join("cold-chain").join("quality"))
 }
 
