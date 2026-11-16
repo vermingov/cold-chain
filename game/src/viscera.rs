@@ -1050,15 +1050,16 @@ pub fn update_system(
     anatomy: Res<Anatomy>,
     mut looks: ResMut<Looks>,
     mut rng: ResMut<Rng>,
+    mut blood: ResMut<crate::blood::Blood>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<WetMaterial>>,
-    mut people: Query<(Entity, &Person, &Transform, &mut Viscera, &mut Hurt, &mut Vitals, Option<&Ragdoll>)>,
+    mut people: Query<(Entity, &Person, &Transform, &mut Viscera, &Hurt, &mut Vitals, Option<&Ragdoll>)>,
     skins: Query<&SkinnedMesh>,
     parents: Query<&ChildOf>,
 ) {
     let dt = time.delta_secs();
-    for (_, person, root, mut v, mut hurt, mut vitals, rd) in &mut people {
+    for (_, person, root, mut v, hurt, mut vitals, rd) in &mut people {
         let first = person.parts[0].1;
         let (Ok(skin), Ok(space)) = (skins.get(first), parents.get(first).map(|c| c.parent())) else { continue };
         // What wounds.rs handed over: blood on an organ hit.
@@ -1154,7 +1155,7 @@ pub fn update_system(
             v.drip -= dt;
             if vitals.beating() && v.drip < 0.0 {
                 v.drip = 0.4 + rng.next() * 0.8;
-                hurt.happened.push(Happened::Drip { at: low - Vec3::Y * 0.014, ml: 0.05 });
+                blood.drip(low - Vec3::Y * 0.014, 0.05, crate::fluid::across(0.05));
             }
         }
     }

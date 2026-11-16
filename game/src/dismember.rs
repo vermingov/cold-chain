@@ -985,9 +985,9 @@ pub fn taken_system(world: &mut World) {
 
 // Each piece's first bone where its own body is (its parent bone is on the body now, not on it), and the bones a bend
 // was spread over kept straight in it; what was in the piece running out of its end; a head off kills in seconds.
-fn place_pieces(time: Res<Time>, mut people: Query<(&mut Person, &Transform, &Ragdoll, &mut Dismember, &mut Hurt, &mut crate::vitals::Vitals)>) {
+fn place_pieces(time: Res<Time>, mut blood: ResMut<crate::blood::Blood>, mut people: Query<(&mut Person, &Transform, &Ragdoll, &mut Dismember, &mut crate::vitals::Vitals)>) {
     let dt = time.delta_secs();
-    for (mut person, root, rd, mut d, mut hurt, mut v) in &mut people {
+    for (mut person, root, rd, mut d, mut v) in &mut people {
         if d.cuts.is_empty() {
             continue;
         }
@@ -1020,7 +1020,7 @@ fn place_pieces(time: Res<Time>, mut people: Query<(&mut Person, &Transform, &Ra
                 let rest_to_world = |p: Vec3| now.transform_point(p - body.bones[cut.tip].head);
                 let end = rest_to_world(cut.c);
                 let normal = now.rotation * -cut.n;
-                hurt.happened.push(Happened::Run { at: end + normal * 0.01, ml: cut.drains * 0.02 * dt * 1000.0 });
+                blood.run(end + normal * 0.01, cut.drains * 0.02, dt);
                 cut.drains *= (-dt / 25.0).exp();
             }
         }

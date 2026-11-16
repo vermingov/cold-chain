@@ -111,10 +111,6 @@ pub enum Happened {
     // blood.spray and blood.stream (blood.rs, phase 3).
     Spray { at: Vec3, dir: Vec3, speed: f32, ml: f32, spread: f32, size: f32 },
     Stream { bleed: Option<usize>, at: Vec3, dir: Vec3, speed: f32, ml: f32, r: f32 },
-    // blood.run and blood.drip (blood.rs): `ml` let run off at `at` this frame (what was in a piece cut off, out of its
-    // end: dismember.rs), and a drop let fall (off bowel that has come out: viscera.rs).
-    Run { at: Vec3, ml: f32 },
-    Drip { at: Vec3, ml: f32 },
     // film.blot: blood laid on the skin round `hit`.
     Blot { hit: Crossing, r: f32, wet: f32 },
     // A joint of the ragdoll changed (bones.rs), and npc.broke: a shaft let go at its mid joint (world.onBroke).
