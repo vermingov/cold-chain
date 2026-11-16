@@ -974,6 +974,11 @@ fn photograph(at: &'static str) -> Step {
                 .collect();
             log(w, serde_json::json!({ "event": "gpu", "at": at, "times": times }));
         }
+        // (the HUD's vitals panel comes and goes with whoever is looked at: nothing over the pictures)
+        let mut q = w.query_filtered::<&mut Visibility, With<Text>>();
+        for mut v in q.iter_mut(w) {
+            *v = Visibility::Hidden;
+        }
         let views = w.resource::<Views>().0.clone();
         let mut steps = std::collections::VecDeque::new();
         for (name, who, c, d) in views {
