@@ -857,8 +857,55 @@ fn faces(
     }
 }
 
+// The skin's colour as the blood leaves it: the red goes first, toward a grey-yellow white (pallor). The person's skin
+// materials are made their own the first time it shows, and written only when it has changed enough to see.
+// (port/skin gives the skin materials of its own, `skin::Flesh`: there the same colour goes on `Flesh::base`.)
+#[derive(Component)]
+pub struct Pallor {
+    materials: Vec<Handle<StandardMaterial>>,
+    shown: f32,
+}
+
+pub fn pallor_colour(pale: f32) -> Color {
+    Color::linear_rgb(1.0 - 0.16 * pale, 1.0 - 0.07 * pale, 1.0 - 0.05 * pale)
+}
+
+fn pallor(
+    mut commands: Commands,
+    mut people: Query<(Entity, &Person, &Face, Option<&mut Pallor>)>,
+    parts: Query<&MeshMaterial3d<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (e, person, face, own) in &mut people {
+        match own {
+            None if face.pale > 0.002 => {
+                let mut list = Vec::new();
+                for &(i, part) in &person.parts {
+                    if person.body.parts[i].kind != "skin" {
+                        continue;
+                    }
+                    let Some(m) = parts.get(part).ok().and_then(|m| materials.get(&m.0)).cloned() else { continue };
+                    let h = materials.add(StandardMaterial { base_color: pallor_colour(face.pale), ..m });
+                    commands.entity(part).insert(MeshMaterial3d(h.clone()));
+                    list.push(h);
+                }
+                commands.entity(e).insert(Pallor { materials: list, shown: face.pale });
+            }
+            Some(mut own) if (own.shown - face.pale).abs() > 0.0125 => {
+                own.shown = face.pale;
+                for h in &own.materials {
+                    if let Some(mut m) = materials.get_mut(h) {
+                        m.base_color = pallor_colour(face.pale);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, (fit, crate::profiler::timed("face", faces)).chain().after(crate::ragdoll::send));
+    app.add_systems(Update, (fit, crate::profiler::timed("face", faces), pallor).chain().after(crate::ragdoll::send));
 }
 
 #[cfg(test)]

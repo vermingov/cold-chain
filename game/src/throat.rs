@@ -224,8 +224,8 @@ impl ThroatOf<'_, '_> {
         self.heave(dt, alive, awake);
 
         // --- the mouth: out between the lips by gravity, faster the more the jaw is open
-        // port: phase 3 face. The TS read how far the face holds the jaw open now (face.jaw); here the pose's jaw, or how
-        // far a broken jaw or a retch lets it hang.
+        // (How far the face holds the jaw open now: face.rs puts it on the jaw bone, MakeHuman's JawDrop and the units
+        // that pull the jaw with it, and a broken jaw or a retch holds it open at least so far.)
         let jaw = self.0.bones().mouth_open().max(self.0.hurt.bones.jaw_hangs).max(self.0.hurt.throat.gape);
         let open = ramp(jaw, 1.0, 10.0);
         let mut out = 0.0;
