@@ -173,6 +173,20 @@ impl Skin {
 }
 
 impl Npc<'_> {
+    // npc.slash from where a blade went into the skin (world points, as weapons.rs keeps them): each laid back on the
+    // skin at rest, on the bone of the segment it is in, and the cut drawn through them.
+    pub fn slash_through(&mut self, points: &[Vec3], deep: f32, sweep: Vec3) {
+        let worlds = self.bone_worlds();
+        let hits: Vec<Crossing> = points
+            .iter()
+            .filter_map(|&p| {
+                let bone = self.person.segments[self.nearest(p).0?].bone;
+                self.nearest_rest(worlds[bone].inverse().transform_point3(p), 0.02)
+            })
+            .collect();
+        self.slash(&hits, deep, Some(sweep));
+    }
+
     // A blade drawn across the skin through `hits` (in order, from npc.surface), `deep` metres into it (npc.ts slash, for
     // weapons.rs). The cut follows the skin from one place it crossed to the next, through places laid back on the skin
     // in between, so it runs round a face and does not cut across it. Each stretch of it is a `Happened::Slit` for

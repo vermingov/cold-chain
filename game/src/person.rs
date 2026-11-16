@@ -484,7 +484,7 @@ pub fn absolute(bones: &[Bone], local: &[Quat]) -> Vec<(Quat, Vec3)> {
 // --- calibration ---------------------------------------------------------------------------------------------------
 
 // Work out, for each hinge, the axis that turns the way its name says, and the hand's.
-fn calibrate(body: &Body, rng: &mut Rng) -> HashMap<String, Hinge> {
+pub fn calibrate(body: &Body, rng: &mut Rng) -> HashMap<String, Hinge> {
     let mut hinges = HashMap::new();
     for entry in hinge_defs() {
         let first = body.bone(&entry.bones[0]);

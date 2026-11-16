@@ -9,25 +9,30 @@
 #![allow(dead_code)]
 
 mod anatomy;
+mod arm;
 mod arsenal;
 mod behaviour;
 mod bones;
 mod bruise;
 mod dressing;
+mod fist;
 mod eyes;
 mod film;
 mod graphics;
 mod hider;
+mod hands;
 mod hud;
 mod map;
 mod marks;
 mod models;
+mod muzzle;
 mod motor;
 mod npc;
 mod person;
 mod picture;
 mod player;
 mod poses;
+mod profiler;
 mod ragdoll;
 mod rng;
 mod runs;
@@ -143,6 +148,8 @@ fn main() -> AppExit {
         arsenal::plugin,
         hud::plugin,
     ))
+    // The hands and ears (dev/PORT.md phase 2): the thing in the hand's flash, the arms and fists, F2.
+    .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin))
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
     // The look of hurt on the skin: wounds, blood on and running down it, bruising, holes in the clothes (phase 3,
