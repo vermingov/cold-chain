@@ -41,6 +41,7 @@ mod teeth;
 mod throat;
 mod vitals;
 mod weapons;
+mod wet;
 mod wounds;
 
 use std::path::PathBuf;
@@ -145,7 +146,7 @@ fn main() -> AppExit {
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
     // Blood out of the body: drops, streams, the floor's pools, the clothes' stains (phase 3, port/blood).
-    .add_plugins((fluid::plugin, floor::plugin, soak::plugin, blood::plugin));
+    .add_plugins((fluid::plugin, wet::plugin, floor::plugin, soak::plugin, blood::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

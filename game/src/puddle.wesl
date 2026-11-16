@@ -7,12 +7,22 @@ import bevy_pbr::render::{
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
 };
-import cold_chain::fluid::{blood_over, noise2};
+import cold_chain::fluid::{blood_over, noise2, hall_seen, fresnel};
 
 @group(3) @binding(100) var puddle_map: texture_2d<f32>;
 @group(3) @binding(101) var puddle_sampler: sampler;
 // The floor's corner (x, z), one over its size, cells a side.
 @group(3) @binding(102) var<uniform> area: vec4<f32>;
+// The hall as wet blood shows it (wet.rs): +X, -X, +Y, -Y, +Z, -Z.
+@group(3) @binding(103) var hall0: texture_2d<f32>;
+@group(3) @binding(104) var hall1: texture_2d<f32>;
+@group(3) @binding(105) var hall2: texture_2d<f32>;
+@group(3) @binding(106) var hall3: texture_2d<f32>;
+@group(3) @binding(107) var hall4: texture_2d<f32>;
+@group(3) @binding(108) var hall5: texture_2d<f32>;
+@group(3) @binding(109) var hall_sampler: sampler;
+// How much of the hall a pool shows (the TS's environmentIntensity on its floor's blood).
+const SHOWS: f32 = 0.9;
 
 const MOST_MM: f32 = 4.0;
 const CELL_MM: f32 = 12.5;
@@ -104,6 +114,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.material.perceptual_roughness = 1.0 - gloss;
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
+    // The hall reflected in it, as much as its surface is smooth: wet, a mirror; skinned over, a dull sheen; dry, none.
+    let n = pbr_input.N;
+    let v = pbr_input.V;
+    let seen = hall_seen(reflect(-v, n), hall0, hall1, hall2, hall3, hall4, hall5, hall_sampler);
+    out.color = vec4(out.color.rgb + seen * fresnel(dot(n, v)) * SHOWS * gloss * gloss, out.color.a);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }

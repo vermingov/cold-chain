@@ -312,6 +312,20 @@ pub struct Puddle {
     // The floor's corner (x, z), one over its size, cells a side.
     #[uniform(102)]
     area: Vec4,
+    // The hall, as wet blood shows it (wet.rs).
+    #[texture(103)]
+    #[sampler(109)]
+    hall0: Handle<Image>,
+    #[texture(104)]
+    hall1: Handle<Image>,
+    #[texture(105)]
+    hall2: Handle<Image>,
+    #[texture(106)]
+    hall3: Handle<Image>,
+    #[texture(107)]
+    hall4: Handle<Image>,
+    #[texture(108)]
+    hall5: Handle<Image>,
 }
 
 impl MaterialExtension for Puddle {
@@ -321,7 +335,8 @@ impl MaterialExtension for Puddle {
 }
 
 fn make(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut buffers: ResMut<Assets<ShaderBuffer>>, mut meshes: ResMut<Assets<Mesh>>,
-        mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, Puddle>>>) {
+        mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, Puddle>>>, hall: Res<crate::wet::Hall>) {
+    let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
     let mut floor = Floor::new(&mut images, &mut buffers);
     let material = materials.add(ExtendedMaterial {
         base: StandardMaterial {
@@ -334,7 +349,11 @@ fn make(mut commands: Commands, mut images: ResMut<Assets<Image>>, mut buffers: 
             depth_bias: 1.0,
             ..default()
         },
-        extension: Puddle { map: floor.display.clone(), area: Vec4::new(floor.x0, floor.x0, 1.0 / (floor.n as f32 * CELL), floor.n as f32) },
+        extension: Puddle {
+            map: floor.display.clone(),
+            area: Vec4::new(floor.x0, floor.x0, 1.0 / (floor.n as f32 * CELL), floor.n as f32),
+            hall0, hall1, hall2, hall3, hall4, hall5,
+        },
     });
     let plane = commands
         .spawn((Mesh3d(meshes.add(Plane3d::default().mesh().size(1.0, 1.0))), MeshMaterial3d(material), Transform::from_xyz(0.0, 0.0007, 0.0),
@@ -600,7 +619,7 @@ pub fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "floor.wesl");
     bevy::asset::embedded_asset!(app, "puddle.wesl");
     app.add_plugins(MaterialPlugin::<ExtendedMaterial<StandardMaterial, Puddle>>::default())
-        .add_systems(Startup, make)
+        .add_systems(Startup, make.after(crate::wet::make))
         .add_systems(PostUpdate, update);
     let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
     render

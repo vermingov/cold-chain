@@ -926,7 +926,22 @@ fn feet(b: &mut Blood, player: &Player, map: &Map, floor: &mut Floor) {
 // The marks on the room as a mark's quad in its mesh: the stain's colour as it dries (vertex colour) and how dry it is
 // (second UV), for stain.wesl.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
-pub struct Stain {}
+pub struct Stain {
+    // The hall, as wet blood shows it (wet.rs).
+    #[texture(100)]
+    #[sampler(106)]
+    hall0: Handle<Image>,
+    #[texture(101)]
+    hall1: Handle<Image>,
+    #[texture(102)]
+    hall2: Handle<Image>,
+    #[texture(103)]
+    hall3: Handle<Image>,
+    #[texture(104)]
+    hall4: Handle<Image>,
+    #[texture(105)]
+    hall5: Handle<Image>,
+}
 
 impl MaterialExtension for Stain {
     fn fragment_shader() -> ShaderRef {
@@ -944,7 +959,8 @@ struct Drawn {
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
-         mut stains: ResMut<Assets<ExtendedMaterial<StandardMaterial, Stain>>>) {
+         mut stains: ResMut<Assets<ExtendedMaterial<StandardMaterial, Stain>>>, hall: Res<crate::wet::Hall>) {
+    let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
     let mut blood = Blood::new();
     // Blood in the air, and beads of it on skin: a deep red that shines.
     let air = materials.add(StandardMaterial {
@@ -974,7 +990,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             depth_bias: 2.0,
             ..default()
         },
-        extension: Stain {},
+        extension: Stain { hall0, hall1, hall2, hall3, hall4, hall5 },
     });
     let mut chunks = Vec::new();
     for _ in 0..SPLATS / CHUNK {
@@ -1431,7 +1447,7 @@ pub fn plugin(app: &mut App) {
     }
     bevy::asset::embedded_asset!(app, "stain.wesl");
     app.add_plugins(MaterialPlugin::<ExtendedMaterial<StandardMaterial, Stain>>::default())
-        .add_systems(Startup, setup)
+        .add_systems(Startup, setup.after(crate::wet::make))
         .add_systems(First, take.before(crate::npc::forget))
         .add_systems(Update, (update.in_set(Bleeding), clear.run_if(bevy::input::common_conditions::input_just_pressed(KeyCode::KeyK))))
         .add_systems(PostUpdate, draw.before(bevy::transform::TransformSystems::Propagate));
