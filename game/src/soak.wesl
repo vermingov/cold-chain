@@ -1,6 +1,6 @@
 // Blood in one person's clothes worked out on the GPU (soak.rs): the TS's soak.ts `add`, `take` and `_some`, number for
 // number, over every cube of cloth at once (the TS worked out at most 1200 a step on the CPU, the rest waiting), and the
-// 3D texture the clothes' material reads (cloth.wesl) written from it.
+// 3D texture the clothes' material reads (skin.wesl, fluid.wesl `stained`) written from it.
 //
 // A step is three passes, so that the order the cubes are worked out in does not show (the TS kept what each gave aside
 // until its last cube): each cube works out what it gives each of its six neighbours (`flow`); each takes what its

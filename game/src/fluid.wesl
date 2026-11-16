@@ -1,5 +1,5 @@
 // The colour of blood (fluid.ts GLSL_BLOOD), for every shader that draws it: the floor's pools (puddle.wesl), the
-// clothes' stains (cloth.wesl), the marks it leaves (stain.wesl).
+// clothes' stains (skin.wesl, through `stained` below), the marks it leaves (stain.wesl).
 //
 // Linear: how much of each of red, green and blue a millimetre of it lets through (as an absorption, per mm), and the
 // colour of so much of it that nothing shows through. Fresh, it passes red and stops green and blue almost at once: a
