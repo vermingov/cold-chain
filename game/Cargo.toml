@@ -12,8 +12,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The numbers on the hall's walls are drawn into a texture on the CPU, as the TS game drew them on a canvas.
 ab_glyph = "0.2"
-# Plain numbers as bytes for the GPU buffers the floor's and the clothes' blood are worked out in (blood.rs, floor.rs, soak.rs).
-bytemuck = "1"
+# Plain numbers as bytes for the GPU: the skin's paint stamps (skin.rs), the floor's and the clothes' blood (blood.rs,
+# floor.rs, soak.rs).
+bytemuck = { version = "1", features = ["derive"] }
 kira = { version = "0.12", default-features = false, features = ["cpal", "ogg", "vorbis"] }
 
 # The game's own code with debug checks, Bevy and the physics optimised: a ragdoll stepped at 120 Hz in a debug build

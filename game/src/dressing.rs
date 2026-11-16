@@ -512,3 +512,144 @@ impl Npc<'_> {
         }
     }
 }
+
+// --- a dressing's look (dressing.ts _shape, _mesh, _picture, _paint, _clothes; phase 3, port/skin) -------------------
+//
+// The patch of skin it lies on, lifted off it, as a mesh of its own skinned to the same bones, so it bends with the
+// body; drawn by skin.wesl (`GAUZE`) as white cotton (a pad's folds and the tape over it, or a roll's turns laid half over
+// each other) with the blood in it spread out from the wound, dark where the gauze is full, a paler fringe of serum ahead,
+// browning as it dries. The clothes over it are cut away, the skin under them shown there; the swelling under it lifts
+// it, at once where it lies on the skin, and it presses the swelling back (bruise.rs riders).
+
+// A dressing built to be drawn: its mesh, where its corners are at rest (what the swelling carries), its picture's
+// layout (metres across and up the picture, and where its corner is), and the opening cut in the clothes over it.
+pub struct Gauze {
+    pub mesh: Mesh,
+    pub rest: Vec<Vec3>,
+    pub layout: Vec4,
+    pub pad: bool,
+    pub opening: (Vec3, Vec3, f32, f32),
+}
+
+// The skin's triangles wholly on it, each corner its own (a roll's seam, opposite the wound, needs two), lifted off the
+// skin by `lift` and more over the wound where the pad is folded thick. (None for a bandage round the head.)
+// shortcut: a face or neck pad is laid as a pad anywhere is (dressing.ts _head bridged the eye's hollow and wound the
+// scalp's bandage round the head: not drawn here yet).
+pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize) -> Option<Gauze> {
+    let lift = 0.0028 + layer as f32 * 0.003;
+    let mark = &d.mark;
+    // Each corner of the skin: on it (where on the dressing, x and y in metres, its lifted place and its normal), or not.
+    let place: Box<dyn Fn(usize) -> Option<(f32, f32, Vec3, Vec3)>>;
+    let layout: Vec4;
+    let opening;
+    let pad = matches!(d.covers, Covers::Pad { .. });
+    match d.covers {
+        Covers::Pad { c, n, ex, ey, side } => {
+            // A pad, square on the skin, centred on the wound, its sides along the body and across it; thickest in the
+            // middle where it is folded over itself, the tape over its ends thinner.
+            let h = side * 1.6;
+            layout = Vec4::new(2.0 * h, 2.0 * h, -h, -h);
+            opening = (c, n, side * 1.55, 0.06);
+            place = Box::new(move |v| {
+                let p = body.position[v];
+                let q = p - c;
+                let (x, y) = (q.dot(ex), q.dot(ey));
+                if x.abs() > h || y.abs() > h || q.dot(n).abs() > 0.04 {
+                    return None;
+                }
+                let mut nv = body.normal[v];
+                if nv.dot(n) < 0.0 {
+                    nv = -nv;
+                }
+                if nv.dot(n) < 0.3 {
+                    return None;
+                }
+                let thick = if x.abs() < side && y.abs() < side { 0.002 + 0.004 * (-(x * x + y * y) / 0.0009).exp() } else { 0.0 };
+                Some((x, y, p + nv * (lift + thick), nv))
+            });
+        }
+        Covers::Wrap { a, axis, low, high, far } => {
+            // Round a limb: the line it runs along, and how far out its skin is at the wound.
+            let along = move |q: Vec3| (q - a).dot(axis);
+            let out = move |q: Vec3| q - a - axis * along(q);
+            let p0 = along(mark.rest);
+            let r0 = out(mark.rest).length();
+            let e0 = out(mark.rest).normalize();
+            let e1 = axis.cross(e0);
+            let round = std::f32::consts::TAU * (r0 + lift);
+            layout = Vec4::new(round, ROLL + 0.03, -round / 2.0, -ROLL / 2.0 - 0.015);
+            let middle = a + axis * p0;
+            opening = (middle, axis, far + 0.05, ROLL / 2.0 + 0.01);
+            place = Box::new(move |v| {
+                let q = body.position[v];
+                let p = along(q);
+                if p < low - 0.012 || p > high + 0.012 {
+                    return None;
+                }
+                let o = out(q);
+                let r = o.length();
+                if r > far || r < r0 * 0.3 {
+                    return None;
+                }
+                let radial = o / r;
+                let mut nv = body.normal[v];
+                if nv.dot(radial) < 0.0 {
+                    nv = -nv;
+                }
+                if nv.dot(radial) < 0.2 {
+                    return None;
+                }
+                let x = o.dot(e1).atan2(o.dot(e0)) * (r0 + lift);
+                // The pad under the turns, over the wound.
+                let thick = 0.004 * (-(x * x + (p - p0) * (p - p0)) / 0.0009).exp();
+                Some((x, p - p0, q + nv * (lift + thick), nv))
+            });
+        }
+        Covers::Band { .. } => return None,
+    }
+    let (mut pos, mut nor, mut uv, mut joints, mut weights, mut rest) = (vec![], vec![], vec![], vec![], vec![], vec![]);
+    let mut done: std::collections::HashMap<usize, Option<(f32, f32, Vec3, Vec3)>> = std::collections::HashMap::new();
+    for part in body.parts.iter().filter(|p| p.kind == "skin") {
+        for t in (part.index_start..part.index_start + part.index_count).step_by(3) {
+            let tri = [0, 1, 2].map(|k| body.index[t + k] as usize);
+            let on: Vec<_> = tri.iter().map(|&v| *done.entry(v).or_insert_with(|| place(v))).collect();
+            if on.iter().any(Option::is_none) {
+                continue;
+            }
+            let on: Vec<_> = on.into_iter().map(Option::unwrap).collect();
+            let mut xs: Vec<f32> = on.iter().map(|o| o.0).collect();
+            let (lo, hi) = xs.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), &x| (a.min(x), b.max(x)));
+            if !pad && hi - lo > layout.x / 2.0 {
+                xs = xs.into_iter().map(|x| if x < 0.0 { x + layout.x } else { x }).collect();
+            }
+            for k in 0..3 {
+                let (_, y, at, n) = on[k];
+                pos.push(at);
+                nor.push(n);
+                uv.push(Vec2::new((xs[k] - layout.z) / layout.x, (y - layout.w) / layout.y));
+                joints.push(body.joints[tri[k]]);
+                weights.push(body.weights[tri[k]].map(|w| w as f32 / 255.0));
+                rest.push(body.position[tri[k]]);
+            }
+        }
+    }
+    if pos.len() < 9 {
+        return None;
+    }
+    let count = pos.len() as u32;
+    let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nor)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(joints))
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights)
+        .with_inserted_indices(Indices::U32((0..count).collect()))
+        .with_generated_skinned_mesh_bounds()
+        .ok()?;
+    Some(Gauze { mesh, rest, layout, pad, opening: (opening.0, opening.1, opening.2, opening.3) })
+}
+
+// How far the blood in it has spread (m, round the wound) and how dry it is (dressing.ts _paint).
+pub fn stain(d: &Dressing) -> (f32, f32) {
+    ((d.held / d.per / std::f32::consts::PI).sqrt() / 100.0, 1.0 - (-d.since / 900.0).exp())
+}

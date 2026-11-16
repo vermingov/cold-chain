@@ -2210,6 +2210,7 @@ dependencies = [
  "ab_glyph",
  "bevy",
  "bevy_rapier3d",
+ "bytemuck",
  "kira",
  "serde",
  "serde_json",

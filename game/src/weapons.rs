@@ -1650,13 +1650,14 @@ pub fn act(mut cx: Cx) {
         sweep(&mut cx, dt);
         let act = cx.weapons.action.as_ref().unwrap();
         if act.t >= act.length {
-            // The cuts drawn along every place each crossed the skin (npc.slash).
-            // port: phase 3 (npc.slash draws the cut along them: marks); the wound under each crossing is pierce's, already made.
+            // The cuts drawn along every place each crossed the skin (npc.slash: marks.rs); the wound under each crossing
+            // is pierce's, already made.
             let act = cx.weapons.action.take().unwrap();
             let sweep = cx.eye().left().as_vec3();
             for (who, hits) in act.hits {
                 let label = cx.label(who);
                 let depth = if a.cut > 0.0 { a.cut } else { a.down.as_ref().and_then(|d| d.cut).unwrap_or(0.02) };
+                cx.npc(who, |npc| npc.slash_through(&hits, depth, sweep));
                 cx.weapons.log.push(json!({ "slash": label, "points": hits.iter().map(|p| p.to_array()).collect::<Vec<_>>(), "depth": depth, "sweep": sweep.to_array() }));
             }
         }
