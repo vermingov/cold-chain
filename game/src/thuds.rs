@@ -18,7 +18,7 @@ const AGAIN: f32 = 0.15; // s: the least time between two sounds from one segmen
 const LYING: f32 = 0.2; // m: a segment whose middle is this near the floor lies on it (a trunk's is 10 to 15 cm up)
 
 // A sound to be played where it happened, as loud as `gain` (0 to 1): one of the takes in assets/sounds by name.
-// port: needs sound.rs: nothing plays these yet; the scenarios write them to their log.
+// Played by sound.rs `bodies`; the scenarios also write them to their log.
 #[derive(Message, Clone, Debug)]
 pub struct Heard {
     pub name: &'static str,
@@ -27,7 +27,7 @@ pub struct Heard {
 }
 
 // A person's segment slammed into something standing, at `toward` m/s: wounds.rs's blunt blow ('wall'), when it comes.
-// port: wounds.rs `blow(npc, point, normal, mass, toward, 'wall')`.
+// Taken as wounds.rs `blow(npc, point, normal, mass, toward, 'wall')` by weapons.rs `act`.
 #[derive(Message, Clone, Debug)]
 pub struct Slam {
     pub person: Entity,

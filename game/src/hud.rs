@@ -149,6 +149,7 @@ fn update(
     monitor: Query<Entity, With<Monitor>>,
     mut ammo: Query<&mut Text, (With<Ammo>, Without<NoteText>)>,
     mut said: Query<&mut Text, (With<NoteText>, Without<Ammo>)>,
+    mut aim: Query<&mut Node, With<Aim>>,
     mut last: Local<(String, String, String)>,
 ) {
     let r = &fonts.roman;
@@ -173,16 +174,23 @@ fn update(
     let on = arsenal.and_then(|a| a.look(eye.translation, eye.forward().as_vec3()));
     let text = on.map(|k| {
         let verb = if weapons.slots.contains(&Some(k)) { "Hold" } else if weapons.slots.contains(&None) { "Take" } else { "Swap for" };
-        format!("{verb} the {}", arm(k).name)
+        ("E".to_string(), format!("{verb} the {}", arm(k).name))
     });
-    let p = text.clone().unwrap_or_default();
+    // (Else what the bandage or the medkit can do here: "Hold left click: Dress the wound", or how far a dressing is on.)
+    let text = text.or_else(|| {
+        let m = &weapons.medic.prompt;
+        (!m.is_empty()).then(|| m.split_once(": ").map_or((String::new(), m.clone()), |(k, t)| (k.to_string(), t.to_string())))
+    });
+    let p = text.as_ref().map(|(k, t)| format!("{k}|{t}")).unwrap_or_default();
     if p != last.1 {
         last.1 = p;
         for e in &prompt {
             commands.entity(e).despawn_children();
-            if let Some(t) = &text {
+            if let Some((k, t)) = &text {
                 commands.spawn((Node { align_items: AlignItems::Baseline, ..default() }, ChildOf(e))).with_children(|c| {
-                    c.spawn((Text::new("E"), font(r, 0.8), TextColor(FAINT), shadow(), Node { margin: UiRect::right(px(0.35 * REM)), ..default() }));
+                    if !k.is_empty() {
+                        c.spawn((Text::new(k.clone()), font(r, 0.8), TextColor(FAINT), shadow(), Node { margin: UiRect::right(px(0.35 * REM)), ..default() }));
+                    }
                     c.spawn((Text::new(t.clone()), font(r, 1.1), TextColor(INK), shadow()));
                 });
             }
@@ -190,9 +198,19 @@ fn update(
     }
     let a = weapons.arm();
     let rounds = match a.rounds {
+        Some(_) if weapons.reloading > 0.0 => "Reloading".to_string(),
         Some(n) => format!("{} / {n}", weapons.ammo[a.key]),
+        None if a.kind == crate::weapons::Kind::Throw => format!("Throwing a {}", weapons.throwing()),
         None => String::new(),
     };
+    // The crosshair where the gun's bore meets the world (weapons.rs `sight`), the middle of the view for anything else.
+    let (left, top) = weapons.sight.map_or((50.0, 50.0), |p| (p.x * 100.0, p.y * 100.0));
+    for mut n in &mut aim {
+        if n.left != percent(left) || n.top != percent(top) {
+            n.left = percent(left);
+            n.top = percent(top);
+        }
+    }
     for mut t in &mut ammo {
         if t.0 != rounds {
             t.0 = rounds.clone();
