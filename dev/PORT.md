@@ -619,12 +619,21 @@ edge: eyes.rs `pierced` now finds which way with the TS's second line beside the
 - Both run in First before `npc::forget`, so a tooth or a tear made anywhere in the last frame, a scenario's step
   included, is drawn.
 
+### A head cut off
+dismember.rs places a cut-off piece's bones by hand (`Person::placed`); face.rs works a bone out from its own chain up to
+the first placed bone (`face::bone_world`, also what the eyes', teeth's and mouth's looks use), so a head off keeps its
+face, its gaze and its mouth's blood where the piece is, until the death that follows. The face check compares every
+bone's chain with medicine's whole skeleton (`Npc::bone_worlds`) on a head cut off.
+
 ### The check
 `cargo run -- --scenario face --out <dir>` (face.rs `scenario`): the groundskeeper close up at rest, in the middle of
 each cry (scream, yell, groan, weeping, gasp, cough: said from the step and played and mouthed as sound.rs would), in
 pain, mid-blink, looking at the player from the side; a pellet in the young man's right eye (1.5 s and 20 s on); the old
 man dead (his last breath, and half a minute on: lids part open, jaw dropped, pupils wide); a bat into the hooded man's
-chin and his front teeth knocked out. Each picture's face (action units, jaw, blink, pupil, gaze) goes into the log.
+chin and his front teeth knocked out; the groundskeeper's head cut off (half a second and eight seconds on). Each
+picture's face (action units, jaw, blink, pupil, gaze) goes into the log. Each cry is caught where its take is loud with
+scenario.rs's `Step::Until(f, most)` (a frame at a time until `f` says so, at most `most` frames: for a moment that
+cannot be counted in advance).
 tools/port-face.mjs takes the same pictures in the TS game (the waits in each face's own seconds).
 
 ## The warm-up (warm.rs): a list for every job
@@ -647,11 +656,18 @@ player in front of the `n`th person of the line-up's segment `part`, `warm::take
 is on the list now (warm.rs `rehearse`): everything on the board in the hand (the held models and arms, held.wesl), each
 gun at someone and the same shot put through them (flash, case, the hole behind, the wound), a dressing, a stab, a cut, a
 bat, a punch, a thing thrown, the grenade, an eye shot with teeth knocked out, the tongue torn and blood in the mouth,
-the x-ray on and off. To add: port/blood (drops, the floor's pools, the clothes' stains, the reflection), port/cut (a limb
-severed by a blade and by a shot, shards, organs out of an opened belly, the wall's cut faces).
+port/cut's (a forearm cut off by a blade, a shin by a shot, a belly torn open by a blast, a head off), the x-ray on and
+off. Blood (drops, streams, the floor's pools, the clothes' stains) comes of the shots and cuts and is drawn while the
+steps wait. Anything new that is drawn only after an event belongs on the list with it.
 
 `warm::Pipelines` (a resource) counts what the render world's cache has made (`made`) and is still making (`waiting`);
 with `note` on it keeps what each new one was made for (its label and vertex shader switches).
 `cargo run -- --scenario warm --out <dir>` waits for the warm-up, then plays a fight (each kind of weapon at the line-up,
 a grenade, an eye shot, blood left to run, the x-ray) and logs `made_after_warm_up`, which should be 0, and the new
 pipelines' descriptions if not.
+
+### Building beside other worktrees (found by port/face)
+Worktrees sharing one CARGO_TARGET_DIR share the crate's fingerprint (the package is the same, only its path differs), so
+`cargo build` in one can say Finished at once while target/debug/cold-chain is another worktree's latest. Check the copy
+you run is yours (`strings` for a name only your branch has), and force your own link with
+`cargo rustc --bin cold-chain -- --cfg <your branch>` (a flag of its own: only this crate is built again).
