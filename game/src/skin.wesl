@@ -16,7 +16,7 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
 };
-import cold_chain::fluid::stained;
+import cold_chain::fluid::{blood_over, stained};
 
 // info: how this part is drawn (skin.rs SKIN, UNDER, CLOTH, CARRIED) and its first corner in the body.
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> info: vec4<u32>;
@@ -152,16 +152,6 @@ const BRUISE: vec3<f32> = vec3(41.3, 289.1, 113.7);
 
 fn to_linear(c: vec3<f32>) -> vec3<f32> {
     return pow(c, vec3(2.2));
-}
-
-// The colour of blood over what is under it (fluid.ts GLSL_BLOOD): how much of red, green and blue a millimetre of it
-// lets through, and the colour of so much of it that nothing shows through. Fresh, it passes red and stops green and
-// blue almost at once: a smear is bright red over the skin, a thick streak dark red. Dried, it is methaemoglobin, brown.
-fn blood_over(under: vec3<f32>, mm: f32, wet: f32) -> vec3<f32> {
-    let mu = mix(vec3(3.6, 9.0, 10.5), vec3(3.0, 24.0, 28.0), wet);
-    let deep = mix(vec3(0.03, 0.01, 0.0065), vec3(0.075, 0.004, 0.0035), wet);
-    let through = exp(-mu * 2.0 * mm);
-    return under * through + deep * (1.0 - through);
 }
 
 // --- gunshot wounds (marks.rs `entry`, `aimed`, `exit`) -----------------------------------------------------------------
