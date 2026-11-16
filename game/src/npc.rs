@@ -666,19 +666,17 @@ impl<'a> Npc<'a> {
     }
 
     // What they say about what is happening to them: a cry the moment it hurts, as bad as it hurts; then groans, or
-    // weeping once a lot of blood has gone; gasping when they cannot get air; and a last breath.
+    // weeping once a lot of blood has gone; gasping when they cannot get air.
     fn speak(&mut self, dt: f32) {
         let awake = self.awake();
         let was = self.hurt.said.awake;
         // Knocked out or killed mid-cry, the cry stops there (a recording plays two or three seconds: it went on
         // screaming after the shot that put them down); so does a retch or a cough. (Whoever plays the voice keeps it and
         // takes `Happened::Cut`: sound.rs, which has nothing to cut if nothing is playing.)
+        // (The TS said a last breath, 'dying', as they died. The user: people "can still make noises when they
+        // die". Nothing is said by someone going out or dying: the moment is the cry cut off, and silence.)
         if was && !awake {
             self.hurt.happened.push(Happened::Cut);
-        }
-        let v = &*self.vitals;
-        if was && !awake && (v.dead || !v.beating()) {
-            self.say("dying", 0.8, true);
         }
         self.hurt.said.awake = awake;
         let v = &*self.vitals;
