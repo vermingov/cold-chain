@@ -30,6 +30,7 @@ use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderContext, RenderGraphSystems, RenderQueue};
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Extract, ExtractSchedule, RenderApp, RenderStartup};
 use bevy::shader::ShaderRef;
@@ -75,6 +76,7 @@ pub const SKIN: u32 = 0;
 pub const UNDER: u32 = 1;
 pub const CLOTH: u32 = 2;
 pub const CARRIED: u32 = 3;
+pub const GAUZE: u32 = 4;
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 pub struct Wounded {
@@ -88,6 +90,11 @@ pub struct Wounded {
     pub film: Handle<Image>,
     #[texture(104, sample_type = "float", filterable = false, visibility(vertex, fragment))]
     pub state: Handle<Image>,
+    // A dressing's picture (skin.wesl GAUZE): its layout, and the blood in it.
+    #[uniform(105)]
+    pub layout: Vec4,
+    #[uniform(106)]
+    pub stain: Vec4,
 }
 
 impl MaterialExtension for Wounded {
@@ -140,6 +147,10 @@ pub struct Skin {
     pub skin_holes: usize,
     pub windows: usize,
     pub opened: bool,
+    // Each dressing drawn: its entity and material, and the blood shown in it (how far spread, how dry).
+    pub dressings: Vec<(Entity, Handle<Flesh>, f32, f32)>,
+    // A part's skinned mesh and its parent, for things skinned to this person's bones (dressings).
+    pub skinned: Option<(SkinnedMesh, Entity)>,
 }
 
 impl Skin {
@@ -163,6 +174,7 @@ impl Skin {
 fn sheet(format: TextureFormat) -> Image {
     let mut image = Image::new_target_texture(SIZE, SIZE, format, None);
     image.data = None;
+    image.copy_on_resize = false;
     image.asset_usage = RenderAssetUsages::RENDER_WORLD;
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
     image
@@ -174,7 +186,7 @@ fn sheet(format: TextureFormat) -> Image {
 fn clothe(
     mut commands: Commands,
     people: Query<(Entity, &Person), (With<crate::npc::Hurt>, Without<Skin>)>,
-    parts: Query<(&MeshMaterial3d<StandardMaterial>, &SkinnedMesh)>,
+    parts: Query<(&MeshMaterial3d<StandardMaterial>, &SkinnedMesh, &ChildOf)>,
     standard: Res<Assets<StandardMaterial>>,
     mut flesh: ResMut<Assets<Flesh>>,
     mut images: ResMut<Assets<Image>>,
@@ -196,9 +208,23 @@ fn clothe(
         table.sampler = ImageSampler::nearest();
         let state = images.add(table);
         let make = |base: &StandardMaterial, mode: u32, start: usize, flesh: &mut Assets<Flesh>| {
+            let mut base = base.clone();
+            if mode == SKIN || mode == UNDER {
+                // A trace of clearcoat, so that Bevy draws a second, wet layer over the skin wherever skin.wesl says
+                // blood lies on it (and none where it does not).
+                base.clearcoat = 1e-4;
+                base.clearcoat_perceptual_roughness = 0.1;
+            }
             flesh.add(Flesh {
-                base: base.clone(),
-                extension: Wounded { info: UVec4::new(mode, start as u32, 0, 0), wounds: wounds.clone(), film: film.clone(), state: state.clone() },
+                base,
+                extension: Wounded {
+                    info: UVec4::new(mode, start as u32, 0, 0),
+                    wounds: wounds.clone(),
+                    film: film.clone(),
+                    state: state.clone(),
+                    layout: Vec4::ZERO,
+                    stain: Vec4::ZERO,
+                },
             })
         };
         let mut materials = Vec::new();
@@ -211,10 +237,10 @@ fn clothe(
                 "hair" | "brows" => CARRIED,
                 _ => continue,
             };
-            let Ok((m, skinned)) = parts.get(part_entity) else { continue };
+            let Ok((m, skinned, parent)) = parts.get(part_entity) else { continue };
             let Some(base) = standard.get(&m.0) else { continue };
             if mode == SKIN {
-                skin_base = Some((base.clone(), skinned.clone(), i));
+                skin_base = Some((base.clone(), skinned.clone(), i, parent.parent()));
             }
             let h = make(base, mode, p.vertex_start, &mut flesh);
             commands.entity(part_entity).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(h.clone()));
@@ -222,20 +248,16 @@ fn clothe(
         }
         // The skin under the clothes, which person.rs leaves out: drawn with the skin's own material made to show only
         // through holes in the clothes (hider.rs), as the TS's skin-under submesh was.
-        if let Some((base, skinned, skin_part)) = skin_base {
-            let skin_entity = person.parts.iter().find(|p| p.0 == skin_part).unwrap().1;
+        let mut skinned_at = None;
+        if let Some((base, skinned, _, space)) = skin_base {
+            skinned_at = Some((skinned.clone(), space));
             for (i, p) in body.parts.iter().enumerate().filter(|(_, p)| p.kind == "skin" && p.under) {
                 let mesh = under_meshes.entry((body.name.clone(), i)).or_insert_with(|| meshes.add(crate::person::part_mesh(body, p))).clone();
                 let h = make(&base, UNDER, p.vertex_start, &mut flesh);
-                let part_entity = commands
-                    .spawn((Mesh3d(mesh), MeshMaterial3d(h.clone()), skinned.clone(), bevy::camera::visibility::DynamicSkinnedMeshBounds))
-                    .id();
                 // (Beside the skin, under the same parent: the mesh's own space.)
-                commands.queue(move |w: &mut World| {
-                    if let Some(parent) = w.get::<ChildOf>(skin_entity).map(|c| c.parent()) {
-                        w.entity_mut(part_entity).insert(ChildOf(parent));
-                    }
-                });
+                let part_entity = commands
+                    .spawn((Mesh3d(mesh), MeshMaterial3d(h.clone()), skinned.clone(), bevy::camera::visibility::DynamicSkinnedMeshBounds, ChildOf(space)))
+                    .id();
                 materials.push((i, part_entity, h, UNDER));
             }
         }
@@ -261,6 +283,8 @@ fn clothe(
                 skin_holes: 0,
                 windows: 0,
                 opened: false,
+                dressings: Vec::new(),
+                skinned: skinned_at,
             },
             crate::runs::Runs::default(),
         ));
@@ -450,6 +474,82 @@ fn look(
     }
 }
 
+// Each dressing put on (dressing.rs) drawn: its gauze laid on the skin and skinned to it, carried by the swelling under
+// it, the clothes over it cut away; and the blood in it shown as it spreads and dries, a few times a second at most.
+fn bandage(
+    mut commands: Commands,
+    mut people: Query<(&Person, &mut crate::npc::Hurt, &mut Skin)>,
+    mut flesh: ResMut<Assets<Flesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut rng: ResMut<crate::rng::Rng>,
+    mut every: Local<f32>,
+    time: Res<Time>,
+) {
+    *every -= time.delta_secs();
+    let repaint = *every <= 0.0;
+    if repaint {
+        *every = 0.25;
+    }
+    for (person, mut hurt, mut skin) in &mut people {
+        let skin = &mut *skin;
+        while skin.dressings.len() < hurt.dressings.len() {
+            let k = skin.dressings.len();
+            let d = &hurt.dressings[k];
+            let layer = hurt.dressings[..k].iter().filter(|o| o.covers.covers(d.mark.rest)).count();
+            let built = crate::dressing::gauze(&person.body, d, layer);
+            let (Some(g), Some((skinned, space))) = (built, skin.skinned.clone()) else {
+                skin.dressings.push((Entity::PLACEHOLDER, Handle::default(), 0.0, 0.0));
+                continue;
+            };
+            let Some((_, slot)) = hurt.bruise.ride(&g.rest, 0.0, 1.0, None) else {
+                skin.dressings.push((Entity::PLACEHOLDER, Handle::default(), 0.0, 0.0));
+                continue;
+            };
+            let h = flesh.add(Flesh {
+                base: StandardMaterial {
+                    perceptual_roughness: 0.93,
+                    reflectance: 0.3,
+                    double_sided: true,
+                    cull_mode: None,
+                    alpha_mode: AlphaMode::Mask(0.5),
+                    ..default()
+                },
+                extension: Wounded {
+                    info: UVec4::new(GAUZE, slot, g.pad as u32, 0),
+                    wounds: skin.wounds.clone(),
+                    film: skin.film.clone(),
+                    state: skin.state.clone(),
+                    layout: g.layout,
+                    stain: Vec4::new(0.0, 0.0, rng.next() * std::f32::consts::TAU, rng.next() * std::f32::consts::TAU),
+                },
+            });
+            let e = commands.spawn((Mesh3d(meshes.add(g.mesh)), MeshMaterial3d(h.clone()), skinned, bevy::camera::visibility::DynamicSkinnedMeshBounds, ChildOf(space))).id();
+            // The clothes over it cut away, and the skin under them shown there.
+            let (at, ey, r, depth) = g.opening;
+            if person.body.parts.iter().any(|p| p.worn) {
+                skin.cloth_hole(&crate::hider::Opening { at, ex: crate::hider::tangent(ey), ey, half: [r, r] });
+                skin.window(at, ey, r, depth);
+            }
+            skin.dressings.push((e, h, 0.0, 0.0));
+        }
+        if !repaint {
+            continue;
+        }
+        for (k, d) in hurt.dressings.iter().enumerate() {
+            let (r, dry) = crate::dressing::stain(d);
+            let (_, h, was_r, was_dry) = &mut skin.dressings[k];
+            if r - *was_r > 0.0007 || (dry - *was_dry).abs() > 0.04 {
+                *was_r = r;
+                *was_dry = dry;
+                if let Some(mut m) = flesh.get_mut(&*h) {
+                    m.extension.stain.x = r;
+                    m.extension.stain.y = dry;
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn looking(
     time: Res<Time>,
@@ -618,6 +718,20 @@ fn paint(
     let (Some(marks), Some(strokes), Some(dry)) = (cache.get_render_pipeline(painter.marks), cache.get_render_pipeline(painter.strokes), cache.get_render_pipeline(painter.dry)) else {
         return;
     };
+    let (marks, strokes, dry) = (marks.clone(), strokes.clone(), dry.clone());
+    let (marks, strokes, dry) = (&marks, &strokes, &dry);
+    // (Timed when render diagnostics are on: SKIN_TIMES=1, for the check.)
+    let diagnostics = ctx.diagnostic_recorder();
+    let span = diagnostics.as_ref().map(|d| d.time_span(ctx.command_encoder(), "skin_paint"));
+    paint_all(&painting, painter, marks, strokes, dry, &images, &queue, &mut ctx);
+    if let Some(span) = span {
+        span.end(ctx.command_encoder());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_all(painting: &Painting, painter: &mut Painter, marks: &RenderPipeline, strokes: &RenderPipeline, dry: &RenderPipeline, images: &RenderAssets<GpuImage>,
+             queue: &RenderQueue, ctx: &mut RenderContext) {
     if !painting.stamps.is_empty() {
         painter.buffer.clear();
         painter.buffer.values_mut().extend_from_slice(&painting.stamps);
@@ -627,7 +741,7 @@ fn paint(
         // (Nothing stamped yet anywhere: only drying.)
         for job in &painting.jobs {
             if let (Some(k), Some(film)) = (job.dry, images.get(job.film)) {
-                pass(&mut ctx, &film.texture_view, dry, None, 0..0, Some(k));
+                pass(ctx, &film.texture_view, dry, None, 0..0, Some(k));
             }
         }
         return;
@@ -636,14 +750,14 @@ fn paint(
         if !job.marks.is_empty()
             && let Some(sheet) = images.get(job.wounds)
         {
-            pass(&mut ctx, &sheet.texture_view, marks, Some(&buffer), job.marks.clone(), None);
+            pass(ctx, &sheet.texture_view, marks, Some(&buffer), job.marks.clone(), None);
         }
         if let Some(film) = images.get(job.film) {
             if let Some(k) = job.dry {
-                pass(&mut ctx, &film.texture_view, dry, None, 0..0, Some(k));
+                pass(ctx, &film.texture_view, dry, None, 0..0, Some(k));
             }
             if !job.strokes.is_empty() {
-                pass(&mut ctx, &film.texture_view, strokes, Some(&buffer), job.strokes.clone(), None);
+                pass(ctx, &film.texture_view, strokes, Some(&buffer), job.strokes.clone(), None);
             }
         }
     }
@@ -678,12 +792,15 @@ fn pass(ctx: &mut RenderContext, target: &TextureView, pipeline: &RenderPipeline
 }
 
 pub fn plugin(app: &mut App) {
+    if std::env::var_os("SKIN_TIMES").is_some() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     bevy::asset::embedded_asset!(app, "skin.wesl");
     bevy::asset::embedded_asset!(app, "paint.wesl");
     app.add_plugins(MaterialPlugin::<Flesh>::default())
         .add_systems(First, (begin, looking_late).chain().before(crate::npc::forget))
         .add_systems(Update, (clothe.after(crate::npc::fit), see))
-        .add_systems(PostUpdate, (looking, crate::runs::draw_beads).chain().before(TransformSystems::Propagate));
+        .add_systems(PostUpdate, (bandage, looking, crate::runs::draw_beads).chain().before(TransformSystems::Propagate));
     let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
     render
         .init_resource::<Painting>()
@@ -706,9 +823,10 @@ pub fn plugin(app: &mut App) {
 use crate::npc::{Crossing, Kind as Surface};
 use crate::scenario::{log, Step};
 
-// Where each wound is to be looked at from: its place and the skin's normal there (world), and how far back.
+// Where each wound is to be looked at from: whose, its place on the body at rest and the bone that carries it, the
+// skin's normal there, and how far back.
 #[derive(Resource, Default)]
-struct Views(Vec<(String, Vec3, Vec3, f32)>);
+struct Views(Vec<(String, Entity, Crossing, f32)>);
 
 fn person_at(w: &mut World, body: &str) -> Entity {
     let mut q = w.query::<(Entity, &Person)>();
@@ -731,25 +849,32 @@ fn near(npc: &crate::npc::Npc, bone: &str, offset: [f32; 3]) -> Vec3 {
     npc.world_of(npc.body().bones[b].head, b, None).0 + crate::babylon(offset[0], offset[1], offset[2])
 }
 
-fn seen(npc: &crate::npc::Npc, c: &Crossing) -> (Vec3, Vec3) {
-    let (at, n) = npc.world_of(c.rest, c.owner, Some(c.rest_normal));
-    (at, n.unwrap())
+// The people held as they stand: every segment of their ragdolls fixed, as the TS's check (which steps no physics) has
+// them, so that each wound is seen as it was made and the two games are compared on the same pose.
+fn hold(w: &mut World) {
+    let segs: Vec<Entity> = w.query::<&crate::ragdoll::Ragdoll>().iter(w).flat_map(|r| r.segs.iter().map(|s| s.entity).collect::<Vec<_>>()).collect();
+    for e in segs {
+        w.entity_mut(e).insert(bevy_rapier3d::prelude::RigidBody::Fixed);
+    }
+    // (and nothing over the pictures but the picture)
+    let mut q = w.query_filtered::<&mut Visibility, With<Text>>();
+    for mut v in q.iter_mut(w) {
+        *v = Visibility::Hidden;
+    }
 }
 
 fn hurt_them(w: &mut World) {
-    use crate::npc::{with, Happened, Way};
+    use crate::npc::with;
     let ahead = crate::babylon(0.0, 0.0, 1.0);
     let mut views = Vec::new();
     // A pistol in the side of the young man's neck.
     let who = person_at(w, "buyer");
     let r = with(w, who, |npc| {
         let at = near(npc, "neck01", [0.025, -0.03, 0.0]);
-        let p = crate::wounds::pierce(npc, at - ahead * 1.5, ahead, &missile("pistol"), 3.0);
-        let hit = npc.hurt.happened.iter().find_map(|h| match h { Happened::Wound { hit, way: Way::In, .. } if hit.kind == Surface::Skin => Some(hit.clone()), _ => None });
-        if let Some(h) = hit {
-            let (a, n) = seen(npc, &h);
-            views.push(("pistol_neck".to_string(), a, n, 0.3));
+        if let Some(c) = npc.surface(at - ahead * 1.5, ahead, 3.0, false).into_iter().find(|c| c.kind == Surface::Skin) {
+            views.push(("pistol_neck".to_string(), who, c, 0.3));
         }
+        let p = crate::wounds::pierce(npc, at - ahead * 1.5, ahead, &missile("pistol"), 3.0);
         // And a knife drawn across his left cheek, as the hands' slash gives the crossings.
         let mut hits = Vec::new();
         for k in 0..7 {
@@ -759,8 +884,7 @@ fn hurt_them(w: &mut World) {
             }
         }
         if let Some(mid) = hits.get(hits.len() / 2) {
-            let (a, n) = seen(npc, mid);
-            views.push(("knife_cut".to_string(), a, n, 0.28));
+            views.push(("knife_cut".to_string(), who, mid.clone(), 0.28));
         }
         npc.slash(&hits, 0.022, None);
         format!("{:?} cut {}", p.stopped, hits.len())
@@ -771,20 +895,15 @@ fn hurt_them(w: &mut World) {
     let r = with(w, who, |npc| {
         let side = crate::babylon(-1.0, 0.0, 0.0);
         let at = near(npc, "jaw", [0.0, -0.025, -0.04]);
-        let p = crate::wounds::pierce(npc, at - side * 1.5, side, &missile("rifle"), 3.0);
-        for h in &npc.hurt.happened {
-            match h {
-                Happened::Wound { hit, way: Way::In, .. } if hit.kind == Surface::Skin => {
-                    let (a, n) = seen(npc, hit);
-                    views.push(("rifle_in".to_string(), a, n, 0.3));
-                }
-                Happened::Tear { hit, .. } => {
-                    let (a, n) = seen(npc, hit);
-                    views.push(("rifle_out".to_string(), a, n, 0.3));
-                }
-                _ => {}
+        // (Where it goes in and comes out: the first skin it crosses, and the last within a quarter of a metre of it.)
+        let skins: Vec<Crossing> = npc.surface(at - side * 1.5, side, 3.0, false).into_iter().filter(|c| c.kind == Surface::Skin).collect();
+        if let Some(first) = skins.first().cloned() {
+            if let Some(last) = skins.iter().filter(|c| c.t < first.t + 0.25).last().filter(|c| c.t > first.t) {
+                views.push(("rifle_out".to_string(), who, last.clone(), 0.3));
             }
+            views.push(("rifle_in".to_string(), who, first, 0.3));
         }
+        let p = crate::wounds::pierce(npc, at - side * 1.5, side, &missile("rifle"), 3.0);
         format!("stopped {} energy {}", p.stopped, p.energy)
     });
     log(w, serde_json::json!({ "event": "rifle", "result": r }));
@@ -793,16 +912,13 @@ fn hurt_them(w: &mut World) {
     let r = with(w, who, |npc| {
         let at = near(npc, "spine03", [0.05, 0.02, 0.0]);
         let m = crate::wounds::Missile { across: Some(crate::babylon(0.0, -1.0, 0.0)), ..missile("knife") };
-        let p = crate::wounds::pierce(npc, at - ahead * 0.5, ahead, &m, 0.67);
-        let stab = npc.hurt.happened.iter().find_map(|h| match h { Happened::Stab { ends, .. } => Some(ends[0].clone()), _ => None });
-        if let Some(h) = stab {
-            let (a, n) = seen(npc, &h);
-            views.push(("knife_stab".to_string(), a, n, 0.3));
+        if let Some(c) = npc.surface(at - ahead * 0.5, ahead, 0.67, false).into_iter().next() {
+            views.push(("knife_stab".to_string(), who, c, 0.3));
         }
+        let p = crate::wounds::pierce(npc, at - ahead * 0.5, ahead, &m, 0.67);
         let eye = near(npc, "head", [-0.033, 0.035, 0.0]);
         if let Some(skin) = npc.surface(eye - ahead * 0.5, ahead, 1.0, false).into_iter().find(|c| c.kind == Surface::Skin) {
-            let (a, n) = seen(npc, &skin);
-            views.push(("punch_eye".to_string(), a, n, 0.3));
+            views.push(("punch_eye".to_string(), who, skin.clone(), 0.3));
             crate::wounds::blow(npc, skin.point, ahead, 2.9, 10.0, Some(crate::wounds::Tool::Stiff(5e4)));
         }
         format!("stab stopped {}", p.stopped)
@@ -815,22 +931,20 @@ fn hurt_them(w: &mut World) {
         let p = crate::wounds::pierce(npc, at - ahead * 1.5, ahead, &missile("pistol"), 3.0);
         let mut dressed = "none".to_string();
         if let Some(wound) = crate::dressing::wounds(npc).into_iter().next() {
-            let (a, n) = seen(npc, &wound.mark);
-            views.push(("bandaged".to_string(), a, n, 0.35));
+            views.push(("bandaged".to_string(), who, wound.mark.clone(), 0.35));
             if let Some(d) = crate::dressing::dress(npc, &wound) {
                 dressed = npc.hurt.dressings[d].kind.to_string();
             }
         }
         let cheek = near(npc, "head", [-0.035, 0.03, 0.0]);
         if let Some(skin) = npc.surface(cheek - ahead * 0.5, ahead, 1.0, false).into_iter().find(|c| c.kind == Surface::Skin) {
-            let (a, n) = seen(npc, &skin);
-            views.push(("bat_cheek".to_string(), a, n, 0.3));
+            views.push(("bat_cheek".to_string(), who, skin.clone(), 0.3));
             crate::wounds::blow(npc, skin.point, ahead, 0.79, 15.5, None);
         }
         format!("stopped {} dressed {dressed}", p.stopped)
     });
     log(w, serde_json::json!({ "event": "bandage and bat", "result": r }));
-    log(w, serde_json::json!({ "event": "views", "views": views.iter().map(|v| (v.0.clone(), v.1.to_array(), v.2.to_array())).collect::<Vec<_>>() }));
+    log(w, serde_json::json!({ "event": "views", "views": views.iter().map(|v| (v.0.clone(), v.2.point.to_array(), v.2.rest.to_array())).collect::<Vec<_>>() }));
     w.insert_resource(Views(views));
 }
 
@@ -847,17 +961,30 @@ fn cameras(on: bool) -> Step {
 // Every wound photographed: the player put `d` back from it along its normal (level), looking at it.
 fn photograph(at: &'static str) -> Step {
     Step::Do(Box::new(move |w: &mut World| {
+        // What the passes cost, as the render diagnostics last measured them (SKIN_TIMES=1).
+        if let Some(store) = w.get_resource::<bevy::diagnostic::DiagnosticsStore>() {
+            let times: Vec<(String, f64)> = store
+                .iter()
+                .filter(|d| d.path().as_str().starts_with("render/"))
+                .filter_map(|d| Some((d.path().as_str().to_string(), d.smoothed()?)))
+                .collect();
+            log(w, serde_json::json!({ "event": "gpu", "at": at, "times": times }));
+        }
         let views = w.resource::<Views>().0.clone();
         let mut steps = std::collections::VecDeque::new();
-        for (name, point, normal, d) in views {
-            let flat = Vec3::new(normal.x, 0.0, normal.z).normalize_or(Vec3::Z);
-            let eye = point + flat * d;
+        for (name, who, c, d) in views {
+            // Where the wound is now, and which way its skin faces.
+            let Some((point, normal)) = crate::npc::with(w, who, |npc| {
+                let (p, n) = npc.world_of(c.rest, c.owner, Some(c.rest_normal));
+                (p, n.unwrap())
+            }) else { continue };
+            let eye = point + normal * d + Vec3::new(0.0, 0.02, 0.0);
             let name = format!("{name}_{at}");
             steps.push_back(Step::Do(Box::new(move |w: &mut World| {
                 w.resource_scope(|w, map: Mut<crate::map::Map>| {
                     let mut q = w.query::<&mut crate::player::Player>();
                     for mut p in q.iter_mut(w) {
-                        p.spawn(&map, eye.x, eye.z, Some(point), point.y);
+                        p.spawn(&map, eye.x, eye.z, Some(point), eye.y);
                     }
                 });
             })));
@@ -869,7 +996,7 @@ fn photograph(at: &'static str) -> Step {
 }
 
 pub fn scenario() -> Vec<Step> {
-    let mut s = vec![Step::Wait(30), Step::Do(Box::new(hurt_them)), photograph("0")];
+    let mut s = vec![Step::Wait(30), Step::Do(Box::new(hold)), Step::Wait(2), Step::Do(Box::new(hurt_them)), photograph("0")];
     let mut at = 0.0;
     for (t, name) in [(5.0, "5"), (30.0, "30"), (120.0, "120")] {
         // (Each round of pictures takes a few frames of its own.)

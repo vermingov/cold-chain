@@ -147,8 +147,8 @@ fn fragment(in: Out) -> @location(0) vec4<f32> {
         for (var k = 0; k < 3; k++) {
             red = max(red, in.v.x * layers[k].y * inside(r, w * layers[k].x * reach, f));
         }
-        let any = inside(r, w * reach, f);
-        return vec4(red, in.v.y * any, 0.0, 0.0);
+        let whole = inside(r, w * reach, f);
+        return vec4(red, in.v.y * whole, 0.0, 0.0);
     }
     return vec4(0.0);
 }

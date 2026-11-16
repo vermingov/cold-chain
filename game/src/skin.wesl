@@ -23,11 +23,16 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var sheet_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var film: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var table: texture_2d<f32>;
+// A dressing's picture (dressing.rs): metres across and up it and where its corner is; how far the blood in it has
+// spread (m), how dry it is, and two phases for its uneven edge.
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> picture: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var<uniform> stain: vec4<f32>;
 
 const SKIN: u32 = 0u;
 const UNDER: u32 = 1u;
 const CLOTH: u32 = 2u;
 const CARRIED: u32 = 3u;
+const GAUZE: u32 = 4u;
 const WIDE: u32 = 1024u;
 const CORNERS: u32 = 8u;
 const TEXEL: f32 = 1.0 / 2048.0;
@@ -238,6 +243,100 @@ fn bruised(albedo: vec3<f32>, bt: vec4<f32>, rest: vec3<f32>) -> vec4<f32> {
     return vec4(c, smoothstep(0.25, 1.2, bt.w) * 0.15);
 }
 
+// --- a dressing (dressing.ts _picture and _paint) ----------------------------------------------------------------------
+
+fn line(d: f32, wide: f32) -> f32 {
+    return 1.0 - smoothstep(wide * 0.5, wide * 0.5 + 0.0004, abs(d));
+}
+
+// What the gauze is at (x, y) metres on it: its colour (sRGB) and whether there is gauze there (alpha).
+fn gauze_picture(x: f32, y: f32, pad: bool) -> vec4<f32> {
+    let speck = hash2(floor(vec2(x, y) / 0.0008));
+    var c = vec3(0.0);
+    var a = 0.0;
+    if pad {
+        // The pad: folded gauze, its weave in a 1.5 mm grid, the fold lines a third of the way in, a seam round it.
+        let side = -picture.z / 1.6;
+        let k = side / 0.05;
+        let q = abs(vec2(x, y)) - vec2(side - 0.004);
+        let inside = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - 0.004;
+        if inside < 0.0 {
+            a = 1.0;
+            c = vec3(236.0, 234.0, 227.0) / 255.0;
+            let weave = max(line(fract(x / 0.0015 + 0.5) - 0.5, 0.2), line(fract(y / 0.0015 + 0.5) - 0.5, 0.2));
+            c = mix(c, vec3(150.0, 145.0, 135.0) / 255.0, 0.25 * weave);
+            let fold = max(line(abs(x) - side / 3.0, 0.0012), line(max(abs(x), abs(y)) - (side - 0.003), 0.0012));
+            c = mix(c, vec3(120.0, 115.0, 105.0) / 255.0, 0.35 * fold);
+        }
+        // Two strips of tape over its top and bottom edges, torn off the roll at their ends.
+        for (var s = 0; s < 2; s++) {
+            let y0 = select(-side - 0.012 * k, side - 0.012 * k, s == 1);
+            let t = (y - y0) / (0.024 * k);
+            let jag = 0.002 * (1.0 - 2.0 * abs(fract(t * 2.0) - 0.5));
+            if t > 0.0 && t < 1.0 && abs(x) < 0.074 * k + jag {
+                a = 1.0;
+                c = vec3(226.0, 221.0, 206.0) / 255.0;
+                c = mix(c, vec3(160.0, 150.0, 130.0) / 255.0, 0.25 * step(0.6, fract(x / 0.003)) * step(abs(t - 0.48), 0.04));
+            }
+        }
+    } else {
+        // The roll: wound round with each turn half over the last, so the edge of a turn crosses the band on a slant and
+        // comes round to meet the next; its crinkle square to the way it was wound.
+        let top = picture.w + picture.y - 0.015 + sin(x * 400.0) * 0.0008;
+        let bottom = picture.w + 0.015 + sin(x * 330.0 + 1.0) * 0.0008;
+        if y > bottom && y < top {
+            a = 1.0;
+            c = vec3(240.0, 239.0, 233.0) / 255.0;
+            let crinkle = hash2(vec2(floor(x / 0.002), 3.0));
+            c = mix(c, select(vec3(140.0, 135.0, 125.0) / 255.0, vec3(1.0), crinkle > 0.5), select(0.18, 0.3, crinkle > 0.5) * line(fract(x / 0.002 + 0.5) - 0.5, 0.2) );
+            let pitch = 0.05;
+            let s = y - (x - picture.z) / picture.x * pitch;
+            let m = s - floor(s / pitch) * pitch;
+            c = mix(c, vec3(95.0, 90.0, 80.0) / 255.0, 0.32 * line(m, 0.0016));
+            c = mix(c, vec3(1.0), 0.4 * line(m - 0.0018, 0.0016));
+        }
+    }
+    c = mix(c, select(vec3(120.0, 115.0, 105.0) / 255.0, vec3(1.0), speck > 0.5), select(0.12, 0.35, speck > 0.5) * step(0.85, hash2(floor(vec2(x, y) / 0.0008) + 7.0)));
+    return vec4(c, a);
+}
+
+// The blood in it, as far as it has spread round the wound: darkest in the middle where the gauze is full, a paler fringe
+// where only serum has wicked ahead, browner as it dries. Multiplied into the gauze.
+fn gauze_blood(x: f32, y: f32) -> vec3<f32> {
+    let r = stain.x;
+    if r < 0.002 {
+        return vec3(1.0);
+    }
+    let dry = stain.y;
+    let core = mix(vec3(118.0, 10.0, 12.0), vec3(72.0, 24.0, 17.0), dry) / 255.0;
+    let rim = mix(vec3(160.0, 26.0, 26.0), vec3(100.0, 38.0, 26.0), dry) / 255.0;
+    let serum = mix(vec3(226.0, 170.0, 158.0), vec3(200.0, 165.0, 140.0), dry) / 255.0;
+    var out = vec3(1.0);
+    // (Round the wound, and again a turn either way round a limb, so a stain past the seam comes round.)
+    for (var k = -1; k <= 1; k++) {
+        let px = x + f32(k) * picture.x * select(1.0, 0.0, info.z == 1u);
+        let t = atan2(y, px);
+        let edge = 1.0 + 0.12 * sin(3.0 * t + stain.z) + 0.07 * sin(5.0 * t + stain.w) + 0.04 * sin(9.0 * t + stain.z * 1.7);
+        let d = length(vec2(px, y));
+        if d > r * 1.1 * edge {
+            continue;
+        }
+        let g = d / (r * 1.25);
+        var c = core;
+        if g > 0.55 {
+            c = mix(core, rim, smoothstep(0.55, 0.75, g));
+        }
+        if g > 0.75 {
+            c = mix(rim, serum, smoothstep(0.75, 0.86, g));
+        }
+        if g > 0.86 {
+            c = mix(serum, vec3(1.0), smoothstep(0.86, 1.0, g));
+        }
+        out = min(out, c);
+    }
+    return out;
+}
+
 @fragment
 fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     let mode = info.x;
@@ -295,6 +394,20 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var albedo = pbr.material.base_color.rgb;
     var rough = pbr.material.perceptual_roughness;
     var n = pbr.N;
+    // A wet layer over it (blood on the skin, a wound's wet face): how much of one, how rough, its surface's normal.
+    var gloss = 0.0;
+    var gloss_rough = 0.1;
+    var film_n = n;
+
+    if mode == GAUZE {
+        let x = picture.z + in.uv.x * picture.x;
+        let y = picture.w + in.uv.y * picture.y;
+        let g = gauze_picture(x, y, info.z == 1u);
+        if g.a < 0.5 {
+            discard;
+        }
+        albedo = to_linear(g.rgb * gauze_blood(x, y));
+    }
 
     if mode == CLOTH {
         // Round a bullet's hole in cloth the fibres it dragged in are blackened (its wipe), raggedly, further round the
@@ -308,6 +421,10 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
                 continue;
             }
             let d = rest - a.xyz;
+            // (Only the cloth the hole is in: its axis runs on through the body, and out through the other side.)
+            if abs(dot(d, c.xyz)) >= c.w {
+                continue;
+            }
             let r = length(d - c.xyz * dot(d, c.xyz)) / a.w;
             scorched = max(scorched, 1.0 - smoothstep(1.0, 1.35, r));
             let jag = select(0.25, 0.45, b.w < -1.5);
@@ -357,9 +474,9 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
             // Depth in millimetres, made uneven so that the layers wander along a lip as real ones do: by a few
             // millimetres over a centimetre or two, by a millimetre over a few. (Added, and smooth: a fine noise
             // multiplying it threw the deep side of a lip across the thresholds cell by cell, black specks.)
-            let step = max(max(abs(du1.x), abs(du2.x)), max(abs(du1.y), abs(du2.y)));
-            let gmid = clamp(1.6 - step * 900.0, 0.0, 1.0);
-            let glob = clamp(1.6 - step * 700.0, 0.0, 1.0);
+            let texel_step = max(max(abs(du1.x), abs(du2.x)), max(abs(du1.y), abs(du2.y)));
+            let gmid = clamp(1.6 - texel_step * 900.0, 0.0, 1.0);
+            let glob = clamp(1.6 - texel_step * 700.0, 0.0, 1.0);
             let d0 = gm.r * 40.0;
             let d = d0 + ((noise2(uv * 110.0) - 0.5) * 5.0 + (mix(0.5, noise2(uv * 900.0), gmid) - 0.5) * 1.2) * clamp(d0 / 4.0, 0.0, 1.0);
             // Fat bulging from a cut face in lobules of a few millimetres, the hollows between them deeper yellow.
@@ -382,14 +499,17 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
             n = normalize(n + (gt * gs * lx + gb * gs * ly) * 1.5 * in_fat * glob);
             // Blood fills a fresh wound from the bottom and wells over its lips; on a cut face it lies in the hollows,
             // in patches a few millimetres across, thick here and thin there.
-            let patch = mix(0.5, noise2(uv * 90.0 + 3.0), glob);
-            var blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, noise2(uv * 400.0), gmid)) * (0.55 + 0.9 * patch);
+            let patches = mix(0.5, noise2(uv * 90.0 + 3.0), glob);
+            var blood = gm.g * (0.5 + 0.5 * smoothstep(0.0, 3.0, d)) * (0.85 + 0.3 * mix(0.5, noise2(uv * 400.0), gmid)) * (0.55 + 0.9 * patches);
             blood += smoothstep(0.42, 0.22, lob) * 0.55 * smoothstep(1.5, 4.0, d) * smoothstep(0.0, 0.03, gm.g);
             albedo = mix(albedo, to_linear(vec3(0.36, 0.025, 0.02)), clamp(blood, 0.0, 0.93));
             albedo *= 1.0 - 0.6 * smoothstep(3.0, 30.0, d);
             // Cut flesh is wet: a soft sheen on it, and more where blood lies.
             wet = max(smoothstep(0.3, 1.5, d), clamp(blood, 0.0, 1.0));
             rough = mix(rough, 0.28, wet);
+            gloss = wet * 0.7;
+            gloss_rough = 0.12;
+            film_n = n;
         }
 
         // Blood lying on the skin (film.ts): its edges stand off the skin, its surface bending with how its thickness
@@ -400,9 +520,14 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
         if fmm > 0.003 {
             let fx = textureSampleLevel(film, sheet_sampler, uv + vec2(TEXEL, 0.0), 0.0).r - textureSampleLevel(film, sheet_sampler, uv - vec2(TEXEL, 0.0), 0.0).r;
             let fy = textureSampleLevel(film, sheet_sampler, uv + vec2(0.0, TEXEL), 0.0).r - textureSampleLevel(film, sheet_sampler, uv - vec2(0.0, TEXEL), 0.0).r;
-            n = normalize(n - (gt * gs * fx + gb * gs * fy) * 5.0 * fm.g);
+            // Wet, it is a layer of liquid over the skin: the light off its own surface (Bevy's clearcoat, with the
+            // film's own normal) over the skin seen through it; drying, a dull satin.
+            let cover = smoothstep(0.003, 0.05, fmm);
+            film_n = normalize(n - (gt * gs * fx + gb * gs * fy) * 5.0 * fm.g);
             albedo = blood_over(albedo, fmm, fm.g);
-            rough = mix(rough, 0.06, smoothstep(0.003, 0.05, fmm) * mix(0.3, 1.0, fm.g));
+            rough = mix(rough, mix(0.45, 0.3, fm.g), cover);
+            gloss = max(gloss, cover * mix(0.3, 1.0, fm.g));
+            gloss_rough = mix(0.32, 0.05, fm.g);
         }
     }
 
@@ -417,6 +542,10 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     pbr.material.base_color = vec4(albedo, pbr.material.base_color.a);
     pbr.material.perceptual_roughness = rough;
     pbr.N = n;
+    // (The skin's materials carry a trace of clearcoat so that Bevy lights the layer at all: skin.rs.)
+    pbr.material.clearcoat = gloss;
+    pbr.material.clearcoat_perceptual_roughness = gloss_rough;
+    pbr.clearcoat_N = film_n;
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr);
     out.color = main_pass_post_lighting_processing(pbr, out.color);
