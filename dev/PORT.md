@@ -77,9 +77,10 @@ Allocate nothing per frame in hot paths; per-person work in parallel where Bevy'
 ## The foundation (phase 1), for the jobs after it
 
 ### Running it
-`cd game && cargo run` is the game; `cargo run -- --scenario <name> --out <dir> [--seed <n>]` a scenario. Run it
-through cargo (or with CARGO_MANIFEST_DIR set to game/): the assets are found as `../assets` from the crate
-(main.rs ASSETS, `asset_file`), which a bare binary in target/ does not see. The weapons' glTF needed one change to load
+`cd game && cargo run` is the game; `cargo run -- --scenario <name> --out <dir> [--seed <n>]` a scenario. The assets
+are found beside the executable (`assets/` next to it: a release package, an AppImage's usr/bin) or else as `../assets`
+from the crate through CARGO_MANIFEST_DIR (main.rs ASSETS, `asset_file`), so a bare binary in target/ needs
+CARGO_MANIFEST_DIR set to game/. The weapons' glTF needed one change to load
 in Bevy (tools/gltf-fallback.py: a core `source` beside EXT_texture_webp, which Bevy does not read; Babylon is
 unaffected); run it again if the forge rebuilds them. Bevy is built with its `jpeg` and `webp` features: changing
 Bevy's features rebuilds most of it and leaves the old build in target/ (a few hundred MB each time).
@@ -228,8 +229,9 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
 - Profiler (F2): `profiler::timed("row name", system)` in place of a system gives it a row of its own; every main
   schedule has a row for the rest of its systems, and the render world one for its own thread; under them the draw calls by pass (the render world's phases: opaque, alpha
   masked, blended, shadow maps) and the meshes in view by what they belong to. `Notes::note(now, what)`
-  is the TS's `world.note`. F4 saves `coldchain-profile-<version>-<time>.json` in ~/Downloads (or the working directory)
-  in the TS's format; `node tools/profile-report.mjs` reads it.
+  is the TS's `world.note`. F4 saves `coldchain-profile-<version>-<time>.json` in the TS's format, and so does quitting;
+  `node tools/profile-report.mjs` reads it. Where it goes, `--profile`, and what else it keeps: "Performance and
+  release builds" below.
 ## Medicine (phase 2, branch port/medicine)
 
 vitals.rs, wounds.rs, anatomy.rs (tracing), npc.rs, bones.rs, teeth.rs, throat.rs, eyes.rs, bruise.rs and dressing.rs's
@@ -736,3 +738,81 @@ and lights the arsenal board, as "The foundation" says.
   fat is a pale cream (b* 20-25), as body-wall.md 1.6 says. The TS's were scarlet (a* 50) and orange (b* 45).
 - Exit wounds: dusky lips with a bloody edge, only a trace of blood over the fat between them and less gloss, a long
   tear that wanders, and splits that each bend their own way.
+
+## Performance and release builds (phase 4, branch port/perf)
+
+### Measuring
+Measure a release build (`cargo build --release`: target/release, Cargo's own release profile; why no LTO is in
+Cargo.toml). The debug builds' game crate is at opt-level 1, and on this machine the main thread also shares four cores
+with lavapipe's four raster threads and the other jobs' games, so a number taken here is wall time with all of that in
+it: read the proportions, and run the same thing before and after back to back. `perf record -e cpu-clock` (the 6.8
+linux-tools work here) on the unstripped binary shows where the CPU goes: on lavapipe the main thread is mostly Mesa
+and waiting, and the game's own systems, on the compute pool's threads, a small part.
+- `cold-chain --profile` (any scenario too) records the F2 profiler's log from the moment play begins, without the
+  table; quitting saves it (a scenario's into its --out folder). `node tools/profile-report.mjs <log>` prints the
+  worst systems, the spikes, the frames the game's own code took longest over (whatever the GPU did) with what came
+  the second before, and what is drawn by source.
+- The rows: each schedule's "other systems", Rapier's fixed steps, the render world, and `profiler::timed` rows
+  (weapons, arms, fists, face, sound, flash and smoke, limbs cut off, cut meshes and faces put in, broken bones drawn,
+  x-ray regrouped). A heavy frame with only "Update: other systems" or "PostUpdate: other systems" in it wants rows of
+  its own: wrap the suspects in `timed` for a run.
+- A scenario's screenshot frames are slow in Update and Last (the PNG is encoded on the main thread): not the game's.
+
+### The profiler's log for a play-tester
+`cold-chain --profile`, play, quit. The log (coldchain-profile-<version>-<time>.json) is written beside the game, or,
+where that cannot be written (an AppImage, an install for every user), in ~/.local/share/cold-chain or
+%APPDATA%\cold-chain; F4 saves one at any time, F2 shows the table. It keeps a sample a second (each row's mean and
+worst, the frame's spread, draw calls by pass, meshes in view by source), the 300 worst spikes (over 34 ms, or 2.5
+frames at the rate it runs) and the 40 frames the game's code took longest over, each with its heaviest rows, the
+render thread's time, pipelines made in it and what the player did in the second before (shots, swings, a limb cut off
+with what it cost), on one real-time clock. Nothing is sent anywhere.
+
+### What moved off the frame (AsyncComputeTaskPool, put in a frame or two later, the pictures as before)
+- A limb cut off (dismember.rs `Shape`, `shaped`): the piece's and the body's skin and clothes cut along the plane and
+  the two ends' flat caps. The frame keeps which triangles go, the weights medicine reads, the cut face's outlines and
+  the vessels; the body, the piece and its ends change over together; a person's cuts go in in order.
+- The x-ray's regrouping when X is pressed (anatomy.rs `regroup`, from each look's `source` copy).
+- Broken bones drawn (shards.rs `redraw`/`start`: one drawing a person at a time, what comes meanwhile waits for the
+  next; the x-ray's triangles are taken out when it is put in).
+- `Npc::trace` through some parts only (a bone, the belly wall's columns) no longer holds every vessel against the line.
+
+Measured (release, lavapipe, the shared machine; ms of the frame, wall time):
+
+| what | before | after |
+| --- | --- | --- |
+| sword through a forearm (the first cut of the run) | 142 | 9.2 |
+| sword through a thigh | 18.7 | 4.8 |
+| sword through the neck | 19.5 | 5.4 |
+| grenade at a headless man's feet: three limbs and the belly (cut-limbs) | 32 | 8.9 |
+| breaks drawn: a shin, a skull (cut-bones `taken`) | 2.9, 4.1 | 0.1, 0.07 (up to 4.7 when put in) |
+| X on with two people hurt (regroup) | 2.2 to 7.4 | 0.01 to 0.08 |
+| the grenade's frame in arsenal-use (all the game's code) | about 100 to 115, 34 of it breaks drawn | about 84 |
+| a shotgun's nine pellets into a person | 1.35 | 1.5 |
+| a pistol or rifle shot into a person | 0.9 | 0.8 to 0.9 |
+
+Off the frame: a cut's meshes 8 to 19 ms, its face's painting 17 to 60, a drawing of breaks a few ms, a regroup 0.4 to
+3. The arms, the fists, the face and the sound are each under 0.1 ms a frame on average (their rows).
+
+### What is left
+- The grenade's frame: weapons.rs `explode`'s fragments (each one hitting a person a surface test and a full pierce
+  with its trace: 21 to 31 ms) and the physics of the blast (Rapier, 10 to 30 ms here), and 16 to 28 ms of
+  PostUpdate that no row of ours accounts for (Bevy's own transforms, visibility and bounds over what the blast made).
+- Rapier is the biggest steady cost of the game's own: 10 to 15 ms a frame on average here, 30 to 60 in a bad frame
+  (two to four 120 Hz steps a frame, four ragdolls with sixteen solver passes).
+- Opening a belly or a chest (viscera.rs `open`: the lips' 40 surface tests and the wall's 40 traces): about 2 ms.
+- A cut's own bookkeeping, 1.5 to 3 ms (7 for the first in a run); a drawing of breaks put in, up to 5 ms.
+- Not measured here: the warm-up (over 30 minutes on lavapipe; its rehearsal is GPU work), and the blood, skin,
+  gunshot, face, drag, crawl and per-gun scenarios with the profile on. GPU costs only as lavapipe's proportions.
+
+### Release builds
+- `cargo build --release`, then strip the binary (216 MB to 128 MB). The game finds assets/ beside its executable
+  (main.rs ASSETS), so a package is the binary and assets/ (without assets/audition, the raw takes tools/sounds.py
+  works from: 120 of the 207 MB).
+- Linux AppImage (what the user asked for): an AppDir of usr/bin/cold-chain, usr/bin/assets, AppRun, a .desktop file
+  and an icon (assets/people/tex/brown_eye.png at 256 px), packed with appimagetool (its GitHub release; here with
+  `--appimage-extract-and-run`, no fusermount). Nothing bundled: the binary links only libc, libm, libgcc_s, libudev,
+  libasound, libwayland-client (with libffi, libcap), and opens Vulkan, the driver and X11/xkbcommon from the host.
+  It needs glibc 2.35 or newer (the 2.39 symbols are std's weak ones). Tested here as the .AppImage with no cargo
+  environment: the hall scenario under xvfb draws the hall and the people.
+- Windows (x86_64-pc-windows-gnu with mingw-w64) was not built: the user wants the AppImage only for now. A release
+  build opens no console there (main.rs), and the F3 preset is kept in %APPDATA% (graphics.rs).
