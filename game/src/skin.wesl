@@ -169,6 +169,9 @@ const CHARGE: f32 = 3.0;
 // How far the eye's ray is followed into a wound (mm), and from how far above the skin (an exit's lips stand out).
 const DEEPEST: f32 = 24.0;
 const LIPS: f32 = 1.8;
+// (Steps down the ray: fewer and a lip's thin crest is stepped over, its slope drawn in terraces.)
+const STEPS: i32 = 48;
+const SHALLOW: f32 = 0.8;
 
 struct Shot {
     at: vec3<f32>,
@@ -239,7 +242,7 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
         h = 0.45 + min(-d * 14.0, DEEPEST);
         if s.kind == CHARGE {
             // A crater, its floor torn tissue a few millimetres down.
-            h = min(h, 4.0 + 7.0 * noise2(q * 0.3 + s.seed));
+            h = min(h, 4.0 + 4.5 * noise2(q * 0.3 + s.seed) + 2.5 * noise2(mat2x2(0.8, 0.6, -0.6, 0.8) * q * 0.7 + s.seed));
         }
     } else if d < fall {
         let t = 1.0 - d / fall;
@@ -255,11 +258,11 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     if s.b.y > 0.5 && d >= 0.0 && d < 1.0 {
         let th = atan2(dir.y, dir.x) / 6.2831853 * 18.0 + s.seed;
         let cell = floor(th);
-        let reach = 0.3 + 0.6 * hash2(vec2(cell, s.seed));
+        let reach = 0.2 + 0.4 * hash2(vec2(cell, s.seed));
         let off = fract(th) - 0.3 - 0.4 * hash2(vec2(cell, 3.0));
         if hash2(vec2(cell, 7.0)) > 0.3 && d < reach && abs(off) < 0.07 * (1.0 - d / reach) {
             split = 1.0;
-            h = max(h, 0.6);
+            h = max(h, 0.3);
         }
     }
     return vec4(h, d, select(9.0, ring, w > 0.0), split);
@@ -293,15 +296,19 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
         let k = f32(i);
         // Each side of a split torn as far as it went, not as far as the other; the split bent, now and then into a
         // crescent.
-        let span = a * (0.55 + 0.45 * hash2(vec2(s.seed + k, select(0.0, 1.0, x > 0.0))));
+        let span = a * (0.4 + 0.6 * hash2(vec2(s.seed + k, select(0.0, 1.0, x > 0.0))));
         let xa = clamp(x / span, -1.0, 1.0);
         let yb = y - bend * a * 0.45 * (xa * xa - 0.4);
         // Both lips torn along the one jagged line, so that they would fit back together; the gap between them uneven.
-        let jag = (noise2(vec2(x * 0.55, s.seed + k * 7.0)) - 0.5) * (0.6 + 0.35 * b) + (noise2(vec2(x * 2.6, s.seed * 1.3 + k)) - 0.5) * 0.45 * fine;
-        let w = b * pow(max(1.0 - xa * xa, 0.0), 0.6) * (0.7 + 0.6 * noise2(vec2(x * 0.3, s.seed + 11.0 + k)));
-        var e = w - abs(yb - jag);
+        // (The fine jags only at the edge itself: carried out across the lips they would comb them into ridges.)
+        let jag = (noise2(vec2(x * 0.55, s.seed + k * 7.0)) - 0.5) * (0.35 + 0.2 * b);
+        // (Open most in its middle; out along it the lips lie nearly together, a torn line more than a gap.)
+        let w = b * pow(max(1.0 - xa * xa, 0.0), 1.4) * (0.7 + 0.6 * noise2(vec2(x * 0.3, s.seed + 11.0 + k)));
+        let coarse = w - abs(yb - jag);
+        let tags = (noise2(vec2(x * 2.6, s.seed * 1.3 + k)) - 0.5) * 0.45 * fine * clamp(1.0 + coarse / 0.4, 0.0, 1.0);
+        var e = w - abs(yb - jag - tags);
         if abs(x) > span {
-            e = -(abs(x) - span) - abs(yb - jag);
+            e = -(abs(x) - span) - abs(yb - jag - tags);
         }
         inside = max(inside, e);
     }
@@ -312,7 +319,7 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     // The lips turned out in a band (wounds.rs `tear`'s lip, 1.5 mm and more for a bigger tear), raised half a
     // millimetre to a millimetre.
     let lip = 1.5 + 0.08 * along;
-    let lift = min(0.4 + 0.05 * along, 1.1);
+    let lift = min(0.3 + 0.035 * along, 0.75);
     if inside < -lip {
         return vec4(0.0, inside, 0.0, 0.0);
     }
@@ -325,11 +332,11 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     // the track going on down in the middle of that.
     let lob = mix(0.5, noise2(q * 0.42 + s.seed) * 0.65 + noise2(q * 1.05 + s.seed * 2.0) * 0.35, fine);
     let out = clamp((along - 5.0) * 0.15, 0.0, 1.3);
-    let top = 0.4 + 2.2 * (1.0 - lob) - out * smoothstep(0.0, 2.5, inside);
+    let top = 0.5 + 1.5 * (1.0 - lob) - out * smoothstep(0.0, 2.5, inside);
     var h = mix(-lift, top, smoothstep(0.0, 0.45, inside));
     let torn = smoothstep(-0.3, 1.2, hole);
     h = mix(h, fat + 1.0 + 4.0 * noise2(q * 0.35 + s.seed * 3.0), torn);
-    h += DEEPEST * smoothstep(burst * 0.35, burst * 0.9, hole);
+    h += DEEPEST * smoothstep(burst * 0.55, burst * 1.0, hole);
     return vec4(h, inside, torn, lob);
 }
 
@@ -394,10 +401,10 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     }
     let now = texel(SHOTS, 0u).x;
     // The eye's ray at rest: each millimetre down into the skin it goes so far across it (not further across than at
-    // seventy degrees off square: a grazing look stays at the lips).
+    // about sixty degrees off square: a grazing look stays at the lips).
     let vr = normalize(vec3(dot(m0, v), dot(m1, v), dot(m2, v)));
     let n0 = shots[0].n;
-    let vn = max(dot(vr, n0), 0.34);
+    let vn = max(dot(vr, n0), 0.45);
     let slide = -(vr - n0 * dot(vr, n0)) / vn;
     var base: array<vec2<f32>, 3>;
     var stride: array<vec2<f32>, 3>;
@@ -409,14 +416,20 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         stride[j] = vec2(dot(slide, s.ex), dot(slide, s.ey));
         level[j] = blood_level(s, now - s.c.w);
     }
-    // Down the ray, in steps finer near the skin, to the first place it is at or under what is there (the wounds'
-    // surfaces, the blood's level among them); then that place found closely between the last two steps.
+    // Down the ray to the first place it is at or under what is there (the wounds' surfaces, the blood's level among
+    // them): in even tenths of a millimetre through the lips and the skin's top, then in steps growing to the bottom;
+    // then that place found closely between the last two steps.
     let top = select(0.0, -LIPS, exits);
+    let near = SHALLOW - top;
     var lo = top;
     var hi = DEEPEST;
-    for (var i = 1; i <= 22; i++) {
-        let t = f32(i) / 22.0;
-        let d = top + (DEEPEST - top) * t * t;
+    for (var i = 1; i <= STEPS; i++) {
+        let t = f32(i) / f32(STEPS);
+        var d = top + near * t * 2.0;
+        if t > 0.5 {
+            let u = t * 2.0 - 1.0;
+            d = SHALLOW + (DEEPEST - SHALLOW) * u * u;
+        }
         var surface = 0.0;
         for (var j = 0u; j < count; j++) {
             let h = min(shot_at(shots[j], base[j] + stride[j] * d, fine).x, level[j]);
@@ -428,7 +441,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         }
         lo = d;
     }
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 7; i++) {
         let d = (lo + hi) * 0.5;
         var surface = 0.0;
         for (var j = 0u; j < count; j++) {
@@ -467,7 +480,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     let sx = min(shot_at(s, q + vec2(e, 0.0), fine).x, lv) - min(shot_at(s, q - vec2(e, 0.0), fine).x, lv);
     let sy = min(shot_at(s, q + vec2(0.0, e), fine).x, lv) - min(shot_at(s, q - vec2(0.0, e), fine).x, lv);
     var g = vec2(sx, sy) / (2.0 * e);
-    g *= min(1.0, 5.0 / max(length(g), 1e-4));
+    g *= min(1.0, 4.0 / max(length(g), 1e-4));
     let wex = normalize(m0 * s.ex.x + m1 * s.ex.y + m2 * s.ex.z);
     let wey = normalize(m0 * s.ey.x + m1 * s.ey.y + m2 * s.ey.z);
     out.n = normalize(n + wex * g.x + wey * g.y);
@@ -485,13 +498,13 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     if s.kind == EXIT {
         open = max(s.a.w, s.a.y) * 1000.0;
     }
-    let ao = exp(-max(depth - 0.3, 0.0) / (open * 0.55 + 0.25));
+    let ao = exp(-max(depth - 0.3, 0.0) / select(open * 0.55 + 0.25, open + 0.6, s.kind == EXIT));
     var c = albedo;
     var tissue_rough = 0.32;
     var coat = 0.0;
     let fat = mix(vec3(0.82, 0.70, 0.48), vec3(0.93, 0.86, 0.66), smoothstep(0.3, 0.7, select(0.5, at.w, s.kind == EXIT)));
     let muscle = vec3(0.42, 0.08, 0.065) * (0.7 + 0.5 * mix(0.5, noise2(q * vec2(0.9, 6.0) + s.seed), fine));
-    let dermis = vec3(0.80, 0.60, 0.54);
+    let dermis = vec3(0.76, 0.50, 0.46);
     if s.kind != EXIT {
         let ring = at.z;
         let d = at.y;
@@ -510,12 +523,14 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         wall = blood_over(to_linear(wall), 0.1 + 0.15 * smoothstep(0.5, 3.0, h), wet);
         if s.kind == CHARGE {
             // The crater's floor: fat and muscle torn together.
-            wall = blood_over(to_linear(mix(fat, muscle, smoothstep(0.35, 0.6, noise2(q * 0.5 + s.seed)))), 0.08, wet);
+            wall = blood_over(to_linear(mix(fat, muscle, smoothstep(0.35, 0.6, noise2(q * 0.5 + s.seed)))), 0.2, wet);
+            tissue_rough = 0.5;
         }
         let down = smoothstep(0.25, 0.7, h);
         c = mix(c, wall, down);
-        coat = max(coat, down * 0.7);
-        c = mix(c, to_linear(vec3(0.30, 0.04, 0.035)), at.w);
+        coat = max(coat, down * 0.45);
+        // (barely to be seen: DiMaio)
+        c = mix(c, to_linear(vec3(0.42, 0.1, 0.08)), at.w * 0.6);
         // Close, the soot and burnt powder blown out of the muzzle with the bullet (wounds.md 4.2): soot dense and black
         // within a centimetre or two, wider, greyer and in petals further off, gone by 20 to 30 cm; powder grains driven
         // into the skin as reddish-brown pinpoint scrapes, in a wider and sparser pattern the further, to about 60 cm
@@ -530,7 +545,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
                 * (0.75 + 0.25 * cos(th * 6.0 + s.seed)) * (0.7 + 0.6 * noise2(q * 0.25 + s.seed));
             c = mix(c, vec3(0.022, 0.02, 0.018), clamp(soot, 0.0, 1.0) * 0.92 * (1.0 - down * 0.5));
             let spread = 6.0 + mm * 0.15;
-            let dense = 0.5 * pow(1.0 - mm / 600.0, 1.5) * exp(-(rr * rr) / (spread * spread) * 1.5);
+            let dense = 0.9 * pow(1.0 - mm / 600.0, 1.5) * exp(-(rr * rr) / (spread * spread) * 2.5);
             let cell = floor(q / 0.7);
             let pick = hash2(cell + s.seed);
             let mid = (cell + 0.2 + 0.6 * vec2(hash2(cell + 1.3), hash2(cell + 2.7))) * 0.7;
@@ -547,18 +562,20 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         // The lips turned out: the skin bruised red along them, blood smeared at the edge.
         let lip = 1.5 + 0.08 * s.a.z * 1000.0;
         let t = clamp(1.0 + inside / lip, 0.0, 1.0);
-        c = mix(c, c * vec3(0.92, 0.62, 0.6), t * 0.65);
-        c = blood_over(c, 0.05 * t * t * t, wet);
+        c = mix(c, c * vec3(0.9, 0.7, 0.72), t * 0.5);
+        c = blood_over(c, 0.03 * pow(t, 4.0), wet);
         // The skin's cut edge seen over the lip (the turned-out dermis, pale), then the fat bulging between, glistening and
         // filmed with blood, red muscle where it is torn deeper, and the track black-red.
         let edge = smoothstep(-0.1, 0.12, inside);
-        c = mix(c, blood_over(to_linear(dermis) * 0.8, 0.05, wet), edge);
+        c = mix(c, blood_over(to_linear(dermis) * 0.75, 0.035, wet), edge);
         var deep = mix(fat, muscle, at.z);
-        deep = blood_over(to_linear(deep), 0.025 + 0.06 * (1.0 - at.w) + 0.1 * at.z, wet);
+        deep = blood_over(to_linear(deep), 0.03 + 0.1 * smoothstep(0.3, 0.8, 1.0 - at.w) + 0.12 * at.z, wet);
         let thick = max(s.a.x * 1000.0, 1.5);
         deep = mix(deep, vec3(0.03, 0.002, 0.002), smoothstep(thick + 4.0, thick + 9.0, h));
         c = mix(c, deep, smoothstep(0.25, 0.5, inside));
-        coat = max(coat, edge * 0.8);
+        // (wet, but fat glistens rather than shines: a thin film over lobules)
+        coat = max(coat, edge * 0.25);
+        tissue_rough = 0.5;
     }
     // Blood standing in it: level, dark red where it is deep, glossy.
     if pooled {

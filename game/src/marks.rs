@@ -276,9 +276,10 @@ impl Skin {
         let (a2, a3) = (arm(1), arm(2));
         let longest = arms.iter().map(|(_, h)| h[0]).fold(0.0, f32::max);
         let wide = arms[0].1[0] * 2.0;
-        // A crescent now and then; most splits only a little bent.
-        let bend = if rng.next() < 0.3 { (0.6 + 0.4 * rng.next()) * if rng.next() < 0.5 { -1.0 } else { 1.0 } } else { (rng.next() - 0.5) * 0.5 };
-        let burst = wide * (0.16 + 0.12 * rng.next());
+        // A single slit now and then a crescent, most only a little bent; a star's splits straight (bent the same way they
+        // would turn it into a pinwheel).
+        let bend = if arms.len() > 1 { (rng.next() - 0.5) * 0.2 } else if rng.next() < 0.35 { (0.6 + 0.4 * rng.next()) * if rng.next() < 0.5 { -1.0 } else { 1.0 } } else { (rng.next() - 0.5) * 0.5 };
+        let burst = wide * (0.1 + 0.08 * rng.next());
         // (Its lips turned out in a band a millimetre and a half wide and more for a bigger tear: wounds.rs's `lip`.)
         let reach = longest + 0.0015 + wide * 0.04 + 0.003;
         let born = k.map_or(0.0, |k| self.table[SHOTS * WIDE + 1 + (k - 1) * PER_SHOT + 5][3]);

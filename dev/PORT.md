@@ -435,21 +435,21 @@ skin.rs `clothe` gives everyone with a `Hurt` a `skin::Skin` (and a `runs::Runs`
 clothes (person.rs leaves it out; it is put in here, drawn only through holes), clothes, hair and brows get materials of
 their own, `skin::Flesh` (StandardMaterial with skin.wesl over it; `Wounded::info` says which kind of part it is: SKIN,
 UNDER, CLOTH, CARRIED, GAUZE), which read three textures of that person's:
-- `wounds` (2048², RGBA8): red how deep the flesh is open (to 4 cm), green the blood in it, blue a slow bullet's scraped
-  ring. marks.rs paints it; skin.wesl draws it as marks.ts's Gore did (cut edge, fat lobules, sheath, muscle, blood in
-  the bottom, the normal bent down the walls).
+- `wounds` (2048², RGBA8): red how deep the flesh is open (to 4 cm), green the blood in it (blades' wounds and cut
+  edges: marks.rs paints it; skin.wesl draws it as marks.ts's Gore did: cut edge, fat lobules, sheath, muscle, blood in
+  the bottom, the normal bent down the walls); alpha the number of the gunshot wound whose patch it is (below).
 - `film` (2048², RG16F): red the blood lying on the skin (to 0.6 mm), green how wet. film.rs and runs.rs paint it;
   skin.wesl draws fluid.ts's bloodOver (absorption per mm, fresh and dried) and, while wet, a clear wet layer over the
   skin (Bevy's clearcoat with the film's own normal, so its edges catch the light).
 - `state` (1024 wide, RGBA32F, nearest): a table. Row 0 the clock, the recent blows' shapes (bruise.ts records) and the
   counts; row 1 the holes and slits in the clothes, row 2 the openings torn in the skin, row 3 the windows through the
-  clothes (hider.rs, rest space); rows 8 on three texels per corner of the body (bruise tint, shift, tilt) and past the
+  clothes (hider.rs, rest space); row 4 port/cut's; row 5 the gunshot wounds (marks.rs `SHOTS`); rows 8 on three texels per corner of the body (bruise tint, shift, tilt) and past the
   body's corners the dressings' rider slots. bruise.rs's changes are copied in each frame (`Bruise::changed`); only the
   rows that changed are written to the card.
 
 ### The passes (GPU, render world)
 Nothing is painted on the CPU and nothing is uploaded by tiles (the TS's 170-220 ms stalls). A frame's marks are stamps
-(skin.rs `Stamp`: a capsule, the entry's gradient, a soft disc, a blade's lens, an uneven blot, a radial fade; paint.wesl
+(skin.rs `Stamp`: a capsule, a blade's lens, an uneven blot; paint.wesl
 draws each shape in its fragment shader). In the RenderGraph's Begin set, before the cameras: for each person with
 anything this frame, one instanced draw into `wounds` and one into `film`, all of that frame's stamps, blended by Max
 (the canvas's 'lighten'); the film dried by a full-sheet pass that scales its wetness (blend constant), every 8 s while
@@ -458,13 +458,32 @@ stamp buffer and all the lists are reused; nothing is allocated per frame once t
 Bevy's render diagnostics and times the painting (`render/skin_paint/elapsed_gpu`).
 
 ### What draws what (from `Happened`)
-`Wound` (skin: entry or exit in the depth sheet; cloth: a frayed hole and a window onto the skin under it), `Hole`
-(the scraped ring), `Stab` (the blade's slit; the clothes slit, a window), `Tear` (the skin opened along each split, the
-body's wall seen from inside through it, the lips turned out: marks.lip, by ray onto the skin round it), `Welling`
+`Wound` (skin: a gunshot record, below; cloth: a frayed hole and a window onto the skin under it), `Hole` (whether the
+way in has a scraped ring; none before a `Wound` in: a way in again), `Spatter` (which way the bullet went in and from how
+far: the oval, the ring's wide side, soot and powder), `Stab` (the blade's slit; the clothes slit, a window), `Tear`
+(the way out's splits, into its record), `Welling`
 (a blot and a run), `Runs` (runs.rs, or into the clothes), `Blot`, `Slit` (new: a stretch of a blade's cut, from
 `Npc::slash` in marks.rs, which weapons.rs calls with the crossings, as npc.ts slash; and skin split by a blow).
-Not drawn here: `Spatter`, `Spray`, `Stream`, `Soak` (blood.rs, soak.rs: port/blood), `Edge`, `Charge`, `Bled`,
+Not drawn here: `Spatter`'s blood, `Spray`, `Stream`, `Soak` (blood.rs, soak.rs: port/blood), `Edge`, `Charge`, `Bled`,
 `Drawn`, `Through`, `Tooth`, `Tongue` (port/cut and the face).
+
+### Gunshot wounds (port/wound, 2026-11-16)
+The TS painted a bullet's way out as a red star of capsules on the depth sheet, and its way in as a radial gradient: flat
+paint, and at the sheet's two texels to a millimetre (one on a thigh) a 5 mm hole and its 1 mm ring were a smudge. The
+user: "Why the fuck are they stars". Now each way in and out is a record in the table's row 5 (marks.rs `entry`, `aimed`,
+`exit`: six texels each, 170 a person; where it is at rest, its axes, its kind (in, out, in again, a shotgun's charge),
+its seed, the record it overlaps, its sizes from wounds.rs (`exit_size`, `tear`'s splits, the calibre), which way the
+bullet came and from how far, when it was made), and its number is stamped into the wound sheet's alpha over the patch
+it reaches. skin.wesl `gunshot`, where that alpha is set, reads the number exactly (textureLoad), and draws the wound
+from its record in millimetres at any distance: a height field (the hole and its walls, the edge turned in at a way in,
+the lips turned out at a way out, fat bulging between them, the track) that the eye's ray is followed into (48 steps and
+7 halvings, in the skin's rest space through the skinning's matrix, passed from the vertex shader), so the near wall hides
+the far one and the light falls down them; what it meets coloured as what is there (scraped ring, cut dermis, fat,
+muscle, blood standing level in it and welling up over the first half minute, glossy, dulling over a quarter of an
+hour; soot and powder tattooing round a close shot), the normal from the field, Bevy's clearcoat for the wet. The
+film's blood is kept off the hole's inside. A way out is no longer cut through the skin (hider's row 2): the tear is
+looked into, not through. What each look is from: dev/research/wounds.md, end. The check: `--scenario gunshot`
+(skin.rs `gunshot`; `GUNSHOT=pistol_face,...`, `GUNSHOT_AT=macro,close,far`, `GUNSHOT_BLANK=1`).
 
 ### For the others
 - port/blood: runs.rs sends `runs::Drip { at, ml }` (a drop let go from the skin), `runs::Pooled { at, ml }` (reached the
