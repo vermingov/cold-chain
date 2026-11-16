@@ -525,12 +525,13 @@ impl Npc<'_> {
 // it; wholly on the body, it stays; either way its corners are carried only by the bones of their side, as the skin's are.
 #[allow(clippy::type_complexity)]
 pub fn severed(
-    mut people: Query<(&crate::person::Person, &mut crate::npc::Hurt, &mut crate::vitals::Vitals, &crate::dismember::Dismember, Option<&crate::skin::Skin>)>,
+    mut people: Query<(&crate::person::Person, &mut crate::npc::Hurt, &mut crate::vitals::Vitals, Option<&crate::dismember::Dismember>, Option<&crate::skin::Skin>)>,
     mut drawn: Query<(&Mesh3d, &mut Visibility)>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for (person, mut hurt, mut vitals, dismember, skin) in &mut people {
-        let cuts = &dismember.cuts;
+        // (Nobody has a `Dismember` until their first cut: a dressing put on before it has seen none.)
+        let cuts = dismember.map_or(&[][..], |d| &d.cuts[..]);
         let bones = &person.body.bones;
         for k in 0..hurt.dressings.len() {
             let seen = *hurt.dressings[k].seen.get_or_insert(cuts.len());
