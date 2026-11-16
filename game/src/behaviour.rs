@@ -584,6 +584,7 @@ impl Behaviour {
         }
         self.strengthen(dt);
         let v = &self.felt;
+        rd.set_flaccid(v.paralysed_arms, v.paralysed_legs);
         rd.set_tone(if v.dead || !v.beating { ragdoll::DEAD } else if self.will < 0.05 { ragdoll::OUT } else { ragdoll::ALIVE });
 
         self.com = rd.com();
@@ -2223,7 +2224,7 @@ fn think(
     map: Res<Map>,
     players: Query<&Player>,
     mut rng: ResMut<Rng>,
-    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&Hurt>, Has<Grabbed>)>,
+    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&mut Hurt>, Has<Grabbed>)>,
     mut sounds: MessageWriter<Heard>,
 ) {
     let dt = time.delta_secs();
@@ -2232,12 +2233,12 @@ fn think(
     }
     let eye = players.iter().next().map(|p| p.eye().translation);
     let mut heard = Vec::new();
-    for (mut person, root, mut rd, mut b, mut vitals, hurt, grabbed) in &mut people {
+    for (mut person, root, mut rd, mut b, mut vitals, mut hurt, grabbed) in &mut people {
         if let Some(v) = &vitals {
             b.felt = Felt { conscious: v.conscious(), pain: v.pain, daze: v.daze, out: v.out, lost: v.lost(), dead: v.dead, beating: v.beating(),
                 paralysed_arms: v.paralysed_arms, paralysed_legs: v.paralysed_legs };
         }
-        if let Some(h) = hurt {
+        if let Some(h) = &hurt {
             b.leg_gone = h.leg_gone;
             b.retch = h.throat.retch;
             b.breaks = h.bones.breaks.iter().filter_map(|br| Some((if br.side? == Side::L { 'L' } else { 'R' }, br.key.clone()))).collect();
@@ -2246,6 +2247,9 @@ fn think(
         b.update(dt, &person, &mut rd, &map, eye, &mut rng, &mut heard);
         if let Some(v) = &mut vitals {
             v.pain = b.felt.pain;
+        }
+        if let Some(h) = &mut hurt {
+            h.down = rd.limp;
         }
         // The muscles do what the body can, the physics moves it, and the skeleton follows the bodies.
         let posed = rd.drive(&person, root, &b.muscles.hands);
@@ -2274,7 +2278,7 @@ fn landings(world: &mut World) {
     // Per person: each segment's turn and place, its downward speed before and after the step, its lowest point, the
     // ground under it, and whether its muscle holds it; and the pelvis's and chest's.
     #[allow(clippy::type_complexity)]
-    let people: Vec<(Entity, Vec<Transform>, Vec<(f32, f32, f32, f32, bool)>, [f32; 3])> = q
+    let people: Vec<(Entity, Vec<Transform>, Vec<npc::Bend>, Vec<(f32, f32, f32, f32, bool)>, [f32; 3])> = q
         .iter(world)
         .map(|(e, rd, _)| {
             let segs = (0..rd.segs.len())
@@ -2283,13 +2287,21 @@ fn landings(world: &mut World) {
                     (rd.segs[k].was.y, rd.segs[k].vel.y, low, map.ground(at.x, at.z, low + 0.1), rd.held(k))
                 })
                 .collect();
+            // (The hinge as the TS took it: the joint's first axis turned with the parent as it is now.)
+            let bends = (0..rd.segs.len())
+                .map(|k| match rd.segs[k].def.parent {
+                    Some(p) => npc::Bend { hinge: rd.segs[p].now.rotation * (rd.segs[k].frame * Vec3::X), angles: rd.angles(k), lo: rd.segs[k].lo, hi: rd.segs[k].hi },
+                    None => npc::Bend::default(),
+                })
+                .collect();
             let (pelvis, chest) = (rd.by_name("pelvis"), rd.by_name("chest"));
-            (e, rd.segs.iter().map(|s| s.now).collect(), segs, [rd.segs[pelvis].vel.y, rd.segs[chest].vel.y, rd.segs[pelvis].now.translation.y])
+            (e, rd.segs.iter().map(|s| s.now).collect(), bends, segs, [rd.segs[pelvis].vel.y, rd.segs[chest].vel.y, rd.segs[pelvis].now.translation.y])
         })
         .collect();
-    for (e, now, segs, [pelvis_vy, chest_vy, pelvis_y]) in people {
+    for (e, now, bends, segs, [pelvis_vy, chest_vy, pelvis_y]) in people {
         if let Some(mut h) = world.get_mut::<Hurt>(e) {
             h.segments = Some(now);
+            h.bends = Some(bends);
         }
         npc::with(world, e, |npc| {
             for (k, &(was, vy, low, under, held)) in segs.iter().enumerate() {
@@ -2349,7 +2361,7 @@ fn hurts(world: &mut World) {
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, make)
         .add_systems(FixedUpdate, (step.in_set(Steps::Push), landings.after(Steps::Read)))
-        .add_systems(Update, (think, ragdoll::send).chain())
+        .add_systems(Update, (think, ragdoll::send).chain().after(npc::update))
         .add_systems(PostUpdate, hurts);
 }
 

@@ -251,6 +251,12 @@ impl Playing {
     pub fn voice(&self) -> std::sync::MutexGuard<'_, Voice> {
         self.0.lock().unwrap()
     }
+
+    // Still to be heard at `now` (Sound::now's clock): not cut, and not yet played to its end.
+    pub fn sounding(&self, now: f64) -> bool {
+        let v = self.voice();
+        !v.cut && now < v.start + v.length / v.rate as f64
+    }
 }
 
 // A stream (`Sound::stream`): driven every frame by whoever has it; dropped, it falls silent and is let go of.
@@ -848,6 +854,10 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
         for x in &h.happened {
             match x {
                 Happened::Say { kind, gain } => {
+                    // (One mouth: a new cry cuts in on the one before. Left playing, it was not cut when they went out.)
+                    if let Some((playing, _)) = saying.0.remove(&e) {
+                        playing.cut();
+                    }
                     if let Some(playing) = sound.play(&format!("{kind}-{}", p.body.name), Play { gain: *gain, follow: head, ..default() }) {
                         saying.0.insert(e, (playing, kind));
                     }
@@ -858,14 +868,21 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
                     }
                 }
                 Happened::Sound { name, at, gain } => {
-                    let playing = sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, ..default() });
-                    // (A retch or a vomit comes out of the mouth, which the face opens to it, as a cry: throat.ts spoke them.)
-                    let kind = match name.as_str() {
-                        "retch" => Some("retch"),
-                        "vomit" => Some("vomit"),
+                    // (A retch, a vomit or a wet cough comes out of the mouth, which the face opens to it, as a cry: throat.ts
+                    // spoke them.)
+                    let kind = match (name.as_str(), at) {
+                        ("retch", None) => Some("retch"),
+                        ("vomit", None) => Some("vomit"),
+                        ("cough-wet", None) => Some("cough"),
                         _ => None,
                     };
-                    if let (Some(playing), Some(kind), None) = (playing, kind, at) {
+                    if kind.is_some() {
+                        if let Some((playing, _)) = saying.0.remove(&e) {
+                            playing.cut();
+                        }
+                    }
+                    let playing = sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, ..default() });
+                    if let (Some(playing), Some(kind)) = (playing, kind) {
                         saying.0.insert(e, (playing, kind));
                     }
                 }

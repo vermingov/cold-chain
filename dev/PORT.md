@@ -816,3 +816,49 @@ Off the frame: a cut's meshes 8 to 19 ms, its face's painting 17 to 60, a drawin
   environment: the hall scenario under xvfb draws the hall and the people.
 - Windows (x86_64-pc-windows-gnu with mingw-w64) was not built: the user wants the AppImage only for now. A release
   build opens no console there (main.rs), and the F3 preset is kept in %APPDATA% (graphics.rs).
+
+## The body, medicine and hands against the TS (phase 4, branch port/parity-body)
+
+### The body wired into medicine
+No `port: needs body` is left. behaviour.rs leaves on the person after every physics step each segment's place
+(`Hurt::segments`) and each joint as it is (`Hurt::bends`: the hinge turned with the parent, the angles from the neutral,
+the range), and once a frame whether the body is limp (`Hurt::down`): bones.rs `at_joint` judges a blow at a joint on the
+joint's real bend and range, and a shot into someone already down plays no flesh hit, as the TS did. behaviour's `think`
+runs after medicine's update, as the TS's behaviour ran after the vitals. A limb paralysed by the cord is flaccid
+(`Ragdoll::set_flaccid`: the dead tone in its joints), so paralysed legs trail in the crawl instead of staying folded under
+the hips. dressing.rs `severed` (dressing.ts `_severed`): a dressing cut through with its limb comes away (its bleeds
+undressed, its mesh hidden; it stays in the list marked `off`, so skin.rs's list keeps its places), one wholly on the piece
+goes with it, one on the body stays, each corner carried only by its own side's bones.
+
+### The voice
+One mouth: a new cry, retch or wet cough cuts the one before (the TS left it playing, and it was not the one cut when they
+went out); going out cuts whatever is playing; out cold or dead nothing new is voiced (the throat's cough, retch and vomit
+still clear and empty them, silently), and the TS's last breath ('dying') is no longer said, at the user's word that people
+"can still make noises when they die".
+
+### The checks (scenario.rs; on lavapipe the body scenarios draw only the frames they photograph)
+- `voices`: shot, knocked out mid-cry, killed, coughing and retching then knocked out; every voice started and anything
+  still sounding while out or dead. Nothing is heard after the frame they go out.
+- `dressing`: wraps on two forearms, a wrist and an upper arm, then both forearms chopped. The wrap cut through comes away,
+  the wrist wraps go with the pieces, the upper arm's stays.
+- `guns` (`pistol`, `rifle`, `shotgun`): a gun taken, aimed at a standing person's chest from 3 m and fired as a click
+  fires it; tools/port-guns.mjs does the same in the TS game. Pistol: the same injuries (left lung, ninth rib, abdomen,
+  diaphragm), vitals within a few per cent, both stand through it, the same sounds (the port also hears the casing). Rifle
+  and shotgun: both stand, pain and lung the same; which ribs and organs the round or the pellets meet differs with the
+  gun's sway and the pellets' spread (dice): the TS's rifle broke two ribs that the port's missed, the TS's pellets went
+  into the liver and spleen, the port's into three ribs and a lung.
+- `wounds` against tools/port-wounds.mjs: 2879 of 2880 readings match (the other a hundredth of a millilitre a minute);
+  the cries the same but the TS's 'dying'.
+- `crawl`: the timeline now has each chest second by second. Speed over the crawl 0.046, 0.040, 0.046, 0.021 m/s against
+  the TS's 0.055, 0.061, 0.028, 0.050 (the TS's jitter rig, all four paralysed). It was never ten times the TS's: the old
+  logs' end positions were read against the wrong people (the scenario's person 0 stands at +x, the TS's npc 0 at -x).
+
+### What still differs
+- Jitter (rad/s, the TS's measure): crawl 1.32 (0.75 before the legs went flaccid: their feet stick and slip on the
+  floor) against the TS's 2.40; drag 0.27 against 1.60; dead 0.31 against 0.10. Dead was 0.058 in phase 2 and is 0.56 on
+  this branch's base (the phase-3 merges): an arm lying across its own body keeps a dead person's forearm turning about
+  1 rad/s, buzzing against its contact. Not found.
+- The drag: the TS's dragged person is pulled about the floor (the chest 0.1 to 0.3 m a second); in the port the held hand
+  stays about half a metre from where it is drawn to and the body hardly moves (the `drag` log's `held`). The pull is the
+  TS's (320 N/m a kilogram of the part held, a hand's half kilogram), and the writhing arm's muscles hold against it
+  here; why Havok's did not is not known.

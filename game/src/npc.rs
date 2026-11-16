@@ -187,6 +187,16 @@ pub struct Skinned {
     parts: Vec<[f32; 6]>,
 }
 
+// A joint of the ragdoll as it is now: its hinge's axis in the world, its three angles from its neutral (hinge, twist,
+// side) and its range, radians (ragdoll.rs `angles`, `lo`, `hi`).
+#[derive(Clone, Copy, Default)]
+pub struct Bend {
+    pub hinge: Vec3,
+    pub angles: [f32; 3],
+    pub lo: [f32; 3],
+    pub hi: [f32; 3],
+}
+
 const RUN: usize = 96; // indices: 32 triangles, which lie together in the mesh (MakeHuman's faces are in order over the body)
 const GROUP: usize = 8; // runs: a short line (sixty round each exit, wounds.ts tear) crosses few of them
 
@@ -202,10 +212,9 @@ pub struct Hurt {
     pub dressings: Vec<Dressing>,
     pub said: Said,
     pub crying: bool,
-    // A cry is playing (the TS kept the sound to cut it: whoever plays it keeps it, and takes `Happened::Cut`).
-    pub saying: bool,
     // Off their feet for good: a leg that will not carry them (behaviour.rs reads it).
     pub leg_gone: bool,
+    // Off their feet, the muscles the behaviour's (the ragdoll's `limp`, behaviour.rs writes it every frame).
     pub down: bool,
     // Each vessel's pieces already cut (anatomy.ts's tube.cut, this person's own), and the parts shown hurt in the x-ray.
     pub cut: HashSet<(usize, usize)>,
@@ -215,10 +224,11 @@ pub struct Hurt {
     pub clock: f32,
     // Seconds since they were made (bones.ts counts the settling into their stance from it).
     pub age: f32,
-    // Where each ragdoll segment is now, in the person.segments' order.
-    // port: needs body. The ragdoll writes its rigid bodies' transforms here each step; while it is None each is worked
-    // out from the pose (segment_world).
+    // Where each ragdoll segment is now, in the person.segments' order: behaviour.rs writes its rigid bodies' transforms
+    // here after every physics step; while it is None (no ragdoll yet) each is worked out from the pose (segment_world).
     pub segments: Option<Vec<Transform>>,
+    // Each segment's joint to its parent as it is now, written beside `segments` (bones.rs `at_joint` reads them).
+    pub bends: Option<Vec<Bend>>,
     skinned: Option<(u32, Arc<Skinned>)>,
     // The body's corners' bones and weights as this person's own body has them, once a limb is cut off (dismember.rs:
     // what the body keeps is carried by the bone the limb hung from); None, the file's.
@@ -245,9 +255,8 @@ impl<'a> Npc<'a> {
         self.person.body.by_name[name]
     }
 
-    // Each bone's matrix from the body at rest to the world now: as posed (person.rs `posed`).
-    // port: needs body. Once the ragdoll drives the skeleton, this is the one place to read the bones' world transforms
-    // from instead; everything medical asks it.
+    // Each bone's matrix from the body at rest to the world now: as posed (person.rs `posed`, which the ragdoll's drive()
+    // writes from its bodies every frame). Everything medical asks it.
     pub fn bone_worlds(&self) -> Vec<Affine3A> {
         let p = self.person;
         let pelvis = p.body.bone("root").head;
@@ -271,8 +280,8 @@ impl<'a> Npc<'a> {
         (m.transform_point3(rest), normal.map(|n| m.transform_vector3(n).normalize()))
     }
 
-    // A segment of the ragdoll in the world now: its bone's head and turn (ragdoll.rs `segments`'s `rest`, posed now).
-    // port: needs body. The ragdoll's rigid bodies, once there are any.
+    // A segment of the ragdoll in the world now: its bone's head and turn (its rigid body's, from `Hurt::segments`; before
+    // there is a ragdoll, ragdoll.rs `segments`'s `rest` posed now).
     pub fn segment_world(&self, k: usize) -> Transform {
         if let Some(segments) = &self.hurt.segments {
             return segments[k];
@@ -580,9 +589,11 @@ impl<'a> Npc<'a> {
 
     // A push of `impulse` (N s) at `point`; `jolt` how much a standing person flinches from it (0 to 1). The body takes
     // the push where it landed; whether it stays on its feet is its balance's business (behaviour.rs).
-    // port: needs body. The TS played the flesh hit only while the ragdoll was not limp.
+    // (The flesh hit is heard only while the body is not limp, as the TS played it.)
     pub fn hit(&mut self, point: Vec3, impulse: Vec3, jolt: f32) {
-        self.hurt.happened.push(Happened::Sound { name: "bullet-flesh".into(), at: Some(point), gain: 0.7 });
+        if !self.hurt.down {
+            self.hurt.happened.push(Happened::Sound { name: "bullet-flesh".into(), at: Some(point), gain: 0.7 });
+        }
         self.hurt.happened.push(Happened::Hit { point, impulse, jolt });
     }
 
@@ -632,6 +643,12 @@ impl<'a> Npc<'a> {
 
     // --- the voice -----------------------------------------------------------------------------------------------
 
+    // Awake enough to make a sound of their own (a cry, a cough, a retch): out cold or dead, nothing new is said.
+    pub fn awake(&self) -> bool {
+        let v = &*self.vitals;
+        v.conscious() > 0.35 && v.beating() && !v.dead
+    }
+
     // One of this person's cries (tools/cries.py), from their mouth, unless they are already making one. `over` cuts
     // in on whatever they were saying, as a new hurt does.
     pub fn say(&mut self, kind: &'static str, gain: f32, over: bool) {
@@ -645,24 +662,21 @@ impl<'a> Npc<'a> {
             _ => 2.2,
         };
         self.hurt.happened.push(Happened::Say { kind, gain });
-        self.hurt.saying = true;
         self.hurt.crying = kind == "cry" || (self.hurt.crying && kind != "scream" && kind != "yell");
     }
 
     // What they say about what is happening to them: a cry the moment it hurts, as bad as it hurts; then groans, or
-    // weeping once a lot of blood has gone; gasping when they cannot get air; and a last breath.
+    // weeping once a lot of blood has gone; gasping when they cannot get air.
     fn speak(&mut self, dt: f32) {
-        let v = &*self.vitals;
-        let awake = v.conscious() > 0.35 && v.beating() && !v.dead;
+        let awake = self.awake();
         let was = self.hurt.said.awake;
         // Knocked out or killed mid-cry, the cry stops there (a recording plays two or three seconds: it went on
-        // screaming after the shot that put them down).
-        if was && !awake && self.hurt.saying {
+        // screaming after the shot that put them down); so does a retch or a cough. (Whoever plays the voice keeps it and
+        // takes `Happened::Cut`: sound.rs, which has nothing to cut if nothing is playing.)
+        // (The TS said a last breath, 'dying', as they died. The user: people "can still make noises when they
+        // die". Nothing is said by someone going out or dying: the moment is the cry cut off, and silence.)
+        if was && !awake {
             self.hurt.happened.push(Happened::Cut);
-            self.hurt.saying = false;
-        }
-        if was && !awake && (v.dead || !v.beating()) {
-            self.say("dying", 0.8, true);
         }
         self.hurt.said.awake = awake;
         let v = &*self.vitals;
@@ -696,8 +710,9 @@ impl<'a> Npc<'a> {
     // --- every frame ---------------------------------------------------------------------------------------------
 
     // The insides' clock, in the order npc.ts updated them: the vitals, the throat, the bruising, the blood out of each
-    // wound, the voice; the bones after the physics step.
-    // port: needs body. behaviour, ragdoll.drive, dismember and viscera ran between the vitals and the throat.
+    // wound, the voice; the bones after the physics step. (The TS ran behaviour, ragdoll.drive, dismember and viscera
+    // between the vitals and the throat: here they are systems of their own, behaviour.rs's `think` after this one, reading
+    // the vitals as this frame left them and the throat's retch.)
     pub fn update(&mut self, dt: f32) {
         self.hurt.clock += dt;
         self.hurt.age += dt;
@@ -866,7 +881,7 @@ pub fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> (f32, [f32; 3]
 // --- the per-frame clock, and borrowing a person -------------------------------------------------------------------
 
 // Everyone's insides, a frame at a time.
-fn update(time: Res<Time>, frames: Res<FrameCount>, mut dice: ResMut<Dice>, mut people: Query<(&Person, &Transform, &mut Vitals, &mut Hurt)>) {
+pub fn update(time: Res<Time>, frames: Res<FrameCount>, mut dice: ResMut<Dice>, mut people: Query<(&Person, &Transform, &mut Vitals, &mut Hurt)>) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
@@ -907,7 +922,6 @@ impl Hurt {
             facts,
             said: Said { until: 0.0, pain: 0.0, next, awake: true },
             crying: false,
-            saying: false,
             leg_gone: false,
             down: false,
             cut: HashSet::new(),
@@ -916,6 +930,7 @@ impl Hurt {
             clock: 0.0,
             age: 0.0,
             segments: None,
+            bends: None,
             skinned: None,
             weights: None,
         }
@@ -969,7 +984,7 @@ pub fn forget(mut people: Query<&mut Hurt>) {
 }
 
 pub fn plugin(app: &mut App) {
-    app.insert_resource(Dice(12345)).add_systems(First, forget).add_systems(Update, (fit, update).chain());
+    app.insert_resource(Dice(12345)).add_systems(First, forget).add_systems(Update, (fit, update, crate::dressing::severed).chain());
 }
 
 #[cfg(test)]

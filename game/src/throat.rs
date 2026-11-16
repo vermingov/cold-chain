@@ -373,11 +373,14 @@ impl ThroatOf<'_, '_> {
         t.mouth += up;
         // (Even a millilitre or two brought up comes out in the cough as a pink spray: frothed, it looks more than it is.)
         let wet = t.mouth > 0.5;
-        if wet {
-            self.0.sound("cough-wet", None, 0.9);
-            self.0.hurt.said.until = self.0.hurt.clock + 1.5;
-        } else {
-            self.0.say("cough", 0.9, true);
+        // (Barely awake, the cough still clears the airways, but no sound comes of it: nothing is said out cold.)
+        if self.0.awake() {
+            if wet {
+                self.0.sound("cough-wet", None, 0.9);
+                self.0.hurt.said.until = self.0.hurt.clock + 1.5;
+            } else {
+                self.0.say("cough", 0.9, true);
+            }
         }
         if !wet {
             return;
@@ -484,7 +487,7 @@ impl ThroatOf<'_, '_> {
         }
         let t = self.t();
         t.gape += (gape - t.gape) * (dt * 12.0).min(1.0);
-        // port: needs body (behaviour's `retch`: the body folding over with each heave).
+        // The body folding over with each heave (behaviour.rs reads it into its `retch`).
         t.retch = fold * (0.4 + 0.6 * ramp(awake, 0.1, 0.6));
     }
 
@@ -505,8 +508,12 @@ impl ThroatOf<'_, '_> {
         happened.push(Happened::Runs { hit, ml: ml * 0.04, from: None });
     }
 
+    // A retch or the vomit heard from the mouth. (Out cold the stomach still empties, weakly, but silently: nothing is
+    // said or retched aloud by someone unconscious or dead.)
     fn sound(&mut self, name: &str, gain: f32) {
-        self.0.sound(name, None, gain);
+        if self.0.awake() {
+            self.0.sound(name, None, gain);
+        }
         self.0.hurt.said.until = self.0.hurt.clock + 2.0;
     }
 }

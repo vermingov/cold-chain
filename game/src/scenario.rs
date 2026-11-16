@@ -342,6 +342,8 @@ use crate::ragdoll::Ragdoll;
 struct Acc {
     state: Option<Doing>,
     mode: Option<Mode>,
+    // Where the chest was as the second began (the TS's jitter.mjs `at`: how far and fast they went).
+    at: Option<Vec3>,
     // Per segment: steps, the sum of the squared second difference, of |w|.
     segs: Vec<(u32, f64, f64)>,
 }
@@ -371,6 +373,7 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
         let acc = j.bins.entry((e, second)).or_default();
         acc.state = Some(b.state);
         acc.mode = Some(b.mode);
+        acc.at.get_or_insert(rd.segs[rd.by_name("chest")].now.translation);
         acc.segs.resize(rd.segs.len(), (0, 0.0, 0.0));
         for (k, s) in rd.segs.iter().enumerate() {
             let w = s.spin;
@@ -445,7 +448,8 @@ fn timeline(w: &mut World) {
         let i = people.iter().position(|&p| p == e)?;
         let hf: Vec<f64> = acc.segs.iter().filter(|s| s.0 > 0).map(|s| (s.1 / s.0 as f64).sqrt()).collect();
         let mean = hf.iter().sum::<f64>() / hf.len().max(1) as f64;
-        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "hf": (mean * 100.0).round() / 100.0 }))
+        let at = acc.at.map(|a| [a.x, a.y, a.z].map(|c| (c * 1000.0).round() / 1000.0));
+        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "hf": (mean * 100.0).round() / 100.0, "at": at }))
     }).collect();
     let at: Vec<Value> = people.iter().map(|e| json!(chests.get(e).map(|c| c.to_array()))).collect();
     let ms = j.step_ms / j.steps.max(1) as f64;
@@ -571,8 +575,9 @@ fn body(name: &str) -> Option<Vec<Step>> {
                 }
             })));
             s.push(each(None, |_, b, rng| b.knock_down(rng)));
+            // (The player stays where they start until then: each crawls away from the eye as it was when they began.)
             s.push(Step::Wait(60 * 12));
-            film(&mut s, "crawl", 1, 8, 6, -0.3, -1.8, 1.4);
+            film(&mut s, "crawl", 1, 8, 6, -0.3, -2.6, 2.2);
             s.push(Step::Wait(60 * 10));
             s.push(situation("crawl", |_, _, _, m| m == Mode::Crawl));
         }
@@ -596,29 +601,57 @@ fn body(name: &str) -> Option<Vec<Step>> {
                         p.spawn(&map, at.x - back.x * 1.4, at.z - back.z * 1.4, Some(at), 1.65);
                     }
                 });
-                let eye = w.query::<&Player>().iter(w).next().unwrap().eye().translation;
+                let (eye, yaw0) = {
+                    let p = w.query::<&Player>().iter(w).next().unwrap();
+                    (p.eye().translation, p.yaw)
+                };
                 let g = Grabbed::at(w.entity(e).get::<Ragdoll>().unwrap(), at, eye);
                 w.entity_mut(e).insert(g);
-                let yaw0 = w.query::<&Player>().iter(w).next().unwrap().yaw;
                 let mut runner = w.resource_mut::<Runner>();
                 let mut steps = Vec::new();
                 for k in 0..480u32 {
                     let t = k as f32 / 60.0;
+                    if k == 144 || k == 230 {
+                        steps.push(cameras(true));
+                    } else if k == 0 || k == 151 || k == 264 {
+                        steps.push(cameras(false));
+                    }
+                    // (The dragger's eye is kept here, standing where they took hold: the player's own camera is free to
+                    // be put beside the body for the pictures.)
                     steps.push(Step::Do(Box::new(move |w: &mut World| {
-                        let mut q = w.query::<&mut Player>();
-                        let eye = {
-                            let mut p = q.iter_mut(w).next().unwrap();
-                            p.yaw = yaw0 + 0.6 * (t * std::f32::consts::TAU * 0.4).sin();
-                            // (The TS's pitch 0.35 down is -0.35 here: up is positive.)
-                            p.pitch = -(0.35 + 0.15 * (t * std::f32::consts::TAU * 0.27).sin());
-                            p.eye()
-                        };
+                        let yaw = yaw0 + 0.6 * (t * std::f32::consts::TAU * 0.4).sin();
+                        // (The TS's pitch 0.35 down is -0.35 here: up is positive.)
+                        let pitch = -(0.35 + 0.15 * (t * std::f32::consts::TAU * 0.27).sin());
+                        let ahead = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0) * Vec3::NEG_Z;
                         let mut q = w.query::<&mut Grabbed>();
                         for mut g in q.iter_mut(w) {
-                            g.aim(eye.translation, eye.forward().as_vec3());
+                            g.aim(eye, ahead);
+                        }
+                        // Where the hand held is against where it is drawn to, each second.
+                        if k % 60 == 0 {
+                            let Some(g) = w.entity(e).get::<Grabbed>().map(|g| (g.seg, g.local, g.target)) else { return };
+                            let rd = w.entity(e).get::<Ragdoll>().unwrap();
+                            let held = rd.world_point(g.0, g.1);
+                            log(w, json!({ "event": "held", "t": t, "segment": rd.segs[g.0].def.name, "at": held.to_array(), "target": g.2.map(|t| t.to_array()) }));
                         }
                     })));
-                    steps.push(if k == 150 || k == 165 || k == 180 || k == 195 || k == 210 || k == 225 { Step::Shot(format!("drag_{}", (k - 150) / 15)) } else { Step::Wait(2) });
+                    // Seen from beside: the dragger's own view, then a strip of frames from 2 m off the body's middle.
+                    if k == 150 {
+                        steps.push(Step::Shot("drag_eye".into()));
+                    } else if (240..264).contains(&k) && k % 3 == 0 {
+                        steps.push(Step::Do(Box::new(move |w: &mut World| {
+                            let c = w.entity(e).get::<Ragdoll>().unwrap().centre();
+                            w.resource_scope(|w, map: Mut<Map>| {
+                                let mut q = w.query::<&mut Player>();
+                                for mut p in q.iter_mut(w) {
+                                    p.spawn(&map, c.x + 1.6, c.z + 1.2, Some(c), 1.3);
+                                }
+                            });
+                        })));
+                        steps.push(Step::Shot(format!("drag_{}", (k - 240) / 3)));
+                    } else {
+                        steps.push(Step::Wait(2));
+                    }
                 }
                 steps.push(Step::Do(Box::new(move |w: &mut World| {
                     w.entity_mut(e).remove::<Grabbed>();
@@ -663,6 +696,178 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(count)));
             s.extend(view("keys_made", 3.0, -5.0, [3.0, 0.8, -1.0], 1.65));
         }
+        // Dressings on an arm that is then cut off (dressing.rs `severed`): the old man shot through the right forearm
+        // and wrist, the groundskeeper through the right upper arm and forearm, every wound dressed; then each right
+        // forearm chopped through, the old man's across its dressing (it comes away), the groundskeeper's below the upper
+        // arm's (it stays) and above the forearm's wound (that one goes with the piece).
+        "dressing" => {
+            s.push(Step::Wait(90));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for (i, wounds) in [(0, [("lowerarm01.R", "wrist.R", 0.55), ("lowerarm01.R", "wrist.R", 0.95)]), (1, [("upperarm01.R", "lowerarm01.R", 0.5), ("lowerarm01.R", "wrist.R", 0.8)])] {
+                    let who = person_at(w, i);
+                    crate::npc::with(w, who, |npc| {
+                        for (a, b, t) in wounds {
+                            let (ia, ib) = (npc.bone_index(a), npc.bone_index(b));
+                            let at = npc.rest_to_world(ia).transform_point3(npc.body().bones[ia].head.lerp(npc.body().bones[ib].head, t));
+                            let dir = babylon(0.0, 0.0, 1.0);
+                            crate::wounds::pierce(npc, at - dir * 1.5, dir, &missile("pistol"), 3.0);
+                        }
+                        while let Some(wound) = crate::dressing::wounds(npc).into_iter().next() {
+                            if crate::dressing::dress(npc, &wound).is_none() {
+                                break;
+                            }
+                        }
+                    });
+                }
+            })));
+            s.push(Step::Wait(30));
+            s.push(Step::Do(Box::new(|w: &mut World| dressings(w, "dressed"))));
+            s.extend(view("dressing_on", 0.0, -1.2, [-1.4, 1.1, 2.2], 1.6));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for (i, t) in [(0, 0.55), (1, 0.45)] {
+                    let who = person_at(w, i);
+                    let p = crate::npc::with(w, who, |npc| {
+                        let (ia, ib) = (npc.bone_index("lowerarm01.R"), npc.bone_index("wrist.R"));
+                        npc.rest_to_world(ia).transform_point3(npc.body().bones[ia].head.lerp(npc.body().bones[ib].head, t))
+                    });
+                    let off = p.is_some_and(|p| crate::dismember::chop(w, who, p, babylon(-1.0, -0.3, 0.0).normalize(), 200.0));
+                    log(w, json!({ "event": "chop", "person": i, "off": off }));
+                }
+            })));
+            s.push(Step::Wait(3));
+            s.push(Step::Do(Box::new(|w: &mut World| dressings(w, "cut"))));
+            s.push(Step::Wait(120));
+            s.push(Step::Do(Box::new(|w: &mut World| dressings(w, "two seconds on"))));
+            s.extend(view("dressing_cut", 0.0, -1.2, [-1.4, 0.3, 2.0], 1.6));
+            // Close on each stump and piece, from the side its end faces.
+            for i in 0..2 {
+                for piece in [false, true] {
+                    s.push(Step::Do(Box::new(move |w: &mut World| {
+                        let who = person_at(w, i);
+                        let Some((at, n)) = crate::dismember::end_world(w, who, 0, piece) else { return };
+                        let off = (n.with_y(0.0).normalize_or(Vec3::Z) * 0.5 + Vec3::Y * 0.3) * if piece { -1.0 } else { 1.0 };
+                        let from = at + off.with_y(off.y.abs());
+                        w.resource_scope(|w, map: Mut<Map>| {
+                            let ground = map.ground(from.x, from.z, f32::INFINITY);
+                            for mut p in w.query::<&mut Player>().iter_mut(w) {
+                                p.spawn(&map, from.x, from.z, Some(at), (from.y - ground).max(0.25));
+                            }
+                        });
+                    })));
+                    s.push(Step::Wait(6));
+                    s.push(Step::Shot(format!("dressing_{i}_{}", if piece { "piece" } else { "stump" })));
+                }
+            }
+        }
+        // The voice out cold and dead (the user: "they still scream even if they are unconscious or dead"): the old man
+        // shot in the arm and, half a second into his scream, in the thigh, then knocked out a third of a second later;
+        // the groundskeeper shot in the chest and dying a second on; the young man with blood in his airways and a
+        // stomach full of it, coughing and retching, knocked out at three seconds; the hooded man shot and killed at once.
+        // Every frame, what each says and whether anything of theirs is still to be heard while they are out or dead.
+        "voices" => {
+            s.push(Step::Wait(90));
+            s.push(cameras(false));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                w.init_resource::<Said>();
+                let young = person_at(w, 2);
+                crate::npc::with(w, young, |npc| {
+                    npc.hurt.throat.lungs = (40.0, 40.0);
+                    npc.hurt.throat.stomach = 900.0;
+                });
+            })));
+            let shoot = |i: usize, a: &'static str, b: &'static str, t: f32, weapon: &'static str| Step::Do(Box::new(move |w: &mut World| {
+                let who = person_at(w, i);
+                crate::npc::with(w, who, |npc| {
+                    let (ia, ib) = (npc.bone_index(a), npc.bone_index(b));
+                    let at = npc.rest_to_world(ia).transform_point3(npc.body().bones[ia].head.lerp(npc.body().bones[ib].head, t));
+                    let dir = babylon(0.0, 0.0, 1.0);
+                    crate::wounds::pierce(npc, at - dir * 1.5, dir, &missile(weapon), 3.0);
+                });
+                log(w, json!({ "event": "shot", "person": i, "at": a }));
+            }));
+            let out = |i: usize, dead: bool| Step::Do(Box::new(move |w: &mut World| {
+                let who = person_at(w, i);
+                let mut v = w.get_mut::<crate::vitals::Vitals>(who).unwrap();
+                if dead {
+                    v.dead = true;
+                } else {
+                    v.out = 1e9;
+                }
+                log(w, json!({ "event": if dead { "killed" } else { "knocked out" }, "person": i }));
+            }));
+            s.push(shoot(0, "upperarm01.R", "lowerarm01.R", 0.5, "pistol"));
+            s.push(shoot(1, "spine03", "spine02", 0.5, "rifle"));
+            s.push(shoot(3, "spine03", "spine02", 0.5, "pistol"));
+            s.push(out(3, true));
+            for _ in 0..30 {
+                s.push(Step::Do(Box::new(said)));
+                s.push(Step::Wait(2));
+            }
+            s.push(shoot(0, "upperleg01.L", "lowerleg01.L", 0.5, "pistol"));
+            for _ in 0..20 {
+                s.push(Step::Do(Box::new(said)));
+                s.push(Step::Wait(2));
+            }
+            s.push(out(0, false));
+            for _ in 0..10 {
+                s.push(Step::Do(Box::new(said)));
+                s.push(Step::Wait(2));
+            }
+            s.push(out(1, true));
+            for _ in 0..120 {
+                s.push(Step::Do(Box::new(said)));
+                s.push(Step::Wait(2));
+            }
+            s.push(out(2, false));
+            for _ in 0..(60 * 20) {
+                s.push(Step::Do(Box::new(said)));
+                s.push(Step::Wait(2));
+            }
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let s = w.remove_resource::<Said>().unwrap();
+                log(w, json!({ "event": "voices", "said": s.said, "heard_out": s.out }));
+            })));
+        }
+        // A gun fired into a person standing, as a player fires it (taken in the hand, aimed at the chest from 3 m, a
+        // click), and what they do for five seconds: the pistol at the old man, the rifle at the groundskeeper, the
+        // shotgun at the young man (`pistol`, `rifle`, `shotgun`: one each; `guns`: all three). What they do a quarter
+        // second at a time, their injuries and vitals after, and every sound heard. The TS's: scratch ts-guns.mjs.
+        "guns" | "pistol" | "rifle" | "shotgun" => {
+            s.push(Step::Wait(90));
+            for (i, key) in [(0usize, "pistol"), (1, "rifle"), (2, "shotgun")] {
+                if name != "guns" && name != key {
+                    continue;
+                }
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    crate::warm::take(w, key);
+                    crate::warm::aim(w, i, "chest", 3.0);
+                })));
+                s.push(Step::Wait(42));
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    w.resource_mut::<crate::sound::Sound>().heard.clear();
+                    crate::warm::press(w, 0);
+                    log(w, json!({ "event": "fired", "gun": key, "person": i }));
+                })));
+                s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::release(w, 0))));
+                for q in 0..=20 {
+                    s.push(Step::Do(Box::new(move |w: &mut World| {
+                        let who = person_at(w, i);
+                        let b = w.get::<Behaviour>(who).unwrap();
+                        let what = json!([q as f32 / 4.0, format!("{:?}", b.state), format!("{:?}", b.mode), b.why]);
+                        let v = w.get::<crate::vitals::Vitals>(who).unwrap();
+                        let felt = json!([(v.conscious() * 100.0).round() / 100.0, (v.pain * 100.0).round() / 100.0]);
+                        log(w, json!({ "event": "after", "gun": key, "doing": what, "conscious_pain": felt }));
+                    })));
+                    s.push(Step::Wait(16));
+                }
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    let who = person_at(w, i);
+                    let heard: Vec<Value> = std::mem::take(&mut w.resource_mut::<crate::sound::Sound>().heard).iter().map(|h| json!([h.name, (h.gain * 100.0).round() / 100.0])).collect();
+                    let snap = crate::npc::with(w, who, |npc| snapshot(npc, 5.0)).unwrap();
+                    log(w, json!({ "event": "gun", "gun": key, "snap": snap, "heard": heard }));
+                })));
+            }
+        }
         // Every joint of the first person: where it is, where its muscle aims, its range, standing a moment.
         "joints" => {
             for _ in 0..4 {
@@ -673,7 +878,22 @@ fn body(name: &str) -> Option<Vec<Step>> {
         _ => return None,
     }
     s.push(Step::Do(Box::new(timeline)));
-    Some(s)
+    // (Nothing drawn through the long waits: on the software renderer a frame drawn costs ten of the bodies' and
+    // medicine's, and what is measured does not need it.)
+    Some(s.into_iter().flat_map(|step| match step {
+        Step::Wait(n) if n >= 30 => vec![cameras(false), Step::Wait(n), cameras(true)],
+        step => vec![step],
+    }).collect())
+}
+
+// The cameras on or off (skin.rs's).
+fn cameras(on: bool) -> Step {
+    Step::Do(Box::new(move |w: &mut World| {
+        let mut q = w.query::<&mut Camera>();
+        for mut c in q.iter_mut(w) {
+            c.is_active = on;
+        }
+    }))
 }
 
 // Where each person's pelvis is as the run begins, to measure how far they drift standing.
@@ -707,6 +927,83 @@ fn joints(w: &mut World) {
         json!({ "seg": s.def.name, "now": deg(rd.angles(k)), "aim": deg(t), "f": f.round(), "lo": deg(s.lo), "hi": deg(s.hi), "y": (s.now.translation.y * 100.0).round() / 100.0 })
     }).collect();
     log(w, json!({ "event": "joints", "rows": rows }));
+}
+
+// What people said (Happened::Say, a cut, a retch or cough at the head), and every voice of theirs still to be heard once
+// they were out or dead: frames, by person.
+#[derive(Resource, Default)]
+struct Said {
+    playing: Vec<(Entity, crate::sound::Playing)>,
+    said: Vec<Value>,
+    out: Vec<Value>,
+}
+
+fn said(w: &mut World) {
+    let frame = w.resource::<Runner>().frame;
+    let now = w.resource::<crate::sound::Sound>().now();
+    let voices: Vec<(Entity, crate::sound::Playing, &'static str)> = w.resource::<crate::sound::Voices>().0.iter().map(|(e, (p, k))| (*e, p.clone(), *k)).collect();
+    let people: Vec<Entity> = (0..4).map(|i| person_at(w, i)).collect();
+    let mut s = w.remove_resource::<Said>().unwrap();
+    // (Each voice's lock taken one at a time: the same voice is in both lists.)
+    let key = |p: &crate::sound::Playing| {
+        let v = p.voice();
+        (v.start, v.name.clone())
+    };
+    for (e, p, kind) in voices {
+        let k = key(&p);
+        if !s.playing.iter().any(|(_, q)| key(q) == k) {
+            let i = people.iter().position(|&x| x == e);
+            s.said.push(json!({ "frame": frame, "person": i, "kind": kind, "take": k.1 }));
+            s.playing.push((e, p));
+        }
+    }
+    for (i, &e) in people.iter().enumerate() {
+        let awake = w.get::<crate::vitals::Vitals>(e).is_some_and(|v| v.conscious() > 0.35 && v.beating() && !v.dead);
+        if awake {
+            continue;
+        }
+        for (_, p) in s.playing.iter().filter(|(x, p)| *x == e && p.sounding(now)) {
+            s.out.push(json!({ "frame": frame, "person": i, "take": p.voice().name.clone() }));
+        }
+    }
+    w.insert_resource(s);
+}
+
+// The first two people's dressings: what each is on, whether it has come away, the bones its corners hang from, and the
+// bleeds dressed.
+fn dressings(w: &mut World, when: &str) {
+    for i in 0..2 {
+        let who = person_at(w, i);
+        let skin: Vec<Entity> = w.get::<crate::skin::Skin>(who).map(|s| s.dressings.iter().map(|d| d.0).collect()).unwrap_or_default();
+        let bones: Vec<Vec<String>> = skin.iter().map(|&e| {
+            let names = &w.get::<Person>(who).unwrap().body.bones;
+            let Some(h) = w.get::<Mesh3d>(e).map(|m| m.0.clone()) else { return Vec::new() };
+            let meshes = w.resource::<Assets<Mesh>>();
+            let mut used = std::collections::BTreeSet::new();
+            if let (Some(bevy::mesh::VertexAttributeValues::Uint16x4(j)), Some(bevy::mesh::VertexAttributeValues::Float32x4(wt))) =
+                (meshes.get(&h).and_then(|m| m.attribute(Mesh::ATTRIBUTE_JOINT_INDEX)), meshes.get(&h).and_then(|m| m.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT))) {
+                for (j, wt) in j.iter().zip(wt) {
+                    for k in 0..4 {
+                        if wt[k] > 0.0 {
+                            used.insert(names[j[k] as usize].name.clone());
+                        }
+                    }
+                }
+            }
+            used.into_iter().collect()
+        }).collect();
+        let h = w.get::<crate::npc::Hurt>(who).unwrap();
+        let v = w.get::<crate::vitals::Vitals>(who).unwrap();
+        let list: Vec<Value> = h.dressings.iter().enumerate().map(|(k, d)| json!({
+            "kind": d.kind, "on": names_of(w, who, d.mark.owner), "off": d.off, "bones": bones.get(k),
+            "bleeds": v.bleeds.iter().filter(|b| b.dressing == Some(k)).count(),
+        })).collect();
+        log(w, json!({ "event": "dressings", "when": when, "person": i, "dressings": list }));
+    }
+}
+
+fn names_of(w: &World, who: Entity, bone: usize) -> String {
+    w.get::<Person>(who).unwrap().body.bones[bone].name.clone()
 }
 
 // How many people there are, and how many rigid bodies and joints in all, into the log.
