@@ -95,6 +95,14 @@ pub struct Wounded {
     pub layout: Vec4,
     #[uniform(106)]
     pub stain: Vec4,
+    // The blood in the clothes (soak.rs `wire` sets a person's own; until then a dry field).
+    #[texture(107, dimension = "3d")]
+    #[sampler(108)]
+    pub soak: Handle<Image>,
+    #[uniform(109)]
+    pub soak_at: Vec4,
+    #[uniform(110)]
+    pub soak_scale: Vec4,
 }
 
 impl MaterialExtension for Wounded {
@@ -228,6 +236,9 @@ fn clothe(
                     state: state.clone(),
                     layout: Vec4::ZERO,
                     stain: Vec4::ZERO,
+                    soak: crate::soak::DRY,
+                    soak_at: Vec4::ZERO,
+                    soak_scale: Vec4::ZERO,
                 },
             })
         };
@@ -525,6 +536,9 @@ fn bandage(
                     state: skin.state.clone(),
                     layout: g.layout,
                     stain: Vec4::new(0.0, 0.0, rng.next() * std::f32::consts::TAU, rng.next() * std::f32::consts::TAU),
+                    soak: crate::soak::DRY,
+                    soak_at: Vec4::ZERO,
+                    soak_scale: Vec4::ZERO,
                 },
             });
             let e = commands.spawn((Mesh3d(meshes.add(g.mesh)), MeshMaterial3d(h.clone()), skinned, bevy::camera::visibility::DynamicSkinnedMeshBounds, ChildOf(space))).id();

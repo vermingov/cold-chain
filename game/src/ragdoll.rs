@@ -494,6 +494,7 @@ use bevy_rapier3d::geometry::Group as Bits;
 pub const TRUNK: Bits = Bits::GROUP_2; // pelvis, belly, chest, head
 pub const ROOTS: Bits = Bits::GROUP_3; // upper arms and thighs, their halves at the trunk
 pub const LIMBS: Bits = Bits::GROUP_4; // the rest of the arms and legs
+pub const PIECE: Bits = Bits::GROUP_5; // a piece cut off, not yet clear of its stump
 
 // Nm of resistance in every joint: muscle with a mind behind it, without, and none.
 pub const ALIVE: f32 = 18.0;
@@ -597,6 +598,8 @@ pub struct Ragdoll {
     apart: Vec<Entity>,
     // Seconds of physics since it was made.
     pub age: f32,
+    // The first segment of each piece cut off (dismember.rs), and whether it is clear of the stump yet.
+    pub pieces: Vec<(usize, bool)>,
 }
 
 // A segment's collider, in its own frame (origin at its bone's head, axes the body's at rest).
@@ -717,7 +720,7 @@ impl Ragdoll {
         let between = (0..body.bones.len())
             .filter(|i| !lead.contains(i) && !NOT.iter().any(|n| body.bones[*i].name.contains(n)))
             .collect();
-        let mut rd = Ragdoll { segs, attached: (0..defs.len()).collect(), mass: defs.iter().map(|d| d.mass).sum(), tone: ALIVE, toned: false, limp: false, between, apart: Vec::new(), age: 0.0 };
+        let mut rd = Ragdoll { segs, attached: (0..defs.len()).collect(), mass: defs.iter().map(|d| d.mass).sum(), tone: ALIVE, toned: false, limp: false, between, apart: Vec::new(), age: 0.0, pieces: Vec::new() };
         for k in 0..defs.len() {
             if defs[k].joint.is_some() {
                 rd.join(commands, person, k);
@@ -1002,6 +1005,49 @@ impl Ragdoll {
             at = self.segs[i].def.parent;
         }
         false
+    }
+
+    // A piece cut off at segment `k` (dismember.rs): its joint to the body, and the joint's friction, let go; it is not
+    // the body's any more, its weight, balance and pushes go without it (`attached`, the mass), and its joints keep a
+    // dead body's tone. Its first segment, still inside the stump where it was cut, meets nothing of the body until it is
+    // clear of it (met at once, it was thrown out of it: ragdoll.ts _severed); until then it meets nobody else either
+    // (the TS's bit of each person's own, which Rapier's thirty-two groups do not have room for, for a moment's
+    // difference).
+    pub fn sever(&mut self, k: usize, commands: &mut Commands, groups: &mut Query<&mut CollisionGroups>) {
+        let s = &mut self.segs[k];
+        s.severed = true;
+        s.broken = true;
+        commands.entity(s.entity).remove::<ImpulseJoint>();
+        if let Some(f) = s.friction.take() {
+            commands.entity(f).despawn();
+        }
+        if let Ok(mut g) = groups.get_mut(s.entity) {
+            *g = CollisionGroups::new(PIECE, Bits::ALL - TRUNK - ROOTS - LIMBS);
+        }
+        self.pieces.push((k, false));
+        self.attached = (0..self.segs.len()).filter(|&i| !self.cut_off(i)).collect();
+        self.mass = self.attached.iter().map(|&i| self.segs[i].def.mass).sum();
+        self.toned = false;
+        self.set_tone(self.tone);
+    }
+
+    // Each piece's first segment, once it is clear of the stump, meets the body as anything else would.
+    pub fn clear_pieces(&mut self, groups: &mut Query<&mut CollisionGroups>) {
+        for i in 0..self.pieces.len() {
+            let (k, clear) = self.pieces[i];
+            let Some(p) = self.segs[k].def.parent else { continue };
+            if clear {
+                continue;
+            }
+            let at = self.world_point(p, self.segs[k].def.head - self.segs[p].def.head);
+            if at.distance(self.segs[k].now.translation) < self.segs[k].def.radius + self.segs[p].def.radius {
+                continue;
+            }
+            self.pieces[i].1 = true;
+            if let Ok(mut g) = groups.get_mut(self.segs[k].entity) {
+                *g = CollisionGroups::new(LIMBS, Bits::ALL);
+            }
+        }
     }
 
     // Whether a segment hangs past a broken bone, with nothing to move it but its own weight.

@@ -584,6 +584,7 @@ pub fn own_arm(
         parts: Vec::new(),
         insides: Entity::PLACEHOLDER,
         segments: Vec::new(),
+        placed: Vec::new(),
     };
     let idx = |n: &str| body.by_name[&format!("{n}.{side}")];
     let (upper, fore, twist, wrist) = (idx("upperarm01"), idx("lowerarm01"), idx("lowerarm02"), idx("wrist"));

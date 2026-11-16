@@ -12,7 +12,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The numbers on the hall's walls are drawn into a texture on the CPU, as the TS game drew them on a canvas.
 ab_glyph = "0.2"
-# The skin's paint stamps sent to the card as they are (skin.rs).
+# Plain numbers as bytes for the GPU: the skin's paint stamps (skin.rs), the floor's and the clothes' blood (blood.rs,
+# floor.rs, soak.rs).
 bytemuck = { version = "1", features = ["derive"] }
 kira = { version = "0.12", default-features = false, features = ["cpal", "ogg", "vorbis"] }
 

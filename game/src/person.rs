@@ -382,6 +382,9 @@ pub struct Person {
     pub insides: Entity,
     // The ragdoll's segments as the body stands at its spawn (ragdoll.rs).
     pub segments: Vec<Segment>,
+    // Bones put where a body of their own is, whatever their parents' turns: each bone's turn and head in the mesh's
+    // space (a piece cut off, dismember.rs). What hangs from them follows them.
+    pub placed: Vec<(usize, Quat, Vec3)>,
 }
 
 // The people's world positions of things are worked out from the pose, not read back from Bevy's transforms, which
@@ -389,7 +392,22 @@ pub struct Person {
 impl Person {
     // Every bone's turn and where its head is, in the mesh's own space.
     pub fn absolute(&self, local: &[Quat]) -> Vec<(Quat, Vec3)> {
-        absolute(&self.body.bones, local)
+        if self.placed.is_empty() {
+            return absolute(&self.body.bones, local);
+        }
+        let bones = &self.body.bones;
+        let mut abs: Vec<(Quat, Vec3)> = Vec::with_capacity(bones.len());
+        for (i, b) in bones.iter().enumerate() {
+            abs.push(match (self.placed.iter().find(|p| p.0 == i), b.parent) {
+                (Some(&(_, q, at)), _) => (q, at),
+                (None, Some(p)) => {
+                    let (pr, pp) = abs[p];
+                    (pr * local[i], pp + pr * (b.head - bones[p].head))
+                }
+                (None, None) => (local[i], b.head),
+            });
+        }
+        abs
     }
 
     // A rest-space point carried by bone `i`, posed, in the root's space.
@@ -834,6 +852,7 @@ pub fn spawn(
         parts,
         insides: Entity::PLACEHOLDER,
         segments: Vec::new(),
+        placed: Vec::new(),
     };
     person.posed = person.apply(&pose, Some(FEET));
     person.pose = pose;
@@ -850,11 +869,23 @@ fn is_half(name: &str) -> bool {
 }
 
 // The skeleton put where the pose says: each bone's turn, and the frame. Every frame, for whoever was posed since.
-fn pose_people(people: Query<&Person, Changed<Person>>, mut transforms: Query<&mut Transform>) {
+pub fn pose_people(people: Query<&Person, Changed<Person>>, mut transforms: Query<&mut Transform>) {
     for p in &people {
         for (i, &e) in p.joints.iter().enumerate() {
             if let Ok(mut t) = transforms.get_mut(e) {
                 t.rotation = p.posed.local[i];
+            }
+        }
+        // (A bone placed by hand: its turn and place in its parent's, from where both are.)
+        if !p.placed.is_empty() {
+            let abs = p.absolute(&p.posed.local);
+            for &(i, q, at) in &p.placed {
+                let Some(parent) = p.body.bones[i].parent else { continue };
+                let (pr, pp) = abs[parent];
+                if let Ok(mut t) = transforms.get_mut(p.joints[i]) {
+                    t.rotation = pr.inverse() * q;
+                    t.translation = pr.inverse() * (at - pp);
+                }
             }
         }
         if let Ok(mut t) = transforms.get_mut(p.frame) {

@@ -118,12 +118,13 @@ pub enum Happened {
     Broke { segment: String },
     // A break to draw (bones.rs `_draw`, shards.rs), and a broken end out through the skin (`_through`), by its index.
     Drawn { break_index: usize, calibre: f32 },
-    Through { break_index: usize },
+    // Through: the near half's end swung out by `turn` about `pivot`, then moved `shift` (rest space), its last `piece` m.
+    Through { break_index: usize, pivot: Vec3, turn: Quat, shift: Vec3, piece: f32 },
     // A tooth given way (teeth.rs: its stump and the piece that falls, thrown with the TS's seven throws a piece).
     Tooth { tooth: usize, how: &'static str, dir: Vec3, pieces: u32, throws: Vec<f32> },
     // dismember.ts edge / charge, viscera.ts bled / blown: what mesh cutting does with a wound (phase 3).
     Edge { energy: f32, at: Vec3, dir: Vec3 },
-    Charge { energy: f32, at: Vec3, dir: Vec3 },
+    Charge { energy: f32, at: Vec3, dir: Vec3, hit: Crossing, calibre: f32 },
     Bled { part: String, at: Vec3, channel: f32 },
     // The tongue torn through (throat.rs's card on it).
     Tongue { hit: Crossing, size: f32 },
@@ -219,6 +220,9 @@ pub struct Hurt {
     // out from the pose (segment_world).
     pub segments: Option<Vec<Transform>>,
     skinned: Option<(u32, Arc<Skinned>)>,
+    // The body's corners' bones and weights as this person's own body has them, once a limb is cut off (dismember.rs:
+    // what the body keeps is carried by the bone the limb hung from); None, the file's.
+    pub weights: Option<Arc<(Vec<[u16; 4]>, Vec<[u8; 4]>)>>,
 }
 
 // One person's body and medical state, borrowed for one shot, blow or frame.
@@ -342,10 +346,12 @@ impl<'a> Npc<'a> {
         }
         let body = &self.person.body;
         let mats = self.bone_worlds();
+        let own = self.hurt.weights.clone();
+        let (joints, weights) = own.as_ref().map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
         let at: Vec<Vec3> = body
             .position
             .iter()
-            .zip(body.joints.iter().zip(&body.weights))
+            .zip(joints.iter().zip(weights))
             .map(|(p, (j, w))| {
                 let mut out = Vec3::ZERO;
                 for k in 0..4 {
@@ -498,14 +504,15 @@ impl<'a> Npc<'a> {
     }
 
     // The bone that carries most of corner `v`.
-    // port: phase 3 dismember. A corner on a piece cut off goes with the piece's bone (dismember.ts owners).
+    // (A corner the body kept round a limb cut off goes with the bone the limb hung from: dismember.ts owners.)
     pub fn owner_of(&self, v: u32) -> usize {
         let body = &self.person.body;
+        let (joints, weights) = self.hurt.weights.as_ref().map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
         let (mut best, mut bone) = (0u8, 0u16);
         for k in 0..4 {
-            if body.weights[v as usize][k] > best {
-                best = body.weights[v as usize][k];
-                bone = body.joints[v as usize][k];
+            if weights[v as usize][k] > best {
+                best = weights[v as usize][k];
+                bone = joints[v as usize][k];
             }
         }
         bone as usize
@@ -706,7 +713,7 @@ impl<'a> Npc<'a> {
 
     // Blood out of each wound, as much as is coming out of it this frame, to where it goes: an artery open to the air
     // throws it as a stream; anything else comes out into the clothes over the wound, or onto the skin, and runs.
-    // port: phase 3 blood. What goes where is worked out here; blood.rs, soak.rs and runs.rs take it from `happened`.
+    // What goes where is worked out here; blood.rs, soak.rs and runs.rs take it from `happened`.
     fn bleed(&mut self, dt: f32) {
         // Bleeding inside the body gets out through a wound in its wall only once enough has gathered in there to reach
         // the hole, and then the more the wound faces down: a small hole is held shut by the tissue round it, and blood
@@ -910,6 +917,7 @@ impl Hurt {
             age: 0.0,
             segments: None,
             skinned: None,
+            weights: None,
         }
     }
 }

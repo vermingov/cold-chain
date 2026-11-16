@@ -388,18 +388,18 @@ pub fn pierce(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> 
     let speed = ((2.0 * m.energy) / m.mass.max(1e-4)).sqrt();
     npc.hit(enter.point, dir * (m.mass * speed * share.sqrt()), if m.blade { 0.2 } else { 1.0 });
     // (No spatter from a blade: a stab or a cut throws nothing out of the wound; what flies comes off the blade, weapons.rs.)
-    // port: phase 3 blood (npc.spatter).
+    // (npc.spatter: thrown by blood.rs `take`.)
     if !m.slash && !m.blade {
         let range = if m.name.is_some() { f32::INFINITY } else { enter_t - MUZZLE };
         npc.hurt.happened.push(Happened::Spatter { enter: enter.clone(), dir, exit: exit_at, energy: m.energy, exited, range });
     }
     // A heavy edge may go right through a limb once the swing is through (npc.slash); a charge that is still one mass
     // (a shotgun's at contact range) may tear one off now.
-    // port: phase 3 dismember and viscera (edge, charge, blown): the mesh cutting decides; here only what was asked of it.
+    // (dismember.rs and viscera.rs take them: the mesh cutting decides; here only what was asked of it.)
     if m.slash {
         npc.hurt.happened.push(Happened::Edge { energy: m.energy, at: enter.point, dir });
     } else if m.channel >= 0.015 && !m.blade {
-        npc.hurt.happened.push(Happened::Charge { energy: m.energy - if exited { energy } else { 0.0 }, at: enter.point, dir });
+        npc.hurt.happened.push(Happened::Charge { energy: m.energy - if exited { energy } else { 0.0 }, at: enter.point, dir, hit: enter.clone(), calibre: m.calibre });
     }
     Pierced {
         stopped: !exited,
@@ -440,7 +440,7 @@ fn organ(npc: &mut Npc, p: usize, length: f32, m: &Missile, fragments: f32, at: 
     let size = through(kind);
     let wreck = ((length / size) * (m.channel / 0.006) * 0.4 * fragments).min(1.0);
     npc.hurt_part(&part.name);
-    // port: phase 3 viscera (bled: blood lying on the organ).
+    // (viscera.rs: blood lying on the organ.)
     npc.hurt.happened.push(Happened::Bled { part: part.name.clone(), at, channel: m.channel });
     let name = cap(&part.name);
     let v = &mut *npc.vitals;

@@ -449,6 +449,8 @@ pub struct Weapons {
     pub since: f32,
     later: Vec<(f32, Later)>,
     grab: Option<Grab>,
+    // Bowel come out of an opened belly, held (viscera.rs).
+    bowel: Option<crate::viscera::Held>,
     // A person held (their Grabbed), and when each thing in flight last landed a blow.
     holding: Option<Entity>,
     struck: HashMap<Entity, f32>,
@@ -519,6 +521,7 @@ impl Default for Weapons {
             since: f32::INFINITY,
             later: Vec::new(),
             grab: None,
+            bowel: None,
             holding: None,
             struck: HashMap::new(),
             grenades: Vec::new(),
@@ -841,6 +844,7 @@ pub struct Cx<'w, 's> {
     pub behaviours: Query<'w, 's, &'static mut Behaviour>,
     pub grabbed: Query<'w, 's, &'static mut Grabbed>,
     pub slams: MessageReader<'w, 's, crate::thuds::Slam>,
+    pub viscera: Query<'w, 's, (Entity, &'static mut crate::viscera::Viscera)>,
 }
 
 struct Wall {
@@ -1264,7 +1268,11 @@ fn bloody(w: &mut Weapons, key: &'static str, area: f32) {
 fn take_hold(cx: &mut Cx) {
     let eye = cx.eye();
     let (at, ahead) = (eye.translation, eye.forward().as_vec3());
-    // port: phase 3. Bowel that has come out is taken before the body (viscera.pick).
+    // Bowel that has come out is taken before the body (viscera.pick).
+    if let Some(h) = crate::viscera::pick(cx.viscera.iter(), at, ahead, 3.0) {
+        cx.weapons.bowel = Some(h);
+        return;
+    }
     // A person: knocked down and held by the segment nearest the skin looked at (behaviour.rs Grabbed), pulled every
     // physics step toward in front of the eye.
     if let Some((who, _)) = cx.person(at, ahead, 3.0) {
@@ -1396,9 +1404,12 @@ fn explode(cx: &mut Cx, ball: Entity) {
     cx.muzzle.burst(at, now, turn);
     // The blast: an impulse on every part of everyone near, falling off with the square of the distance; limbs near enough
     // torn off and a belly burst (180 g of Composition B is about 0.25 kg of TNT).
-    // port: phase 3 (dismember's blast: limbs torn off, a belly burst).
+    // (dismember.rs's blast: limbs torn off, a belly burst; once this frame's work is done, with the whole world.)
     let people: Vec<(Entity, f32)> = cx.people.iter().map(|(e, p)| (e, at.distance(cx.centre(e, p)).max(0.4))).collect();
     for (who, d) in people {
+        cx.commands.queue(move |w: &mut World| {
+            crate::dismember::blast(w, who, at, 0.25);
+        });
         if d > 8.0 {
             continue;
         }
@@ -1552,6 +1563,11 @@ pub fn act(mut cx: Cx) {
                 if b == 0 {
                     cx.weapons.firing = false;
                     cx.weapons.grab = None;
+                    if let Some(h) = cx.weapons.bowel.take() {
+                        if let Ok((_, mut v)) = cx.viscera.get_mut(h.who) {
+                            crate::viscera::pull(&mut v, h, None);
+                        }
+                    }
                 }
                 // A punch let go: the fist thrown, harder the longer it was wound up (fist.rs). It lands on whatever its
                 // knuckles meet on their way, not on what is in front of the eye.
@@ -1654,9 +1670,21 @@ pub fn act(mut cx: Cx) {
             // is pierce's, already made.
             let act = cx.weapons.action.take().unwrap();
             let sweep = cx.eye().left().as_vec3();
+            let ahead = cx.eye().forward().as_vec3();
             for (who, hits) in act.hits {
                 let label = cx.label(who);
                 let depth = if a.cut > 0.0 { a.cut } else { a.down.as_ref().and_then(|d| d.cut).unwrap_or(0.02) };
+                // A heavy edge may have gone right through a limb (dismember.rs), or through the wall of the belly or chest
+                // (viscera.rs): taken once this frame's work is done, with the whole world.
+                let points = hits.clone();
+                cx.commands.queue(move |w: &mut World| {
+                    crate::dismember::swung(w, who);
+                    let skin: Vec<crate::npc::Crossing> = points
+                        .iter()
+                        .filter_map(|&p| crate::npc::with(w, who, |n| n.surface(p - ahead * 0.1, ahead, 0.2, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin)).flatten())
+                        .collect();
+                    crate::viscera::slashed(w, who, &skin, depth);
+                });
                 cx.npc(who, |npc| npc.slash_through(&hits, depth, sweep));
                 cx.weapons.log.push(json!({ "slash": label, "points": hits.iter().map(|p| p.to_array()).collect::<Vec<_>>(), "depth": depth, "sweep": sweep.to_array() }));
             }
@@ -1666,6 +1694,12 @@ pub fn act(mut cx: Cx) {
     let eye = cx.eye();
     if let Some(g) = cx.weapons.grab.as_mut() {
         g.target = Some(eye.translation + eye.forward().as_vec3() * g.distance.min(2.2));
+    }
+    // Bowel held: drawn toward the hand as a body is (weapons.ts `viscera.pull`).
+    if let Some(h) = cx.weapons.bowel {
+        if let Ok((_, mut v)) = cx.viscera.get_mut(h.who) {
+            crate::viscera::pull(&mut v, h, Some(eye.translation + eye.forward().as_vec3() * h.distance.min(2.2)));
+        }
     }
     // The blood on the blade in hand, drying.
     if let Some(b) = cx.weapons.blades.get_mut(a.key) {
@@ -2554,8 +2588,7 @@ fn over_room(
 }
 
 // The blade reddened by the blood on it, wet and glossy, going dull and brown as it dries.
-// port: needs blood. What leaves the blade (weapons.ts _shed: drops cast off it as it swings, at its tip's speed) is
-// blood.spray's; until it lands the blood stays on.
+// What leaves the blade (weapons.ts _shed: drops cast off it as it swings, at its tip's speed) is blood.rs `shed`'s.
 fn stain(
     weapons: Res<Weapons>,
     hand: Res<Hand>,

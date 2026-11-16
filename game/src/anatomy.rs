@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::skinning::SkinnedMesh;
+use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -127,12 +128,68 @@ pub struct Anatomy {
     // Each body's parts sorted for tracing lines through (`Traced`), made with its x-ray.
     pub traced: HashMap<String, std::sync::Arc<Traced>>,
     looks: Vec<Handle<StandardMaterial>>,
-    meshes: HashMap<String, Vec<(usize, Handle<Mesh>)>>,
+    meshes: HashMap<String, std::sync::Arc<Vec<LookMesh>>>,
 }
 
-// The x-ray of one person's insides: the entity holding a mesh for each look, hidden until X.
+// One look's mesh of a body's x-ray, shared by everyone of that body until their own is changed: each corner of the file
+// it keeps (`local`, u32::MAX for the rest) and the parts drawn in it.
+pub struct LookMesh {
+    pub look: usize,
+    pub mesh: Handle<Mesh>,
+    pub local: Vec<u32>,
+    pub parts: Vec<usize>,
+}
+
+// The x-ray of one person's insides: the entity holding a mesh for each look, hidden until X. What is this person's own
+// (the file's are shared by everyone of that body): the parts shown hurt, and the triangles taken out of it round a
+// break (shards.rs draws those again, broken). A look's mesh is the shared one until something in it changes; then it is
+// this person's copy, its triangles regrouped (the TS's `_regroup`), when next seen.
 #[derive(Component)]
-pub struct Xray;
+pub struct Xray {
+    pub looks: std::sync::Arc<Vec<LookMesh>>,
+    // Each look's entity, and the entity of its hurt twin once anything in it is hurt.
+    pub entities: Vec<Entity>,
+    pub hurt_entities: Vec<Option<Entity>>,
+    owned: Vec<Option<Handle<Mesh>>>,
+    hurt_meshes: Vec<Option<Handle<Mesh>>>,
+    // The file's parts shown hurt, and this person's own copy of the triangles (None: the file's, untouched).
+    pub hurt: Vec<bool>,
+    pub drawn: Option<Vec<u32>>,
+    // Looks whose triangles changed since they were last grouped.
+    stale: Vec<bool>,
+    pub skin: SkinnedMesh,
+}
+
+impl Xray {
+    // Triangles (offsets into the index) no longer drawn in the x-ray: a broken bone drawn in pieces of its own instead.
+    pub fn hide(&mut self, index: &[u32], tris: &[u32], part: usize) {
+        let drawn = self.drawn.get_or_insert_with(|| index.to_vec());
+        for &i in tris {
+            let i = i as usize;
+            drawn[i + 1] = drawn[i];
+            drawn[i + 2] = drawn[i];
+        }
+        if let Some(l) = self.looks.iter().position(|l| l.parts.contains(&part)) {
+            self.stale[l] = true;
+        }
+    }
+
+    // Whether triangle `i` (an offset into the index) is still drawn.
+    pub fn shows(&self, i: usize) -> bool {
+        self.drawn.as_ref().is_none_or(|d| d[i] != d[i + 1])
+    }
+
+    // Shown hurt in the x-ray.
+    pub fn hurt(&mut self, part: usize) {
+        if self.hurt[part] {
+            return;
+        }
+        self.hurt[part] = true;
+        if let Some(l) = self.looks.iter().position(|l| l.parts.contains(&part)) {
+            self.stale[l] = true;
+        }
+    }
+}
 
 impl Anatomy {
     pub fn load(&mut self, names: &[&str]) {
@@ -142,7 +199,7 @@ impl Anatomy {
     }
 
     // The x-ray's look for a kind of thing, whole or hurt.
-    fn look(&mut self, k: usize, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+    pub fn look(&mut self, k: usize, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
         if self.looks.is_empty() {
             for hurt in [false, true] {
                 for &(kind, c) in LOOKS {
@@ -160,9 +217,15 @@ impl Anatomy {
         self.looks[k].clone()
     }
 
+    // The x-ray look of a kind of thing by its name (anatomy.ts `material(kind, hurt)`).
+    pub fn look_of(&mut self, kind: &str, hurt: bool, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+        let k = LOOKS.iter().position(|l| l.0 == kind).unwrap_or(0);
+        self.look(k + if hurt { LOOKS.len() } else { 0 }, materials)
+    }
+
     // A mesh of all of a person's insides, skinned to their own skeleton (each corner wholly to one bone), one mesh to
-    // a look (Bevy draws a material a mesh: the TS's one submesh to a look, _regroup), under `space`, the person's mesh
-    // space, hidden until X.
+    // a look (Bevy draws a material a mesh: the TS's one submesh to a look, _regroup: about 224 draws a person had it
+    // been a mesh a part), under `space`, the person's mesh space, hidden until X.
     pub fn build(&mut self, commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, body: &Body,
                  skin: SkinnedMesh, space: Entity) -> Entity {
         if !self.traced.contains_key(&body.name) {
@@ -174,8 +237,8 @@ impl Anatomy {
             None => {
                 let ins = &self.bodies[&body.name];
                 let mut joints = vec![[0u16; 4]; ins.position.len()];
-                let mut by_look: Vec<Vec<u32>> = vec![Vec::new(); LOOKS.len()];
-                for p in &ins.parts {
+                let mut by_look: Vec<(Vec<u32>, Vec<usize>)> = vec![(Vec::new(), Vec::new()); LOOKS.len()];
+                for (pi, p) in ins.parts.iter().enumerate() {
                     let look = LOOKS.iter().position(|l| l.0 == p.kind).unwrap_or(0);
                     for t in ins.index[p.index_start..p.index_start + p.index_count].chunks_exact(3) {
                         let mid = (ins.position[t[0] as usize] + ins.position[t[1] as usize] + ins.position[t[2] as usize]) / 3.0;
@@ -183,40 +246,148 @@ impl Anatomy {
                         for &v in t {
                             joints[v as usize][0] = owner;
                         }
-                        by_look[look].extend_from_slice(t);
+                        by_look[look].0.extend_from_slice(t);
                     }
+                    by_look[look].1.push(pi);
                 }
-                let made: Vec<(usize, Handle<Mesh>)> = by_look
+                let made: Vec<LookMesh> = by_look
                     .into_iter()
                     .enumerate()
-                    .filter(|(_, tris)| !tris.is_empty())
-                    .map(|(look, tris)| {
+                    .filter(|(_, (tris, _))| !tris.is_empty())
+                    .map(|(look, (tris, parts))| {
                         // (Each look's mesh keeps only the corners its triangles use.)
-                        let mut used: HashMap<u32, u32> = HashMap::new();
+                        let mut local = vec![u32::MAX; ins.position.len()];
                         let mut order = Vec::new();
-                        let index: Vec<u32> = tris.iter().map(|&v| *used.entry(v).or_insert_with(|| {
-                            order.push(v as usize);
-                            order.len() as u32 - 1
-                        })).collect();
+                        let index: Vec<u32> = tris
+                            .iter()
+                            .map(|&v| {
+                                if local[v as usize] == u32::MAX {
+                                    local[v as usize] = order.len() as u32;
+                                    order.push(v as usize);
+                                }
+                                local[v as usize]
+                            })
+                            .collect();
                         let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
                             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, order.iter().map(|&v| ins.position[v]).collect::<Vec<_>>())
                             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, order.iter().map(|&v| ins.normal[v]).collect::<Vec<_>>())
                             .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(order.iter().map(|&v| joints[v]).collect()))
                             .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, vec![[1.0f32, 0.0, 0.0, 0.0]; order.len()])
-                            .with_inserted_indices(Indices::U32(index));
-                        (look, meshes.add(mesh))
+                            .with_inserted_indices(Indices::U32(index))
+                            // (Its bounds kept from its bones, as the skin's are: the ragdoll takes them anywhere.)
+                            .with_generated_skinned_mesh_bounds()
+                            .expect("the insides skinned to their bones");
+                        LookMesh { look, mesh: meshes.add(mesh), local, parts }
                     })
                     .collect();
+                let made = std::sync::Arc::new(made);
                 self.meshes.insert(body.name.clone(), made.clone());
                 made
             }
         };
-        let xray = commands.spawn((Transform::default(), Visibility::Hidden, Xray, ChildOf(space))).id();
-        for (look, mesh) in made {
-            let material = self.look(look, materials);
-            commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), skin.clone(), ChildOf(xray)));
+        let xray = commands.spawn((Transform::default(), Visibility::Hidden, ChildOf(space))).id();
+        let mut entities = Vec::new();
+        for l in made.iter() {
+            let material = self.look(l.look, materials);
+            entities.push(commands.spawn((Mesh3d(l.mesh.clone()), MeshMaterial3d(material), skin.clone(), DynamicSkinnedMeshBounds, ChildOf(xray))).id());
         }
+        let n = made.len();
+        let parts = self.bodies[&body.name].parts.len();
+        commands.entity(xray).insert(Xray {
+            looks: made,
+            entities,
+            hurt_entities: vec![None; n],
+            owned: vec![None; n],
+            hurt_meshes: vec![None; n],
+            hurt: vec![false; parts],
+            drawn: None,
+            stale: vec![false; n],
+            skin,
+        });
         xray
+    }
+}
+
+// What medicine names hurt shown hurt in the x-ray (Hurt::hurt, anatomy.ts `hurt`), and each person's changed looks
+// regrouped, while they are seen: one draw a look, the hurt in a twin of it.
+#[allow(clippy::type_complexity)]
+pub fn regroup(
+    mut commands: Commands,
+    seeing: Res<Seeing>,
+    mut anatomy: ResMut<Anatomy>,
+    people: Query<(&Person, &crate::npc::Hurt)>,
+    mut xrays: Query<&mut Xray>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut handles: Query<&mut Mesh3d>,
+    log: Option<ResMut<crate::scenario::Log>>,
+) {
+    let started = std::time::Instant::now();
+    let mut regrouped = 0;
+    anatomy.look(0, &mut materials);
+    let anatomy = anatomy.into_inner();
+    let (bodies, looks_of) = (&anatomy.bodies, &anatomy.looks);
+    for (p, h) in &people {
+        let Ok(mut x) = xrays.get_mut(p.insides) else { continue };
+        if h.hurt.len() > x.hurt.iter().filter(|&&b| b).count() {
+            let ins = &bodies[&p.body.name];
+            for name in &h.hurt {
+                for (i, part) in ins.parts.iter().enumerate() {
+                    if &part.name == name {
+                        x.hurt(i);
+                    }
+                }
+            }
+        }
+        if !seeing.0 || !x.stale.iter().any(|&s| s) {
+            continue;
+        }
+        let ins = &bodies[&p.body.name];
+        let looks = x.looks.clone();
+        for (l, lm) in looks.iter().enumerate() {
+            if !std::mem::take(&mut x.stale[l]) {
+                continue;
+            }
+            regrouped += 1;
+            let (mut whole, mut hurt) = (Vec::new(), Vec::new());
+            for &pi in &lm.parts {
+                let part = &ins.parts[pi];
+                let into = if x.hurt[pi] { &mut hurt } else { &mut whole };
+                let tris = x.drawn.as_deref().unwrap_or(&ins.index);
+                for t in tris[part.index_start..part.index_start + part.index_count].chunks_exact(3) {
+                    if t[0] != t[1] {
+                        into.extend(t.iter().map(|&v| lm.local[v as usize]));
+                    }
+                }
+            }
+            // (A copy of the shared mesh, this person's own, its triangles replaced: the corners stay as they are.)
+            let own = |slot: &mut Option<Handle<Mesh>>, meshes: &mut Assets<Mesh>, index: Vec<u32>| {
+                let h = slot.get_or_insert_with(|| {
+                    let m = meshes.get(&lm.mesh).unwrap().clone();
+                    meshes.add(m)
+                });
+                if let Some(mut m) = meshes.get_mut(h.id()) {
+                    m.insert_indices(Indices::U32(index));
+                }
+                h.clone()
+            };
+            let mesh = own(&mut x.owned[l], &mut meshes, whole);
+            if let Ok(mut m) = handles.get_mut(x.entities[l]) {
+                m.0 = mesh;
+            }
+            if !hurt.is_empty() || x.hurt_meshes[l].is_some() {
+                let mesh = own(&mut x.hurt_meshes[l], &mut meshes, hurt);
+                if x.hurt_entities[l].is_none() {
+                    let material = looks_of[lm.look + LOOKS.len()].clone();
+                    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), x.skin.clone(), DynamicSkinnedMeshBounds, ChildOf(p.insides))).id();
+                    x.hurt_entities[l] = Some(e);
+                }
+            }
+        }
+    }
+    // (For checks: what regrouping cost, when it did any.)
+    if let (Some(mut log), true) = (log, regrouped > 0) {
+        log.0.push(serde_json::json!({ "what": { "event": "xray regrouped", "looks": regrouped, "ms": started.elapsed().as_secs_f32() * 1000.0 } }));
     }
 }
 
@@ -268,7 +439,8 @@ fn see(
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Anatomy>().init_resource::<Seeing>().add_systems(Update, (toggle, see).chain());
+    app.init_resource::<Anatomy>().init_resource::<Seeing>().add_systems(Update, (toggle, see).chain())
+        .add_systems(PostUpdate, regroup);
 }
 
 // --- what a line through them meets ---------------------------------------------------------------------------------
@@ -536,6 +708,158 @@ pub fn ray_to_segment(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> (f32, f32) {
     (t, (o + d * t - p).length())
 }
 
+
+// --- cross-sections --------------------------------------------------------------------------------------------------
+//
+// Where a plane cuts a closed surface: the outline it leaves on the plane. A limb cut through shows the skin's outline,
+// and inside it each bone's, each read off the same triangles that are drawn (dismember.rs).
+
+// A point of an outline: metres from the plane's middle along its own directions, and the edge it lies on (corners `a`
+// and `b`, `t` of the way from a to b), to read anything else there off the corners.
+#[derive(Clone, Copy, Debug)]
+pub struct SectionPoint {
+    pub x: f32,
+    pub y: f32,
+    pub a: u32,
+    pub b: u32,
+    pub t: f32,
+}
+
+// Where the plane through `c` square to unit `n` cuts triangles `tris` (offsets into `index`, corners in `position`):
+// loops of points in the plane's own directions `e1`, `e2`. A surface whose corners are doubled along a seam (the skin's
+// picture) leaves pieces of outline that are joined again where their ends meet.
+pub fn section(position: &[Vec3], index: &[u32], tris: impl IntoIterator<Item = u32>, c: Vec3, n: Vec3, e1: Vec3, e2: Vec3) -> Vec<Vec<SectionPoint>> {
+    let side = |v: u32| (position[v as usize] - c).dot(n);
+    let mut points: HashMap<u64, SectionPoint> = HashMap::new();
+    let mut links: HashMap<u64, Vec<u64>> = HashMap::new();
+    // (The links in the order they were made, so that the walk is the TS's whatever the map's order.)
+    let mut order: Vec<u64> = Vec::new();
+    for i in tris {
+        let i = i as usize;
+        let v = [index[i], index[i + 1], index[i + 2]];
+        let s = v.map(side);
+        let mut crossed = [0u64; 3];
+        let mut k = 0;
+        for j in 0..3 {
+            let (a, b, sa, sb) = (v[j], v[(j + 1) % 3], s[j], s[(j + 1) % 3]);
+            if (sa > 0.0) == (sb > 0.0) {
+                continue;
+            }
+            let key = if a < b { (a as u64) << 32 | b as u64 } else { (b as u64) << 32 | a as u64 };
+            points.entry(key).or_insert_with(|| {
+                let t = sa / (sa - sb);
+                let p = position[a as usize].lerp(position[b as usize], t) - c;
+                SectionPoint { x: p.dot(e1), y: p.dot(e2), a, b, t }
+            });
+            crossed[k] = key;
+            k += 1;
+        }
+        if k == 2 {
+            for (x, y) in [(crossed[0], crossed[1]), (crossed[1], crossed[0])] {
+                let l = links.entry(x).or_insert_with(|| {
+                    order.push(x);
+                    Vec::new()
+                });
+                l.push(y);
+            }
+        }
+    }
+    // Walk the links, from loose ends first so that a broken outline is walked whole.
+    let mut used: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut chains: Vec<Vec<SectionPoint>> = Vec::new();
+    let mut walk = |start: u64, used: &mut std::collections::HashSet<u64>| {
+        let mut chain = Vec::new();
+        let (mut prev, mut at) = (u64::MAX, Some(start));
+        while let Some(k) = at {
+            if !used.insert(k) {
+                break;
+            }
+            chain.push(points[&k]);
+            let next = links[&k].iter().copied().find(|&x| x != prev && !used.contains(&x));
+            prev = k;
+            at = next;
+        }
+        if chain.len() > 1 {
+            chains.push(chain);
+        }
+    };
+    for &k in &order {
+        if links[&k].len() == 1 && !used.contains(&k) {
+            walk(k, &mut used);
+        }
+    }
+    for &k in &order {
+        if !used.contains(&k) {
+            walk(k, &mut used);
+        }
+    }
+    // Pieces whose ends meet (within half a millimetre) are one outline.
+    let near = |p: &SectionPoint, q: &SectionPoint| (p.x - q.x).hypot(p.y - q.y) < 0.0005;
+    let mut joined = true;
+    while joined {
+        joined = false;
+        'outer: for i in 0..chains.len() {
+            if near(&chains[i][0], chains[i].last().unwrap()) {
+                continue;
+            }
+            for j in 0..chains.len() {
+                if i == j {
+                    continue;
+                }
+                let (a0, a1) = (chains[i][0], *chains[i].last().unwrap());
+                let (b0, b1) = (chains[j][0], *chains[j].last().unwrap());
+                let mut b = chains[j].clone();
+                if near(&a1, &b0) {
+                    chains[i].extend(b);
+                } else if near(&a1, &b1) {
+                    b.reverse();
+                    chains[i].extend(b);
+                } else if near(&a0, &b1) {
+                    b.extend(chains[i].drain(..));
+                    chains[i] = b;
+                } else if near(&a0, &b0) {
+                    b.reverse();
+                    b.extend(chains[i].drain(..));
+                    chains[i] = b;
+                } else {
+                    continue;
+                }
+                chains.remove(j);
+                joined = true;
+                break 'outer;
+            }
+        }
+    }
+    chains.retain(|l| l.len() >= 3);
+    chains
+}
+
+// The area of a loop of points (positive one way round, negative the other).
+pub fn loop_area(points: impl Iterator<Item = (f32, f32)> + Clone) -> f32 {
+    let v: Vec<(f32, f32)> = points.collect();
+    let mut s = 0.0;
+    let mut j = v.len().wrapping_sub(1);
+    for i in 0..v.len() {
+        s += (v[j].0 - v[i].0) * (v[j].1 + v[i].1);
+        j = i;
+    }
+    s / 2.0
+}
+
+// Whether point (x, y) is inside a loop.
+pub fn in_loop(points: &[(f32, f32)], x: f32, y: f32) -> bool {
+    let mut inside = false;
+    let mut j = points.len().wrapping_sub(1);
+    for i in 0..points.len() {
+        let (a, b) = (points[i], points[j]);
+        if (a.1 > y) != (b.1 > y) && x < (b.0 - a.0) * (y - a.1) / (b.1 - a.1) + a.0 {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,5 +877,17 @@ mod tests {
         assert!(triangle(Vec3::new(0.0, 5.0, 0.0), Vec3::X, &p, &[0, 1, 2], 0) < 0.0);
         assert!(slab(Vec3::ZERO, Vec3::X, Vec3::new(1.0, -1.0, -1.0), Vec3::new(2.0, 1.0, 1.0), 3.0));
         assert!(!slab(Vec3::ZERO, Vec3::X, Vec3::new(1.0, -1.0, -1.0), Vec3::new(2.0, 1.0, 1.0), 0.5));
+    }
+
+    // A unit cube cut through its middle across y: one square outline of side 1, area 1, the middle inside it.
+    #[test]
+    fn cube_section() {
+        let p: Vec<Vec3> = (0..8).map(|k| Vec3::new((k & 1) as f32, ((k >> 1) & 1) as f32, ((k >> 2) & 1) as f32) - 0.5).collect();
+        let index: Vec<u32> = vec![0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3];
+        let loops = section(&p, &index, (0..12).map(|t| t * 3), Vec3::ZERO, Vec3::Y, Vec3::X, Vec3::Z);
+        assert_eq!(loops.len(), 1);
+        let pts: Vec<(f32, f32)> = loops[0].iter().map(|q| (q.x, q.y)).collect();
+        assert!((loop_area(pts.iter().copied()).abs() - 1.0).abs() < 1e-5, "{pts:?}");
+        assert!(in_loop(&pts, 0.0, 0.0) && !in_loop(&pts, 0.7, 0.0));
     }
 }

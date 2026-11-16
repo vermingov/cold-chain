@@ -167,6 +167,9 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "sound" => s = crate::sound::scenario(),
         "arsenal-use" => s = crate::weapons::scenario(),
         "wounds" => s = wounds(),
+        "cut" => s = crate::cut_scenario::steps(""),
+        "cut-limbs" | "cut-belly" | "cut-bones" => s = crate::cut_scenario::steps(&name[4..]),
+        "blood" => s = crate::blood::scenario(),
         // The look of hurt on the skin (port/skin): skin.rs.
         "skin" => s = crate::skin::scenario(),
         // The face, the eyes and the mouth (port/face): face.rs; every pipeline made before play (warm.rs).
@@ -858,7 +861,7 @@ fn wounds() -> Vec<Step> {
 }
 
 // The person standing `i`th in the line (sandbox.rs's order: the old man, the groundskeeper, the young man, the hood).
-fn person_at(w: &mut World, i: usize) -> Entity {
+pub fn person_at(w: &mut World, i: usize) -> Entity {
     let body = crate::sandbox::BODIES[i];
     let mut q = w.query::<(Entity, &Person)>();
     q.iter(w).find(|(_, p)| p.body.name == body).unwrap().0
