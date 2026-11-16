@@ -172,6 +172,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "blood" => s = crate::blood::scenario(),
         // The look of hurt on the skin (port/skin): skin.rs.
         "skin" => s = crate::skin::scenario(),
+        // Gunshot wounds, in and out, close up (port/wound): skin.rs.
+        "gunshot" => s = crate::skin::gunshot(),
         // The face, the eyes and the mouth (port/face): face.rs; every pipeline made before play (warm.rs).
         "face" => s = crate::face::scenario(),
         "warm" => s = crate::warm::scenario(),

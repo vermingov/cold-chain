@@ -947,7 +947,7 @@ impl Cx<'_, '_> {
     }
 }
 
-fn jitter(rng: &mut Rng, dir: Vec3, spread: f32) -> Vec3 {
+pub fn jitter(rng: &mut Rng, dir: Vec3, spread: f32) -> Vec3 {
     let a = rng.next() * std::f32::consts::TAU;
     let r = rng.next().sqrt() * spread;
     let side = dir.cross(Vec3::Y).normalize();

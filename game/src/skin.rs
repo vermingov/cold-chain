@@ -58,11 +58,8 @@ pub struct Stamp {
 }
 
 pub const CAPSULE: f32 = 0.0;
-pub const ENTRY: f32 = 1.0;
-pub const SOFT: f32 = 2.0;
 pub const LENS: f32 = 3.0;
 pub const BLOT: f32 = 4.0;
-pub const RADIAL: f32 = 5.0;
 
 impl Stamp {
     pub fn new(kind: f32, a: Vec2, b: Vec2, w: f32, feather: f32, reach: f32, v: Vec4, x: Vec4) -> Stamp {
@@ -159,6 +156,10 @@ pub struct Skin {
     pub dressings: Vec<(Entity, Handle<Flesh>, f32, f32)>,
     // A part's skinned mesh and its parent, for things skinned to this person's bones (dressings).
     pub skinned: Option<(SkinnedMesh, Entity)>,
+    // The gunshot wounds recorded (marks.rs): each one's place at rest and how far it reaches; when the clock in their
+    // row was last sent.
+    pub shots: Vec<(Vec3, f32)>,
+    pub shot_clock: f32,
 }
 
 impl Skin {
@@ -300,6 +301,8 @@ fn clothe(
                 opened: false,
                 dressings: Vec::new(),
                 skinned: skinned_at,
+                shots: Vec::new(),
+                shot_clock: 0.0,
             },
             crate::runs::Runs::default(),
         ));
@@ -365,9 +368,11 @@ fn look(
         let skin = &mut *skin;
         let runs = &mut *runs;
         let traced = hurt.traced.clone();
-        let mut npc = Npc { person, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut *dice, frame: 0 };
+        let npc = Npc { person, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut *dice, frame: 0 };
         let from = skin.seen.min(npc.hurt.happened.len());
-        let mut opened = false;
+        // A bullet's way in comes as its scraped ring (Hole) and then its hole (Wound); a way in with no Hole before it is
+        // the bullet going in again after coming out.
+        let mut ringed: Option<(Vec3, bool)> = None;
         for k in from..npc.hurt.happened.len() {
             // (cloned: drawing it asks the body where things are)
             let h = npc.hurt.happened[k].clone();
@@ -380,14 +385,21 @@ fn look(
                         skin.cloth_hole(&Opening { at: hit.rest, ex: tangent(n), ey: n, half: [r, if way == Way::Out { -2.0 } else { -1.0 }] });
                         skin.window(hit.rest, n, r * 1.6, 0.06);
                     }
-                    Kind::Skin if way == Way::In => skin.entry(&hit, size),
-                    Kind::Skin => skin.exit(&hit, size, rng),
+                    Kind::Skin if way == Way::In => {
+                        let ring = ringed.take().filter(|(at, _)| *at == hit.rest);
+                        skin.entry(&hit, size, ring.is_some_and(|r| r.1), ring.is_none(), rng);
+                    }
+                    Kind::Skin => skin.exit(&hit, size, None, 0.006, rng),
                     _ => {}
                 },
-                Happened::Hole { hit, size, open, ring } => {
-                    if hit.kind == Kind::Skin && !open && ring {
-                        skin.ring(&hit, size);
+                Happened::Hole { hit, open, ring, .. } => {
+                    if hit.kind == Kind::Skin && !open {
+                        ringed = Some((hit.rest, ring));
                     }
+                }
+                Happened::Spatter { enter, dir, range, .. } if enter.kind == Kind::Skin => {
+                    let dir = npc.rest_to_world(enter.owner).inverse().transform_vector3(dir);
+                    skin.aimed(&enter, dir, range);
                 }
                 Happened::Stab { ends, gape, double, cloths } => {
                     skin.stab(&ends[0], &ends[1], gape, double);
@@ -401,29 +413,9 @@ fn look(
                         skin.window(c.rest, n, half * 1.3, 0.06);
                     }
                 }
-                Happened::Tear { hit, arms, lip, fat } => {
-                    let n = hit.rest_normal;
-                    for (ex, half) in arms {
-                        skin.skin_hole(&Opening { at: hit.rest, ex, ey: n, half });
-                        opened = true;
-                        // The lips all round it, turned out a millimetre or few: skin, and fat showing in them.
-                        let lens = 0.5 + 0.5 * ((half[0] / half[1] - 1.0) * 0.5).clamp(0.0, 1.0);
-                        let across = n.cross(ex);
-                        let mut edge = Vec::new();
-                        for j in 0..20 {
-                            let a = (j as f32 / 20.0) * std::f32::consts::TAU;
-                            let x = a.cos() * half[0];
-                            let y = a.sin().signum() * half[1] * (1.0 - (x / half[0]).powi(2)).max(0.0).powf(lens);
-                            let (at, normal) = npc.world_of(hit.rest + ex * x + across * y, hit.owner, Some(n));
-                            let normal = normal.unwrap();
-                            if let Some(on) = npc.surface(at + normal * 0.1, -normal, 0.2, false).into_iter().find(|s| s.kind == Kind::Skin) {
-                                edge.push(on);
-                            }
-                        }
-                        if edge.len() > 2 {
-                            skin.lip(&edge, lip, fat, rng);
-                        }
-                    }
+                Happened::Tear { hit, arms, fat, .. } => {
+                    let size = arms.iter().map(|(_, h)| h[0] * 2.0).fold(0.0, f32::max);
+                    skin.exit(&hit, size, Some(&arms), fat, rng);
                 }
                 Happened::Welling { hit, ml } => {
                     skin.blot(&hit, 0.003 + ml.sqrt() * 0.0015, 0.25, rng);
@@ -442,8 +434,10 @@ fn look(
             }
         }
         skin.seen = if late { 0 } else { npc.hurt.happened.len() };
-        // The inside of the body seen through a hole right through its wall: the skin drawn both ways from now on.
-        if opened {
+        // The inside of the body seen through a hole right through its wall (hider.rs `skin_hole`, viscera.rs): the skin
+        // drawn both ways from now on.
+        let single = |h: &Handle<Flesh>, flesh: &Assets<Flesh>| flesh.get(h).is_some_and(|m| m.base.cull_mode.is_some());
+        if skin.opened && skin.materials.iter().any(|(_, _, h, mode)| (*mode == SKIN || *mode == UNDER) && single(h, flesh)) {
             for (_, _, h, mode) in &skin.materials {
                 if (*mode == SKIN || *mode == UNDER)
                     && let Some(mut m) = flesh.get_mut(h)
@@ -458,6 +452,12 @@ fn look(
         }
         let dt = time.delta_secs();
         skin.dry(dt);
+        // The gunshot wounds' clock, which they well, dry and darken by: four times a second is plenty.
+        if !skin.shots.is_empty() && skin.clock - skin.shot_clock >= 0.25 {
+            skin.shot_clock = skin.clock;
+            let n = skin.shots.len() as f32;
+            skin.put(crate::marks::SHOTS, 0, [skin.clock, n, 0.0, 0.0]);
+        }
         runs.update(&npc, skin, rng, cache, dt, &mut crate::runs::Out { drips: &mut out.0, pooled: &mut out.1, soaked: &mut out.2 });
         for (rest, ml) in out.2.drain(..) {
             soaked.push(crate::runs::Soaked { person: entity, rest, ml });
@@ -980,6 +980,12 @@ fn cameras(on: bool) -> Step {
 
 // Every wound photographed: the player put `d` back from it along its normal (level), looking at it.
 fn photograph(at: &'static str) -> Step {
+    looks(at, 3, None)
+}
+
+// Each view held `hold` frames before its picture; with `timed`, only the views of that distance, and what the render
+// passes took over the hold logged with each (SKIN_TIMES=1).
+fn looks(at: &'static str, hold: u32, timed: Option<&'static str>) -> Step {
     Step::Do(Box::new(move |w: &mut World| {
         // What the passes cost, as the render diagnostics last measured them (SKIN_TIMES=1).
         if let Some(store) = w.get_resource::<bevy::diagnostic::DiagnosticsStore>() {
@@ -991,13 +997,16 @@ fn photograph(at: &'static str) -> Step {
             log(w, serde_json::json!({ "event": "gpu", "at": at, "times": times }));
         }
         // (the HUD's vitals panel comes and goes with whoever is looked at: nothing over the pictures)
-        let mut q = w.query_filtered::<&mut Visibility, With<Text>>();
+        let mut q = w.query_filtered::<&mut Visibility, Or<(With<Text>, (With<Node>, Without<ImageNode>, Without<ChildOf>))>>();
         for mut v in q.iter_mut(w) {
             *v = Visibility::Hidden;
         }
         let views = w.resource::<Views>().0.clone();
         let mut steps = std::collections::VecDeque::new();
         for (name, who, c, d) in views {
+            if timed.is_some_and(|t| !name.ends_with(t)) {
+                continue;
+            }
             // Where the wound is now, and which way its skin faces.
             let Some((point, normal)) = crate::npc::with(w, who, |npc| {
                 let (p, n) = npc.world_of(c.rest, c.owner, Some(c.rest_normal));
@@ -1012,8 +1021,32 @@ fn photograph(at: &'static str) -> Step {
                         p.spawn(&map, eye.x, eye.z, Some(point), eye.y);
                     }
                 });
+                // (the gunshot check's lamp, above the camera and a little out from it)
+                let mut q = w.query_filtered::<&mut Transform, With<Lamp>>();
+                for mut t in q.iter_mut(w) {
+                    t.translation = eye + Vec3::new(0.0, 0.3, 0.0) + normal * 0.15;
+                }
             })));
-            steps.push_back(Step::Wait(3));
+            steps.push_back(Step::Wait(hold));
+            if timed.is_some() {
+                let view = name.clone();
+                steps.push_back(Step::Do(Box::new(move |w: &mut World| {
+                    let Some(store) = w.get_resource::<bevy::diagnostic::DiagnosticsStore>() else { return };
+                    let times: Vec<(String, f64)> = store
+                        .iter()
+                        .filter(|d| d.path().as_str().starts_with("render/"))
+                        .filter_map(|d| Some((d.path().as_str().to_string(), d.average()?)))
+                        .collect();
+                    log(w, serde_json::json!({ "event": "held", "view": view, "times": times }));
+                })));
+            }
+            // (the vitals of whoever is looked at come up again with each new face: put away again)
+            steps.push_back(Step::Do(Box::new(|w: &mut World| {
+                let mut q = w.query_filtered::<&mut Visibility, Or<(With<Text>, (With<Node>, Without<ImageNode>, Without<ChildOf>))>>();
+                for mut v in q.iter_mut(w) {
+                    *v = Visibility::Hidden;
+                }
+            })));
             steps.push_back(Step::Shot(name));
         }
         crate::scenario::push_front(w, steps);
@@ -1030,6 +1063,147 @@ pub fn scenario() -> Vec<Step> {
         s.push(cameras(true));
         s.push(photograph(name));
         at = t;
+    }
+    // What the wounds cost to draw: each close-up held two seconds, the render passes' times logged (SKIN_TIMES=1; run
+    // again with GUNSHOT_BLANK=1, the same views with no shots fired, for the difference).
+    if std::env::var_os("SKIN_TIMES").is_some() {
+        s.push(looks("60", 120, Some("macro")));
+    }
+    s
+}
+
+// --- the gunshot check ----------------------------------------------------------------------------------------------
+//
+// `cargo run -- --scenario gunshot --out <dir>`: a pistol, a rifle and a shotgun into the face, neck, chest, arm and
+// thigh of the people standing, some from 20 cm (soot and powder round the way in) and some from 2 m (the pellets
+// apart), every way in and way out photographed at 7 cm (a close-up lens's view), 20 cm and 2 m, at 0, 10 and 60 s,
+// under a lamp beside the camera. Their clothes are taken off for it (hidden, and the skin under them shown
+// everywhere), so that a wound on the chest or thigh is seen as a pathologist sees it; blood that would have soaked
+// into them still does.
+
+// One shot: whose, at which bone and how far from its head (the TS's space), along which way (the TS's space), with
+// what, from how far off the muzzle is.
+const SHOTS: [(&str, &str, &str, [f32; 3], [f32; 3], &str, f32); 9] = [
+    ("pistol_face", "buyer", "jaw", [0.0, -0.025, -0.04], [-1.0, 0.0, 0.0], "pistol", 0.2),
+    ("rifle_face", "hood", "jaw", [0.0, -0.025, -0.04], [-1.0, 0.0, 0.0], "rifle", 2.0),
+    ("pistol_neck", "hood", "neck01", [0.025, -0.03, 0.0], [0.0, 0.0, 1.0], "pistol", 2.0),
+    ("rifle_chest", "sexton", "spine01", [0.06, -0.02, 0.0], [0.0, 0.0, 1.0], "rifle", 2.0),
+    ("shotgun_chest", "hood", "spine02", [-0.06, 0.0, 0.0], [0.0, 0.0, 1.0], "shotgun", 2.0),
+    ("pistol_arm", "oldman", "upperarm01.L", [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], "pistol", 0.2),
+    ("rifle_thigh", "buyer", "upperleg01.L", [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], "rifle", 2.0),
+    ("shotgun_thigh", "oldman", "upperleg01.R", [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], "shotgun", 0.2),
+    ("shotgun_face", "sexton", "head", [0.0, 0.02, 0.0], [0.0, 0.0, 1.0], "shotgun", 2.5),
+];
+
+// A gun's missile as weapons.rs ARMS has it; the shotgun's charge as weapons.rs `fire` makes it when the muzzle is
+// within about a metre of the body.
+fn gun(weapon: &str, range: f32) -> crate::wounds::Missile {
+    use crate::wounds::Missile;
+    match weapon {
+        "shotgun" if range < 0.8 => Missile { name: Some("charge".into()), energy: 170.0 * 9.0 * (1.0 - (range + 0.5) * 0.1), mass: 0.0035 * 9.0,
+                                              speed: Some(400.0), calibre: if range + 0.5 < 0.6 { 0.022 } else { 0.026 }, channel: 0.024, soft: 42.0, hard: 120.0, pellets: Some(9), ..default() },
+        "shotgun" => Missile { name: Some("pellet".into()), energy: 170.0, mass: 0.0035, speed: Some(400.0), calibre: 0.0084, channel: 0.005, soft: 9.0, hard: 90.0, pellets: Some(9), ..default() },
+        _ => missile(weapon),
+    }
+}
+
+#[derive(Component)]
+struct Lamp;
+
+fn undress(w: &mut World) {
+    hold(w);
+    // Nothing in the hands.
+    let mut weapons = w.resource_mut::<crate::weapons::Weapons>();
+    if let Some(k) = weapons.slots.iter().position(|s| s.is_none()) {
+        weapons.slot = k;
+    }
+    let people: Vec<(Entity, Vec<Entity>)> = w
+        .query::<(Entity, &Person)>()
+        .iter(w)
+        .map(|(e, p)| (e, p.parts.iter().filter(|(i, _)| p.body.parts[*i].kind == "cloth").map(|(_, e)| *e).collect()))
+        .collect();
+    for (e, cloths) in people {
+        for c in cloths {
+            w.entity_mut(c).insert(Visibility::Hidden);
+        }
+        // (one window onto the skin under the clothes as big as the person)
+        if let Some(mut skin) = w.get_mut::<Skin>(e) {
+            skin.window(Vec3::ZERO, Vec3::Y, 5.0, 5.0);
+        }
+    }
+    w.spawn((Lamp, PointLight { intensity: crate::map::CANDELA, range: 6.0, shadow_maps_enabled: false, ..default() }, Transform::default()));
+}
+
+fn shoot_them(w: &mut World) {
+    use crate::npc::with;
+    let mut views = Vec::new();
+    // (GUNSHOT=pistol_face,rifle_chest fires only those; GUNSHOT_AT=macro,close only those views.)
+    let only = std::env::var("GUNSHOT").ok();
+    let at_only = std::env::var("GUNSHOT_AT").ok();
+    for (name, body, bone, offset, way, weapon, range) in SHOTS {
+        if only.as_ref().is_some_and(|o| !o.split(',').any(|x| x == name)) {
+            continue;
+        }
+        let who = person_at(w, body);
+        let dir = crate::babylon(way[0], way[1], way[2]).normalize();
+        let mut rng = crate::rng::Rng::new(name.len() as u32 * 7919);
+        let r = with(w, who, |npc| {
+            // (A limb's wound halfway down it, whichever way the limb hangs.)
+            let at = match bone.strip_prefix("upper") {
+                Some(rest) => {
+                    let lower = format!("lower{rest}");
+                    near(npc, bone, offset).lerp(near(npc, &lower, offset), 0.45)
+                }
+                None => near(npc, bone, offset),
+            };
+            // (The muzzle is `range` off the skin: wounds.rs counts the range from a point MUZZLE behind it.)
+            let skins: Vec<Crossing> = npc.surface(at - dir * 3.0, dir, 6.0, false).into_iter().filter(|c| c.kind == Surface::Skin).collect();
+            let Some(first) = skins.first().cloned() else { return "missed".to_string() };
+            let origin = first.point - dir * (range + 0.45);
+            let m = gun(weapon, range);
+            let mut said = Vec::new();
+            // (GUNSHOT_BLANK=1: nothing fired, the same views: what the skin costs unhurt.)
+            let n = if std::env::var_os("GUNSHOT_BLANK").is_some() { 0 } else if m.name.as_deref() == Some("pellet") { 9 } else { 1 };
+            for k in 0..n {
+                let d = if k == 0 { dir } else { crate::weapons::jitter(&mut rng, dir, 0.028) };
+                let p = crate::wounds::pierce(npc, origin, d, &m, 3.0 + range);
+                said.push(format!("stopped {} energy {:.0}", p.stopped, p.energy));
+            }
+            views.push((format!("{name}_in"), who, first.clone()));
+            // (the way out: the last skin it crosses within 30 cm, not the inside of the mouth on its way)
+            if let Some(out) = skins.iter().rfind(|c| c.t < first.t + 0.3).filter(|c| c.t > first.t) {
+                views.push((format!("{name}_out"), who, out.clone()));
+            }
+            format!("{} scale {:.2} {}", weapon, first.scale, said.join(", "))
+        });
+        log(w, serde_json::json!({ "event": name, "result": r }));
+    }
+    let mut all = Vec::new();
+    for (name, who, c) in views {
+        for (d, at) in [(0.07, "macro"), (0.2, "close"), (2.0, "far")] {
+            if at_only.as_ref().is_some_and(|o| !o.split(',').any(|x| x == at)) {
+                continue;
+            }
+            all.push((format!("{name}_{at}"), who, c.clone(), d));
+        }
+    }
+    w.insert_resource(Views(all));
+}
+
+pub fn gunshot() -> Vec<Step> {
+    let mut s = vec![Step::Wait(30), Step::Do(Box::new(undress)), Step::Wait(2), Step::Do(Box::new(shoot_them)), photograph("0")];
+    let mut at = 0.0;
+    for (t, name) in [(10.0, "10"), (60.0, "60")] {
+        s.push(cameras(false));
+        s.push(Step::Wait(((t - at) * 60.0) as u32 - 30));
+        s.push(cameras(true));
+        s.push(photograph(name));
+        at = t;
+    }
+    // What the wounds cost to draw: each close-up held two seconds, the render passes' times logged (SKIN_TIMES=1; run
+    // again with GUNSHOT_BLANK=1, the same views with no shots fired, for the difference).
+    if std::env::var_os("SKIN_TIMES").is_some() {
+        s.push(looks("60", 120, Some("macro")));
     }
     s
 }
