@@ -294,11 +294,6 @@ pub fn steps(part: &str) -> Vec<Step> {
     // 8. Everyone seen through: the breaks in the x-ray, the hurt parts in their hurt look.
     s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = true)));
     s.push(Step::Wait(2));
-    s.push(Step::Do(Box::new(|w: &mut World| {
-        let t = std::time::Instant::now();
-        w.run_system_once(crate::anatomy::regroup).ok();
-        log(w, json!({ "event": "xray regrouped", "ms": t.elapsed().as_secs_f32() * 1000.0 }));
-    })));
     close_on(&mut s, "xray_shin", move |w: &mut World| {
         let who = person_at(w, 3);
         let at = between(w, who, "lowerleg01.L", "foot.L", 0.5);

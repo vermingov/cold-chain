@@ -320,7 +320,10 @@ pub fn regroup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut handles: Query<&mut Mesh3d>,
+    log: Option<ResMut<crate::scenario::Log>>,
 ) {
+    let started = std::time::Instant::now();
+    let mut regrouped = 0;
     anatomy.look(0, &mut materials);
     let anatomy = anatomy.into_inner();
     let (bodies, looks_of) = (&anatomy.bodies, &anatomy.looks);
@@ -345,6 +348,7 @@ pub fn regroup(
             if !std::mem::take(&mut x.stale[l]) {
                 continue;
             }
+            regrouped += 1;
             let (mut whole, mut hurt) = (Vec::new(), Vec::new());
             for &pi in &lm.parts {
                 let part = &ins.parts[pi];
@@ -380,6 +384,10 @@ pub fn regroup(
                 }
             }
         }
+    }
+    // (For checks: what regrouping cost, when it did any.)
+    if let (Some(mut log), true) = (log, regrouped > 0) {
+        log.0.push(serde_json::json!({ "what": { "event": "xray regrouped", "looks": regrouped, "ms": started.elapsed().as_secs_f32() * 1000.0 } }));
     }
 }
 
