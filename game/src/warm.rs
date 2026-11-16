@@ -237,8 +237,13 @@ fn rehearse(app: &mut App) {
         ("rifle", 1, "head", 2.6), ("shotgun", 2, "belly", 0.9), ("shotgun", 3, "chest", 5.0), ("pistol", 2, "upperarmR", 2.6),
         ("rifle", 3, "thighR", 2.6), ("deagle", 0, "belly", 2.6), ("r22", 2, "thighL", 2.6)];
     for (key, n, part, far) in shots {
-        add(app, crate::weapons::arm(key).name, 30, move |w| {
+        // (given time for the hands to come up and round to it: shot from below the view, the flash and the powder's
+        // sparks would not be seen)
+        add(app, crate::weapons::arm(key).name, 50, move |w| {
             take(w, key);
+            aim(w, n, part, far);
+        });
+        add(app, crate::weapons::arm(key).name, 30, move |w| {
             let Some((who, at)) = aim(w, n, part, far) else { return };
             press(w, 0);
             let gun = crate::weapons::arm(key).gun.as_ref().unwrap();
@@ -333,7 +338,8 @@ pub fn plugin(on: bool) -> impl Fn(&mut App) {
 pub fn scenario() -> Vec<crate::scenario::Step> {
     use crate::scenario::{log, Step};
     use serde_json::json;
-    let mut s = Vec::new();
+    // (A picture first: the screenshot's own pipeline is the check's, not the game's.)
+    let mut s = vec![Step::Shot("warm_start".into()), Step::Wait(3)];
     s.push(Step::Do(Box::new(|w: &mut World| {
         let p = w.resource::<Pipelines>().clone();
         p.note.store(true, Ordering::SeqCst);
