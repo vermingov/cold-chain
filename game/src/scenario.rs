@@ -159,6 +159,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
         }
         "wounds" => s = wounds(),
+        "cut" => s = crate::cut_scenario::steps(""),
+        "cut-limbs" | "cut-belly" | "cut-bones" => s = crate::cut_scenario::steps(&name[4..]),
         _ => return body(name),
     }
     Some(s)
@@ -830,7 +832,7 @@ fn wounds() -> Vec<Step> {
 }
 
 // The person standing `i`th in the line (sandbox.rs's order: the old man, the groundskeeper, the young man, the hood).
-fn person_at(w: &mut World, i: usize) -> Entity {
+pub fn person_at(w: &mut World, i: usize) -> Entity {
     let body = crate::sandbox::BODIES[i];
     let mut q = w.query::<(Entity, &Person)>();
     q.iter(w).find(|(_, p)| p.body.name == body).unwrap().0

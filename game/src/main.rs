@@ -13,8 +13,12 @@ mod arsenal;
 mod behaviour;
 mod bones;
 mod bruise;
+mod cut_scenario;
+mod cutface;
+mod dismember;
 mod dressing;
 mod eyes;
+mod flesh;
 mod graphics;
 mod hud;
 mod map;
@@ -34,9 +38,12 @@ mod solids;
 mod sound;
 mod surfaces;
 mod thuds;
+mod tubes;
 mod teeth;
 mod throat;
 mod vitals;
+mod wall;
+mod viscera;
 mod weapons;
 mod wounds;
 
@@ -142,7 +149,7 @@ fn main() -> AppExit {
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
     // The body opened: broken bones drawn, limbs cut off, bellies opened (phase 3, port/cut).
-    .add_plugins(shards::plugin);
+    .add_plugins((shards::plugin, dismember::plugin, viscera::plugin, wall::plugin, flesh::plugin));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

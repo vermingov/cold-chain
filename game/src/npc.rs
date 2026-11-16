@@ -111,6 +111,10 @@ pub enum Happened {
     // blood.spray and blood.stream (blood.rs, phase 3).
     Spray { at: Vec3, dir: Vec3, speed: f32, ml: f32, spread: f32, size: f32 },
     Stream { bleed: Option<usize>, at: Vec3, dir: Vec3, speed: f32, ml: f32, r: f32 },
+    // blood.run and blood.drip (blood.rs): `ml` let run off at `at` this frame (what was in a piece cut off, out of its
+    // end: dismember.rs), and a drop let fall (off bowel that has come out: viscera.rs).
+    Run { at: Vec3, ml: f32 },
+    Drip { at: Vec3, ml: f32 },
     // film.blot: blood laid on the skin round `hit`.
     Blot { hit: Crossing, r: f32, wet: f32 },
     // A joint of the ragdoll changed (bones.rs), and npc.broke: a shaft let go at its mid joint (world.onBroke).
@@ -124,8 +128,13 @@ pub enum Happened {
     Tooth { tooth: usize, how: &'static str, dir: Vec3, pieces: u32, throws: Vec<f32> },
     // dismember.ts edge / charge, viscera.ts bled / blown: what mesh cutting does with a wound (phase 3).
     Edge { energy: f32, at: Vec3, dir: Vec3 },
-    Charge { energy: f32, at: Vec3, dir: Vec3 },
+    Charge { energy: f32, at: Vec3, dir: Vec3, hit: Crossing, calibre: f32 },
     Bled { part: String, at: Vec3, channel: f32 },
+    // dismember.rs and viscera.rs, for the marks on the skin (marks.ts rim and lip): the skin's cut edge round a stump,
+    // its outline as points in the skin's picture with texture units to a metre there, as wide and deep as the cut was
+    // torn; and the lips of an opening through the wall, the skin crossings all round it.
+    Rim { uvs: Vec<Vec2>, scale: f32, width: f32, depth: f32, torn: bool },
+    Lip { edge: Vec<Crossing>, width: f32 },
     // The tongue torn through (throat.rs's card on it).
     Tongue { hit: Crossing, size: f32 },
 }
@@ -217,6 +226,9 @@ pub struct Hurt {
     // out from the pose (segment_world).
     pub segments: Option<Vec<Transform>>,
     skinned: Option<(u32, Arc<Skinned>)>,
+    // The body's corners' bones and weights as this person's own body has them, once a limb is cut off (dismember.rs:
+    // what the body keeps is carried by the bone the limb hung from); None, the file's.
+    pub weights: Option<Arc<(Vec<[u16; 4]>, Vec<[u8; 4]>)>>,
 }
 
 // One person's body and medical state, borrowed for one shot, blow or frame.
@@ -340,10 +352,12 @@ impl<'a> Npc<'a> {
         }
         let body = &self.person.body;
         let mats = self.bone_worlds();
+        let own = self.hurt.weights.clone();
+        let (joints, weights) = own.as_ref().map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
         let at: Vec<Vec3> = body
             .position
             .iter()
-            .zip(body.joints.iter().zip(&body.weights))
+            .zip(joints.iter().zip(weights))
             .map(|(p, (j, w))| {
                 let mut out = Vec3::ZERO;
                 for k in 0..4 {
@@ -496,14 +510,15 @@ impl<'a> Npc<'a> {
     }
 
     // The bone that carries most of corner `v`.
-    // port: phase 3 dismember. A corner on a piece cut off goes with the piece's bone (dismember.ts owners).
+    // (A corner the body kept round a limb cut off goes with the bone the limb hung from: dismember.ts owners.)
     pub fn owner_of(&self, v: u32) -> usize {
         let body = &self.person.body;
+        let (joints, weights) = self.hurt.weights.as_ref().map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
         let (mut best, mut bone) = (0u8, 0u16);
         for k in 0..4 {
-            if body.weights[v as usize][k] > best {
-                best = body.weights[v as usize][k];
-                bone = body.joints[v as usize][k];
+            if weights[v as usize][k] > best {
+                best = weights[v as usize][k];
+                bone = joints[v as usize][k];
             }
         }
         bone as usize
@@ -908,6 +923,7 @@ impl Hurt {
             age: 0.0,
             segments: None,
             skinned: None,
+            weights: None,
         }
     }
 }
