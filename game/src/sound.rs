@@ -251,6 +251,12 @@ impl Playing {
     pub fn voice(&self) -> std::sync::MutexGuard<'_, Voice> {
         self.0.lock().unwrap()
     }
+
+    // Still to be heard at `now` (Sound::now's clock): not cut, and not yet played to its end.
+    pub fn sounding(&self, now: f64) -> bool {
+        let v = self.voice();
+        !v.cut && now < v.start + v.length / v.rate as f64
+    }
 }
 
 // A stream (`Sound::stream`): driven every frame by whoever has it; dropped, it falls silent and is let go of.
