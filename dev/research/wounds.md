@@ -206,6 +206,8 @@ Definition: a heavy sharp-edged blade swung into the body. They combine sharp an
 | Incomplete exit | Sequence: bullet under intact skin → one or two small superficial slit tears over it → skin broken but the bullet bounced back in → full exit. A bullet can sit protruding from its exit. | S [DiMaio] |
 | Shored exit | Skin pressed on a wall, floor, chair back, belt, bra or tight clothing at the moment of exit: a broad, irregular band of abrasion; fresh = moist and succulent; can carry the weave of the backing material; when dry it can look like a contact entry. | S [DiMaio] |
 | Undeformed high-velocity round through soft tissue | Can leave a rounded exit. After hitting bone, exits can look like knife wounds or blunt lacerations. | S [FM-rifled] |
+| Margins fit back together | The torn edges of an exit can usually be put back together, and are not abraded (unless shored). | S [LMB-GSW] |
+| Entry vs exit, edges | Entries show tissue turned in (invaginated) into the wound; exits show tissue bevelled outward. | S [SP-GSW] (search abstract only) |
 
 ### 4.4 Grazes, tangential wounds, re-entry, intermediary targets
 
@@ -452,5 +454,26 @@ Buckshot: single hole with scalloped edges at ~90 cm; a large gaping wound with 
 | Bremmer11 | Bremmer RH et al., "Biphasic oxidation of oxy-hemoglobin in bloodstains", PLoS ONE 2011. https://pmc.ncbi.nlm.nih.gov/articles/PMC3137592 |
 | FPN-clot | FPnotebook, whole blood clotting time (Lee-White, 9-15 min; other methods 5-15). https://fpnotebook.com/HemeOnc/Lab/WhlBldCltngTm.htm |
 | TM | `tissue-mechanics.md` in this folder (layer colours, gape derivation, post-mortem look) |
+| LMB-GSW | Lablogatory, "The Ins and Outs of Gunshot Wounds", 2023 (entrance: circular with a rim of abrasion; exit: stellate or slit-like, edges reassemble, not abraded; shored exit abraded; soot within about 30 cm, stippling within about 45 cm, "gross generalizations"). https://labmedicineblog.com/2023/09/22/the-ins-and-outs-of-gunshot-wounds/ |
+| SP-GSW | StatPearls, "Gunshot Wounds Forensic Pathology" (entry smaller and more regular, tissue invaginated; exit bevelled outward). Page refused the fetch (HTTP 403); only the search engine's extract was read. https://www.statpearls.com/articlelibrary/viewarticle/22464/ |
 
 Gaps: no measured numbers for incised-wound tail length, chop-wound gape, exit vs entry bleeding rate, or how fast a wound fills with blood; those rows are [E]. Abrasion-ring width has only DiMaio's worked example (1 mm, 3 mm on the eccentric side) and qualitative statements. PathologyOutlines and LibrePathology were unreachable (HTTP 429 / connection refused), so their gunshot and sharp-force pages were not used.
+
+### How the Bevy game draws gunshot wounds from this (port/wound, 2026-11-16)
+
+marks.rs records each way in and out (no painted stamp); skin.wesl looks into it as a height field. What came from where:
+the hole 0.52-0.66 of the calibre across, round to oval and slightly uneven (4.1, Geisenberger22); the edge turned in
+(SP-GSW); the scraped ring 0.9-1.4 mm, up to three times as wide on the side the bullet came from, moist red-brown drying
+brown (4.1, DiMaio's worked example); a faint bruise round it (Thali via FM-rifled); none from a rifle, which leaves
+sub-millimetre splits round the edge instead (DiMaio); a way in again after a way out larger and ragged with a wide uneven
+ring (4.4); a shotgun's charge one round hole with a scalloped edge and a scraped margin (5.1); soot within 20-30 cm, black
+and dense close, grey and in petals further, and powder tattooing to about 60 cm (a rifle twice as far), denser toward the
+hole (4.2). Ways out: the splits medicine tore (wounds.rs `tear`), each side its own length, now and then bent into a
+crescent, the lips torn along one jagged line so they would fit back together (LMB-GSW), turned out and raised half a
+millimetre to a millimetre over a band 1.5 mm and wider, no ring (4.3), the pale cut dermis over the lip, fat bulging in
+lobules between them (pushed out past the lips on a big exit), muscle where it is torn deeper round the bullet's hole
+(Cleveland77, gunshot-blood.md 3). Blood stands level in the hole, little at first and welling up over half a minute at a
+way in, sooner and higher at a way out (4.7, gunshot-blood.md 2), glossy and darkening over a quarter of an hour. [E]:
+the depths, the welling's rates, the lips' height, the soot's and powder's fall-off with distance.
+Not drawn: the muzzle imprint, the stellate split of a contact shot over bone, the shored exit's scraped band, the wad's
+marks (the medicine does not say a shot was pressed to the skin or that the exit was shored).

@@ -7,11 +7,8 @@
 // what its kind needs besides. Widths are half widths, all in uv.
 
 const CAPSULE: u32 = 0u;  // a stroke from a to b, round ends, `w` half its width: v everywhere in it
-const ENTRY: u32 = 1u;    // a bullet's way in (marks.ts entry): the hole's depth and the blood in it, by radius
-const SOFT: u32 = 2u;     // a disc solid to 0.7 of its radius and fading to nothing at it (marks.ts soft)
 const LENS: u32 = 3u;     // a blade's slit (marks.ts stab), its three bands at once
 const BLOT: u32 = 4u;     // a patch of blood with an uneven edge (film.ts blot), its three layers at once
-const RADIAL: u32 = 5u;   // a disc fading evenly from v at its middle to nothing at its edge (a canvas radial gradient)
 
 struct Stamp {
     @location(0) ab: vec4<f32>,
@@ -73,25 +70,6 @@ fn fragment(in: Out) -> @location(0) vec4<f32> {
     let kind = u32(in.s.w);
     if kind == CAPSULE {
         return in.v * inside(segment(p, a, b), w, f);
-    }
-    if kind == ENTRY {
-        // The canvas's radial gradient: (240, 240) at the middle, (225, 230) at 0.55, (60, 200) at 0.8, nothing at 1.
-        let t = length(p - a) / w;
-        var c = vec2(0.0);
-        if t < 0.55 {
-            c = mix(vec2(240.0, 240.0), vec2(225.0, 230.0), t / 0.55);
-        } else if t < 0.8 {
-            c = mix(vec2(225.0, 230.0), vec2(60.0, 200.0), (t - 0.55) / 0.25);
-        } else if t < 1.0 {
-            c = mix(vec2(60.0, 200.0), vec2(0.0, 0.0), (t - 0.8) / 0.2);
-        }
-        return vec4(c / 255.0, 0.0, 0.0);
-    }
-    if kind == RADIAL {
-        return in.v * (1.0 - clamp(length(p - a) / w, 0.0, 1.0));
-    }
-    if kind == SOFT {
-        return in.v * (1.0 - smoothstep(0.7, 1.0, length(p - a) / w));
     }
     if kind == LENS {
         // From the blade's back (a) to its edge (b): how far along, and how far off the line.

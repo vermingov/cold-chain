@@ -69,6 +69,11 @@ struct Out {
     // Where this point of the body is at rest (what the openings and blows are kept in), and its bruise's tint.
     @location(8) rest: vec3<f32>,
     @location(9) tint: vec4<f32>,
+    // How the body at rest is turned into the world here (the skinning's matrix, its three columns): a gunshot wound is
+    // kept at rest and looked into from the eye.
+    @location(10) m0: vec3<f32>,
+    @location(11) m1: vec3<f32>,
+    @location(12) m2: vec3<f32>,
 }
 
 @vertex
@@ -85,11 +90,17 @@ fn vertex(in: In) -> Out {
     let world_from_local = skinning::skin_model(in.joint_indices, in.joint_weights, in.instance_index);
     out.world_normal = skinning::skin_normals(world_from_local, normal);
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4(position, 1.0));
+    out.m0 = world_from_local[0].xyz;
+    out.m1 = world_from_local[1].xyz;
+    out.m2 = world_from_local[2].xyz;
 }
 @else {
     let world_from_local = mesh_functions::get_world_from_local(in.instance_index);
     out.world_normal = mesh_functions::mesh_normal_local_to_world(normal, in.instance_index);
     out.world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4(position, 1.0));
+    out.m0 = world_from_local[0].xyz;
+    out.m1 = world_from_local[1].xyz;
+    out.m2 = world_from_local[2].xyz;
 }
     out.position = position_world_to_clip(out.world_position.xyz);
     out.uv = in.uv;
@@ -145,6 +156,425 @@ fn blood_over(under: vec3<f32>, mm: f32, wet: f32) -> vec3<f32> {
     let deep = mix(vec3(0.03, 0.01, 0.0065), vec3(0.075, 0.004, 0.0035), wet);
     let through = exp(-mu * 2.0 * mm);
     return under * through + deep * (1.0 - through);
+}
+
+// --- gunshot wounds (marks.rs `entry`, `aimed`, `exit`) -----------------------------------------------------------------
+//
+// Each is a record in the table's row SHOTS, drawn here as what it is, in millimetres across the skin round it: a height
+// field (how far below the skin each place of it lies; an exit's turned-out lips above it) that the eye's ray is followed
+// into, so that a hole has walls the light falls down and the near one hides the far, a pool of blood lies level in it,
+// and what the ray meets is coloured as what is there (dev/research/wounds.md sec. 4-5, gunshot-blood.md sec. 3).
+
+const SHOTS: u32 = 5u;
+const PER_SHOT: u32 = 6u;
+const EXIT: f32 = 1.0;
+const AGAIN: f32 = 2.0;
+const CHARGE: f32 = 3.0;
+// How far the eye's ray is followed into a wound (mm), and from how far above the skin (an exit's lips stand out).
+const DEEPEST: f32 = 24.0;
+const LIPS: f32 = 1.8;
+
+struct Shot {
+    at: vec3<f32>,
+    reach: f32,
+    ex: vec3<f32>,
+    ey: vec3<f32>,
+    n: vec3<f32>,
+    kind: f32,
+    seed: f32,
+    prev: u32,
+    // What its kind needs (marks.rs); c.w the clock it was made at.
+    a: vec4<f32>,
+    b: vec4<f32>,
+    c: vec4<f32>,
+}
+
+fn shot(k: u32) -> Shot {
+    let i = 1u + (k - 1u) * PER_SHOT;
+    let t0 = texel(SHOTS, i);
+    let t1 = texel(SHOTS, i + 1u);
+    let t2 = texel(SHOTS, i + 2u);
+    var s: Shot;
+    s.at = t0.xyz;
+    s.reach = t0.w;
+    s.ex = t1.xyz;
+    s.n = t2.xyz;
+    s.ey = cross(t2.xyz, t1.xyz);
+    s.kind = floor(t1.w);
+    s.seed = fract(t1.w) * 100.0;
+    s.prev = u32(t2.w + 0.5);
+    s.a = texel(SHOTS, i + 3u);
+    s.b = texel(SHOTS, i + 4u);
+    s.c = texel(SHOTS, i + 5u);
+    return s;
+}
+
+// A way in at q (mm across the skin from its middle along ex, ey): how far below the skin what is there lies (mm), how
+// far outside the hole's edge (mm; negative in it), how far across the scraped ring (0 at the hole, 1 at its outer
+// edge), and whether one of a rifle bullet's tiny splits of the edge is there. `fine`: 1 where the pixel is small
+// enough to see a fraction of a millimetre, 0 where it is not.
+fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
+    let r0 = s.a.x * 1000.0;
+    let collar = s.a.y * 1000.0;
+    // Which way across the skin the bullet came from, and how slanted (the sine of its angle off square).
+    let o = min(length(s.a.zw), 0.95);
+    let e = select(vec2(1.0, 0.0), s.a.zw / max(length(s.a.zw), 1e-5), o > 0.01);
+    // Slanted, the hole is drawn out along the way it came: an oval, at most about twice as long as wide.
+    let stretch = min(inverseSqrt(1.0 - o * o), 2.0);
+    let qe = vec2(dot(q, e) / stretch, e.x * q.y - e.y * q.x);
+    let r = length(qe);
+    let dir = qe / max(r, 1e-4);
+    // Not a compass circle: its edge a little in and out round it, and finely ragged; a way in again much more so.
+    let uneven = select(0.13, 0.38, s.kind == AGAIN);
+    let rag = select(0.05, 0.14, s.kind == AGAIN);
+    var edge = r0 * (1.0 + uneven * (noise2(dir * 1.4 + s.seed) - 0.5) * 2.0 + rag * (noise2(dir * 5.0 + s.seed * 1.7) - 0.5) * 2.0 * fine);
+    if s.kind == CHARGE {
+        // One hole made by many pellets together: its edge a run of their arcs, scalloped (DiMaio).
+        let th = atan2(dir.y, dir.x);
+        edge = r0 * (0.9 + 0.1 * sqrt(abs(sin(th * 3.5 + s.seed))) + 0.16 * (noise2(dir * 1.4 + s.seed) - 0.5));
+    }
+    // The ring the bullet's flank rubbed raw: about a millimetre, three on the side it came from (DiMaio), uneven.
+    let w = collar * (1.0 + 2.5 * o * max(dir.x, 0.0)) * (0.7 + 0.6 * noise2(dir * 2.2 + s.seed * 3.1));
+    let d = r - edge;
+    // The edge turned in: the skin round it dips into the hole over a little more than the ring's width.
+    let fall = max(w, 0.45) * 1.25;
+    var h = 0.0;
+    if d < 0.0 {
+        h = 0.45 + min(-d * 14.0, DEEPEST);
+        if s.kind == CHARGE {
+            // A crater, its floor torn tissue a few millimetres down.
+            h = min(h, 4.0 + 7.0 * noise2(q * 0.3 + s.seed));
+        }
+    } else if d < fall {
+        let t = 1.0 - d / fall;
+        h = 0.45 * t * t;
+    }
+    let ring = d / max(w, 1e-3);
+    if w > 0.0 && d >= 0.0 {
+        // (the skin's top layer rubbed away: a step down of a tenth of a millimetre)
+        h += 0.08 * (1.0 - smoothstep(0.85, 1.0, ring));
+    }
+    // A rifle's fast jacketed bullet leaves no scraped ring but tiny splits all round the edge, under a millimetre.
+    var split = 0.0;
+    if s.b.y > 0.5 && d >= 0.0 && d < 1.0 {
+        let th = atan2(dir.y, dir.x) / 6.2831853 * 18.0 + s.seed;
+        let cell = floor(th);
+        let reach = 0.3 + 0.6 * hash2(vec2(cell, s.seed));
+        let off = fract(th) - 0.3 - 0.4 * hash2(vec2(cell, 3.0));
+        if hash2(vec2(cell, 7.0)) > 0.3 && d < reach && abs(off) < 0.07 * (1.0 - d / reach) {
+            split = 1.0;
+            h = max(h, 0.6);
+        }
+    }
+    return vec4(h, d, select(9.0, ring, w > 0.0), split);
+}
+
+// A way out at q: how far below the skin (mm; its turned-out lips above it, negative), how far inside the tear (mm;
+// negative outside it), how far it is torn through the fat to the muscle (0 to 1), and the fat's lobules (0 to 1).
+fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
+    let fat = max(s.a.x * 1000.0, 1.5);
+    let burst = s.a.y * 1000.0;
+    let along = s.a.z * 1000.0;
+    let bend = s.c.z;
+    var inside = -1e3;
+    for (var i = 0u; i < 3u; i++) {
+        // Each split: its angle from ex, half length and half width.
+        var arm = vec3(0.0, s.a.z, s.a.w);
+        if i == 1u {
+            arm = s.b.xyz;
+        }
+        if i == 2u {
+            arm = vec3(s.b.w, s.c.x, s.c.y);
+        }
+        if arm.y <= 0.0 {
+            continue;
+        }
+        let a = arm.y * 1000.0;
+        let b = arm.z * 1000.0;
+        let u = vec2(cos(arm.x), sin(arm.x));
+        let x = dot(q, u);
+        let y = u.x * q.y - u.y * q.x;
+        let k = f32(i);
+        // Each side of a split torn as far as it went, not as far as the other; the split bent, now and then into a
+        // crescent.
+        let span = a * (0.55 + 0.45 * hash2(vec2(s.seed + k, select(0.0, 1.0, x > 0.0))));
+        let xa = clamp(x / span, -1.0, 1.0);
+        let yb = y - bend * a * 0.45 * (xa * xa - 0.4);
+        // Both lips torn along the one jagged line, so that they would fit back together; the gap between them uneven.
+        let jag = (noise2(vec2(x * 0.55, s.seed + k * 7.0)) - 0.5) * (0.6 + 0.35 * b) + (noise2(vec2(x * 2.6, s.seed * 1.3 + k)) - 0.5) * 0.45 * fine;
+        let w = b * pow(max(1.0 - xa * xa, 0.0), 0.6) * (0.7 + 0.6 * noise2(vec2(x * 0.3, s.seed + 11.0 + k)));
+        var e = w - abs(yb - jag);
+        if abs(x) > span {
+            e = -(abs(x) - span) - abs(yb - jag);
+        }
+        inside = max(inside, e);
+    }
+    // The ragged hole where the bullet burst through, where the splits meet.
+    let r = length(q);
+    let hole = burst * (0.7 + 0.6 * noise2(q / max(r, 1e-4) * 1.6 + s.seed * 2.3)) - r;
+    inside = max(inside, hole);
+    // The lips turned out in a band (wounds.rs `tear`'s lip, 1.5 mm and more for a bigger tear), raised half a
+    // millimetre to a millimetre.
+    let lip = 1.5 + 0.08 * along;
+    let lift = min(0.4 + 0.05 * along, 1.1);
+    if inside < -lip {
+        return vec4(0.0, inside, 0.0, 0.0);
+    }
+    if inside < 0.0 {
+        let t = 1.0 + inside / lip;
+        return vec4(-lift * t * t * (3.0 - 2.0 * t), inside, 0.0, 0.0);
+    }
+    // In the tear: the fat under the skin bulging up between the lips in lobules a few millimetres across, their tops
+    // near the skin's level (a big exit's dragged out past it); torn through to the muscle round the bullet's hole, and
+    // the track going on down in the middle of that.
+    let lob = mix(0.5, noise2(q * 0.42 + s.seed) * 0.65 + noise2(q * 1.05 + s.seed * 2.0) * 0.35, fine);
+    let out = clamp((along - 5.0) * 0.15, 0.0, 1.3);
+    let top = 0.4 + 2.2 * (1.0 - lob) - out * smoothstep(0.0, 2.5, inside);
+    var h = mix(-lift, top, smoothstep(0.0, 0.45, inside));
+    let torn = smoothstep(-0.3, 1.2, hole);
+    h = mix(h, fat + 1.0 + 4.0 * noise2(q * 0.35 + s.seed * 3.0), torn);
+    h += DEEPEST * smoothstep(burst * 0.35, burst * 0.9, hole);
+    return vec4(h, inside, torn, lob);
+}
+
+fn shot_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
+    if s.kind == EXIT {
+        return exit_at(s, q, fine);
+    }
+    return entry_at(s, q, fine);
+}
+
+// How high the blood stands in a wound (mm below the skin) `age` seconds after it was made: little at first, then welling
+// up the hole (wounds.md 4.7: a small way in bleeds little outside); a way out, torn and bigger, fills sooner and higher.
+// What comes over the top runs off down the skin (runs.rs).
+fn blood_level(s: Shot, age: f32) -> f32 {
+    if s.kind == EXIT || s.kind == CHARGE {
+        return 3.0 - 2.2 * (1.0 - exp(-age / 15.0));
+    }
+    return 6.0 - 5.5 * (1.0 - exp(-age / 30.0));
+}
+
+struct Wound {
+    albedo: vec3<f32>,
+    rough: f32,
+    gloss: f32,
+    gloss_rough: f32,
+    n: vec3<f32>,
+    coat_n: vec3<f32>,
+    // How much of the blood lying on the skin (the film) still shows here: none down in the hole.
+    film: f32,
+    hit: bool,
+}
+
+// The gunshot wounds round this point of the skin (`id` the newest whose patch it is in): followed in from the eye, and
+// what is met coloured. `m` the skinning's columns, `v` toward the eye (world), `n` the skin's normal (world).
+fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>, v: vec3<f32>, n: vec3<f32>, albedo: vec3<f32>, rough: f32, fine: f32, px: f32) -> Wound {
+    var out: Wound;
+    out.albedo = albedo;
+    out.rough = rough;
+    out.n = n;
+    out.coat_n = n;
+    out.film = 1.0;
+    out.hit = false;
+    // This one and those it overlaps (marks.rs `shot`), as far as they reach.
+    var shots: array<Shot, 3>;
+    var count = 0u;
+    var k = id;
+    var exits = false;
+    for (var j = 0u; j < 4u && k > 0u && count < 3u; j++) {
+        let s = shot(k);
+        if distance(rest, s.at) < s.reach * 1.2 + 0.004 {
+            shots[count] = s;
+            count++;
+            exits = exits || s.kind == EXIT;
+        }
+        k = s.prev;
+    }
+    if count == 0u {
+        return out;
+    }
+    let now = texel(SHOTS, 0u).x;
+    // The eye's ray at rest: each millimetre down into the skin it goes so far across it (not further across than at
+    // seventy degrees off square: a grazing look stays at the lips).
+    let vr = normalize(vec3(dot(m0, v), dot(m1, v), dot(m2, v)));
+    let n0 = shots[0].n;
+    let vn = max(dot(vr, n0), 0.34);
+    let slide = -(vr - n0 * dot(vr, n0)) / vn;
+    var base: array<vec2<f32>, 3>;
+    var stride: array<vec2<f32>, 3>;
+    var level: array<f32, 3>;
+    for (var j = 0u; j < count; j++) {
+        let s = shots[j];
+        let d = (rest - s.at) * 1000.0;
+        base[j] = vec2(dot(d, s.ex), dot(d, s.ey));
+        stride[j] = vec2(dot(slide, s.ex), dot(slide, s.ey));
+        level[j] = blood_level(s, now - s.c.w);
+    }
+    // Down the ray, in steps finer near the skin, to the first place it is at or under what is there (the wounds'
+    // surfaces, the blood's level among them); then that place found closely between the last two steps.
+    let top = select(0.0, -LIPS, exits);
+    var lo = top;
+    var hi = DEEPEST;
+    for (var i = 1; i <= 22; i++) {
+        let t = f32(i) / 22.0;
+        let d = top + (DEEPEST - top) * t * t;
+        var surface = 0.0;
+        for (var j = 0u; j < count; j++) {
+            let h = min(shot_at(shots[j], base[j] + stride[j] * d, fine).x, level[j]);
+            surface = select(surface, h, abs(h) > abs(surface));
+        }
+        if d >= surface {
+            hi = d;
+            break;
+        }
+        lo = d;
+    }
+    for (var i = 0; i < 6; i++) {
+        let d = (lo + hi) * 0.5;
+        var surface = 0.0;
+        for (var j = 0u; j < count; j++) {
+            let h = min(shot_at(shots[j], base[j] + stride[j] * d, fine).x, level[j]);
+            surface = select(surface, h, abs(h) > abs(surface));
+        }
+        if d >= surface {
+            hi = d;
+        } else {
+            lo = d;
+        }
+    }
+    let depth = hi;
+    // Whose wound it is that the ray met.
+    var w = 0u;
+    var most = 0.0;
+    for (var j = 0u; j < count; j++) {
+        let h = min(shot_at(shots[j], base[j] + stride[j] * depth, fine).x, level[j]);
+        if abs(h) > abs(most) {
+            most = h;
+            w = j;
+        }
+    }
+    let s = shots[w];
+    let q = base[w] + stride[w] * depth;
+    let at = shot_at(s, q, fine);
+    let lv = level[w];
+    let age = max(now - s.c.w, 0.0);
+    if at.x == 0.0 && s.kind != EXIT && (s.b.x > 1.2 || s.kind == CHARGE) && at.z > 3.0 {
+        // (Beyond the ring's bruise, and no powder: nothing to do.)
+        return out;
+    }
+    out.hit = true;
+    // The surface's slope there, from the field either side: the walls lean, the light falls down them.
+    let e = max(0.04, px * 0.5);
+    let sx = min(shot_at(s, q + vec2(e, 0.0), fine).x, lv) - min(shot_at(s, q - vec2(e, 0.0), fine).x, lv);
+    let sy = min(shot_at(s, q + vec2(0.0, e), fine).x, lv) - min(shot_at(s, q - vec2(0.0, e), fine).x, lv);
+    var g = vec2(sx, sy) / (2.0 * e);
+    g *= min(1.0, 5.0 / max(length(g), 1e-4));
+    let wex = normalize(m0 * s.ex.x + m1 * s.ex.y + m2 * s.ex.z);
+    let wey = normalize(m0 * s.ey.x + m1 * s.ey.y + m2 * s.ey.z);
+    out.n = normalize(n + wex * g.x + wey * g.y);
+    out.coat_n = out.n;
+
+    // Fresh blood is glossy and red; over a quarter of an hour it dulls and darkens as it clots and dries (the film's
+    // own drying, film.rs, is twenty minutes). The scraped ring dries from moist red-brown to brown, then darker
+    // (DiMaio: brown, then black; over hours).
+    let wet = exp(-age / 900.0);
+    let dried = 1.0 - exp(-age / 1800.0);
+    let h = at.x;
+    let pooled = h > lv + 0.01;
+    // Light reaches only so far down a hole as wide as this one.
+    var open = s.a.x * 1000.0;
+    if s.kind == EXIT {
+        open = max(s.a.w, s.a.y) * 1000.0;
+    }
+    let ao = exp(-max(depth - 0.3, 0.0) / (open * 0.9 + 0.3));
+    var c = albedo;
+    var tissue_rough = 0.32;
+    var coat = 0.0;
+    let fat = mix(vec3(0.82, 0.70, 0.48), vec3(0.93, 0.86, 0.66), smoothstep(0.3, 0.7, select(0.5, at.w, s.kind == EXIT)));
+    let muscle = vec3(0.42, 0.08, 0.065) * (0.7 + 0.5 * mix(0.5, noise2(q * vec2(0.9, 6.0) + s.seed), fine));
+    let dermis = vec3(0.80, 0.60, 0.54);
+    if s.kind != EXIT {
+        let ring = at.z;
+        let d = at.y;
+        // A bruise round the ring, faint (Thali 2002).
+        let bruise = (1.0 - smoothstep(1.0, 3.0, ring)) * 0.4 * select(1.0, 0.0, ring > 8.0);
+        c *= mix(vec3(1.0), vec3(0.86, 0.66, 0.68), bruise);
+        // The scraped ring, mottled; fresh it is moist and shines a little.
+        let scraped = (1.0 - smoothstep(0.85, 1.05, ring)) * step(0.0, d);
+        let raw = mix(vec3(0.60, 0.27, 0.21), vec3(0.36, 0.16, 0.10), dried) * (0.85 + 0.3 * mix(0.5, noise2(q * 3.0 + s.seed), fine));
+        c = mix(c, to_linear(raw), scraped * 0.92);
+        coat = max(coat, scraped * 0.35 * (1.0 - dried));
+        tissue_rough = mix(0.4, 0.75, dried);
+        // Down its wall: the skin's cut edge, then the fat, then muscle, darkening to nothing; blood over all of it.
+        var wall = mix(dermis, fat, smoothstep(1.8, 2.6, h));
+        wall = mix(wall, to_linear(muscle) * 2.2, smoothstep(5.0, 7.0, h));
+        wall = blood_over(to_linear(wall), 0.06 + 0.05 * smoothstep(0.5, 3.0, h), wet);
+        if s.kind == CHARGE {
+            // The crater's floor: fat and muscle torn together.
+            wall = blood_over(to_linear(mix(fat, muscle, smoothstep(0.35, 0.6, noise2(q * 0.5 + s.seed)))), 0.08, wet);
+        }
+        let down = smoothstep(0.25, 0.7, h);
+        c = mix(c, wall, down);
+        coat = max(coat, down * 0.7);
+        c = mix(c, to_linear(vec3(0.30, 0.04, 0.035)), at.w);
+        // Close, the soot and burnt powder blown out of the muzzle with the bullet (wounds.md 4.2): soot dense and black
+        // within a centimetre or two, wider, greyer and in petals further off, gone by 20 to 30 cm; powder grains driven
+        // into the skin as reddish-brown pinpoint scrapes, in a wider and sparser pattern the further, to about 60 cm
+        // from a handgun. A rifle's go about twice as far.
+        let range = s.b.x;
+        let far = select(1.0, 2.0, s.b.y > 0.5);
+        if range < 0.6 * far && s.kind != CHARGE {
+            let rr = length(q);
+            let mm = range * 1000.0 / far;
+            let th = atan2(q.y, q.x);
+            let soot = (1.0 - smoothstep(20.0, 300.0, mm)) * exp(-max(rr - s.a.x * 1000.0, 0.0) / (1.2 + mm * 0.07))
+                * (0.75 + 0.25 * cos(th * 6.0 + s.seed)) * (0.7 + 0.6 * noise2(q * 0.25 + s.seed));
+            c = mix(c, vec3(0.022, 0.02, 0.018), clamp(soot, 0.0, 1.0) * 0.92 * (1.0 - down * 0.5));
+            let spread = 6.0 + mm * 0.15;
+            let dense = 0.5 * pow(1.0 - mm / 600.0, 1.5) * exp(-(rr * rr) / (spread * spread) * 1.5);
+            let cell = floor(q / 0.7);
+            let pick = hash2(cell + s.seed);
+            let mid = (cell + 0.2 + 0.6 * vec2(hash2(cell + 1.3), hash2(cell + 2.7))) * 0.7;
+            let size = 0.09 + 0.16 * hash2(cell + 4.1);
+            let grain = select(0.0, 1.0 - smoothstep(size * 0.6, size, length(q - mid)), pick < dense * 0.49);
+            // (Too small to see one at a time: their colour spread over the skin as much as they cover of it.)
+            let tattoo = mix(dense * 0.05, grain, fine);
+            c = mix(c, to_linear(mix(vec3(0.55, 0.22, 0.12), vec3(0.22, 0.07, 0.04), smoothstep(size, 0.0, length(q - mid)) * fine)), clamp(tattoo, 0.0, 1.0) * 0.9);
+            // Pressed to the skin: its edge seared black.
+            c = mix(c, vec3(0.02, 0.015, 0.012), (1.0 - smoothstep(0.005, 0.012, range)) * (1.0 - smoothstep(0.0, 1.5, d)) * 0.9);
+        }
+    } else {
+        let inside = at.y;
+        // The lips turned out: the skin bruised red along them, blood smeared at the edge.
+        let lip = 1.5 + 0.08 * s.a.z * 1000.0;
+        let t = clamp(1.0 + inside / lip, 0.0, 1.0);
+        c = mix(c, c * vec3(0.92, 0.62, 0.6), t * 0.65);
+        c = blood_over(c, 0.05 * t * t * t, wet);
+        // The skin's cut edge seen over the lip (the turned-out dermis, pale), then the fat bulging between, glistening and
+        // filmed with blood, red muscle where it is torn deeper, and the track black-red.
+        let edge = smoothstep(-0.1, 0.12, inside);
+        c = mix(c, to_linear(dermis) * 0.85, edge);
+        var deep = mix(fat, muscle, at.z);
+        deep = blood_over(to_linear(deep), 0.025 + 0.06 * (1.0 - at.w) + 0.1 * at.z, wet);
+        let thick = max(s.a.x * 1000.0, 1.5);
+        deep = mix(deep, vec3(0.03, 0.002, 0.002), smoothstep(thick + 4.0, thick + 9.0, h));
+        c = mix(c, deep, smoothstep(0.25, 0.5, inside));
+        coat = max(coat, edge * 0.8);
+    }
+    // Blood standing in it: level, dark red where it is deep, glossy.
+    if pooled {
+        c = blood_over(c, min(h - lv, 6.0), wet);
+        coat = 1.0;
+        tissue_rough = 0.15;
+        out.coat_n = n;
+        out.n = n;
+    }
+    out.albedo = c * mix(1.0, ao, smoothstep(0.0, 0.4, depth));
+    out.rough = mix(rough, tissue_rough, smoothstep(0.0, 0.3, max(depth, select(0.0, 1.0, s.kind != EXIT && at.z < 1.0))));
+    out.gloss = coat * mix(0.25, 1.0, wet) * sqrt(ao);
+    out.gloss_rough = mix(0.35, 0.04, wet);
+    out.film = 1.0 - smoothstep(0.2, 0.5, depth);
+    return out;
 }
 
 // --- what is not drawn (hider.ts) -------------------------------------------------------------------------------------
@@ -462,6 +892,26 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
             rough = mix(rough, 0.2, b.a);
         }
 
+        // Gunshot wounds (marks.rs), where the sheet's alpha says one is near: its number, read exactly.
+        var keep_film = 1.0;
+        if gm.a > 0.0 {
+            let id = u32(textureLoad(wounds, vec2<i32>(clamp(uv, vec2(0.0), vec2(0.9999)) * 2048.0), 0).a * 255.0 + 0.5);
+            if id > 0u {
+                let px = length(fwidth(rest)) * 1000.0;
+                let fine = clamp(1.6 - px * 2.0, 0.0, 1.0);
+                let g = gunshot(id, rest, in.m0, in.m1, in.m2, pbr.V, n, albedo, rough, fine, px);
+                if g.hit {
+                    albedo = g.albedo;
+                    rough = g.rough;
+                    n = g.n;
+                    gloss = g.gloss;
+                    gloss_rough = g.gloss_rough;
+                    film_n = g.coat_n;
+                    keep_film = g.film;
+                }
+            }
+        }
+
         // The wounds (marks.ts Gore). The skin is never cut away: where the sheet says the flesh is open, what is there
         // is drawn: the skin's cut edge, yellow fat, the white sheath, red muscle going dark with depth, and blood in the
         // bottom; and the surface's normal bends down the walls, so light falls into a wound, its far wall lit and its
@@ -516,7 +966,7 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
         // changes; it lets red through and stops green and blue, so a smear is bright red and a thick streak nearly
         // black-red; glossy while wet, brown and dull as it dries.
         let fm = textureSampleLevel(film, sheet_sampler, uv, 0.0);
-        let fmm = fm.r * MOST_MM;
+        let fmm = fm.r * MOST_MM * keep_film;
         if fmm > 0.003 {
             let fx = textureSampleLevel(film, sheet_sampler, uv + vec2(TEXEL, 0.0), 0.0).r - textureSampleLevel(film, sheet_sampler, uv - vec2(TEXEL, 0.0), 0.0).r;
             let fy = textureSampleLevel(film, sheet_sampler, uv + vec2(0.0, TEXEL), 0.0).r - textureSampleLevel(film, sheet_sampler, uv - vec2(0.0, TEXEL), 0.0).r;

@@ -167,6 +167,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "wounds" => s = wounds(),
         // The look of hurt on the skin (port/skin): skin.rs.
         "skin" => s = crate::skin::scenario(),
+        // Gunshot wounds, in and out, close up (port/wound): skin.rs.
+        "gunshot" => s = crate::skin::gunshot(),
         _ => return body(name),
     }
     Some(s)
