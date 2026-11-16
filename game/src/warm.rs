@@ -69,7 +69,43 @@ struct Screen;
 
 // Drawn whether in view or not, for the warm-up only.
 #[derive(Component)]
-struct Unculled;
+struct Unculled {
+    culled: bool,
+    hidden: bool,
+}
+
+// Every mesh drawn at once, whether in view or not and whether hidden or not (a pipeline is made for what is drawn in
+// view: a prop first seen from the far side of the hall, a muzzle's flame or a flash's card first shown, would be made
+// then); `hide_again` puts each back as it was.
+fn show_all(w: &mut World) {
+    let all: Vec<(Entity, bool, bool)> = w
+        .query_filtered::<(Entity, Has<NoFrustumCulling>, &Visibility), With<Mesh3d>>()
+        .iter(w)
+        .map(|(e, unculled, v)| (e, !unculled, *v == Visibility::Hidden))
+        .filter(|&(_, culled, hidden)| culled || hidden)
+        .collect();
+    for (e, culled, hidden) in all {
+        let mut e = w.entity_mut(e);
+        e.insert((NoFrustumCulling, Unculled { culled, hidden }));
+        if hidden {
+            e.insert(Visibility::Visible);
+        }
+    }
+}
+
+fn hide_again(w: &mut World) {
+    let all: Vec<(Entity, bool, bool)> = w.query::<(Entity, &Unculled)>().iter(w).map(|(e, u)| (e, u.culled, u.hidden)).collect();
+    for (e, culled, hidden) in all {
+        let mut e = w.entity_mut(e);
+        e.remove::<Unculled>();
+        if culled {
+            e.remove::<NoFrustumCulling>();
+        }
+        if hidden {
+            e.insert(Visibility::Hidden);
+        }
+    }
+}
 
 // A frame of the warm-up, with the world in hand.
 fn drive(world: &mut World) {
@@ -229,18 +265,8 @@ pub fn release(w: &mut World, button: u8) {
 fn rehearse(app: &mut App) {
     // Everything in the hall drawn at once, whether in view or not (a pipeline is made for what is drawn in view: a prop
     // first seen from the far side of the hall would be made then), and then culled again.
-    add(app, "the hall", 3, |w| {
-        let all: Vec<Entity> = w.query_filtered::<Entity, (With<Mesh3d>, Without<NoFrustumCulling>)>().iter(w).collect();
-        for e in all {
-            w.entity_mut(e).insert((NoFrustumCulling, Unculled));
-        }
-    });
-    add(app, "the hall", 2, |w| {
-        let all: Vec<Entity> = w.query_filtered::<Entity, With<Unculled>>().iter(w).collect();
-        for e in all {
-            w.entity_mut(e).remove::<(NoFrustumCulling, Unculled)>();
-        }
-    });
+    add(app, "the hall", 3, show_all);
+    add(app, "the hall", 2, hide_again);
     // Everything that can be held, in the hand (each its own models and materials, drawn over the room: held.wesl).
     for a in crate::weapons::ARMS.iter().filter(|a| !a.key.is_empty()) {
         let key = a.key;
@@ -338,7 +364,8 @@ fn rehearse(app: &mut App) {
             crate::dismember::sever(w, who, crate::dismember::Limb::Shin, "R", None, None, crate::dismember::How::Shot);
         }
     });
-    add(app, "the belly", 6, |w| {
+    // (long enough for what comes out to come out, in view)
+    add(app, "the belly", 180, |w| {
         if let Some((who, at)) = aim(w, 2, "belly", 1.0) {
             crate::viscera::burst(w, who, at + Vec3::Z * 0.3, 1e4);
         }
@@ -348,6 +375,10 @@ fn rehearse(app: &mut App) {
             crate::dismember::sever(w, who, crate::dismember::Limb::Head, "", None, None, crate::dismember::How::Blade);
         }
     });
+    // Whatever the rehearsal made and keeps hidden till it is wanted (a pool of sparks, smoke, a flash's card), and
+    // whatever it left out of view, drawn once.
+    add(app, "the rest", 3, show_all);
+    add(app, "the rest", 2, hide_again);
     // Seen through (X), and back.
     add(app, "the insides", 3, |w| {
         aim(w, 1, "chest", 2.6);
