@@ -193,6 +193,10 @@ fn clothe(
     mut meshes: ResMut<Assets<Mesh>>,
     mut under_meshes: Local<std::collections::HashMap<(String, usize), Handle<Mesh>>>,
 ) {
+    // (SKIN_PLAIN=1: the people as phase 1 drew them, for measuring what this costs.)
+    if std::env::var_os("SKIN_PLAIN").is_some() {
+        return;
+    }
     for (e, person) in &people {
         let body = &person.body;
         let wounds = images.add(sheet(TextureFormat::Rgba8Unorm));

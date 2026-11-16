@@ -457,8 +457,8 @@ fn make_beads(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mate
         mesh: meshes.add(Sphere::new(0.5).mesh().uv(8, 6)),
         // Blood in the air and on skin: a deep red that shines (blood.ts).
         material: materials.add(StandardMaterial {
-            base_color: Color::linear_rgb(0.075, 0.004, 0.0035),
-            perceptual_roughness: 0.08,
+            base_color: Color::linear_rgb(0.16, 0.007, 0.006),
+            perceptual_roughness: 0.06,
             reflectance: 0.35,
             ..default()
         }),
