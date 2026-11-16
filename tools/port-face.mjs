@@ -95,6 +95,8 @@ try {
         const skin = n.surface(chin.add(fwd.scale(0.3)), fwd.scale(-1), 0.6).find((h) => h.kind === 'skin');
         if (skin) W.blow(n, skin.point, fwd.scale(-1), 0.79, speed, 'bat');
       }
+      // (as the port's check: a jaw the bat would not break is hung as one broken on both sides)
+      if (!(n.bones.jawHangs > 0)) n.bones.jawHangs = 18;
       const T = n.bones.teeth, front = T.teeth.filter((t) => t.front && t.name.includes("incisor")).map((t) => T._where(t));
       if (front.length) { const c = front.reduce((a, b) => a.add(b)).scale(1 / front.length); T.blow(c.add(fwd.scale(0.01)), fwd.scale(-1), 6000, 0.02, true); }
       console.log('hood: jaw hangs', n.bones.jawHangs, T.teeth.filter((t) => t.state !== "whole").map((t) => t.name + ' ' + t.state).join(', '));

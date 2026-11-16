@@ -1168,6 +1168,12 @@ pub fn scenario() -> Vec<Step> {
             let c = front.iter().sum::<Vec3>() / front.len() as f32;
             npc.teeth().blow(c + ahead * 0.01, -ahead, 6000.0, 0.02, true);
         }
+        // (A bat that will not break this jaw at these speeds leaves it whole: the look of one broken is shown all the
+        // same, hanging as bones.rs lets a jaw broken on both sides hang, and said so in the log.)
+        if npc.hurt.bones.jaw_hangs == 0.0 {
+            npc.hurt.bones.jaw_hangs = 18.0;
+            info!("hood: the jaw held; hung at 18 degrees as if broken on both sides");
+        }
         let hangs = npc.hurt.bones.jaw_hangs;
         let gone: Vec<String> = npc.hurt.teeth.teeth.iter().filter(|t| t.state != crate::teeth::State::Whole).map(|t| format!("{} {:?}", t.name, t.state)).collect();
         info!("hood: jaw hangs {hangs}, teeth {gone:?}");

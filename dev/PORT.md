@@ -630,7 +630,8 @@ bone's chain with medicine's whole skeleton (`Npc::bone_worlds`) on a head cut o
 each cry (scream, yell, groan, weeping, gasp, cough: said from the step and played and mouthed as sound.rs would), in
 pain, mid-blink, looking at the player from the side; a pellet in the young man's right eye (1.5 s and 20 s on); the old
 man dead (his last breath, and half a minute on: lids part open, jaw dropped, pupils wide); a bat into the hooded man's
-chin and his front teeth knocked out; the groundskeeper's head cut off (half a second and eight seconds on). Each
+chin (the jaw hung as one broken on both sides if the blows did not break it: the log says which) and his front teeth
+knocked out; the groundskeeper's head cut off (half a second and eight seconds on). Each
 picture's face (action units, jaw, blink, pupil, gaze) goes into the log. Each cry is caught where its take is loud with
 scenario.rs's `Step::Until(f, most)` (a frame at a time until `f` says so, at most `most` frames: for a moment that
 cannot be counted in advance).
