@@ -744,25 +744,37 @@ fn aim(rig: &Rig, head_bone: Affine3A, at: Vec3) -> [[f32; 2]; 2] {
 }
 
 // Bone `i`'s place from the body at rest to the world, from its own chain up to the root (the whole skeleton's would be
-// ten times the work), as npc.rs `bone_worlds` works every bone out.
+// ten times the work), as npc.rs `bone_worlds` and person.rs `absolute` work every bone out: up to a bone placed by hand
+// (`Person::placed`: a head cut off is where its own body is), or the root.
 pub fn bone_world(person: &Person, root: &Transform, i: usize) -> Affine3A {
     let bones = &person.body.bones;
     let mut chain = Vec::with_capacity(12);
+    let mut start = None;
     let mut b = Some(i);
     while let Some(k) = b {
+        if let Some(&(_, q, at)) = person.placed.iter().find(|p| p.0 == k) {
+            start = Some((q, at));
+            break;
+        }
         chain.push(k);
         b = bones[k].parent;
     }
-    let (mut r, mut at) = (Quat::IDENTITY, Vec3::ZERO);
-    for (n, &k) in chain.iter().rev().enumerate() {
-        if n == 0 {
-            r = person.posed.local[k];
-            at = bones[k].head;
-        } else {
-            let p = bones[k].parent.unwrap();
-            at += r * (bones[k].head - bones[p].head);
-            r *= person.posed.local[k];
+    let (mut r, mut at, mut last) = match (start, b) {
+        (Some((q, at)), Some(k)) => (q, at, Some(k)),
+        _ => (Quat::IDENTITY, Vec3::ZERO, None),
+    };
+    for &k in chain.iter().rev() {
+        match last {
+            None => {
+                r = person.posed.local[k];
+                at = bones[k].head;
+            }
+            Some(p) => {
+                at += r * (bones[k].head - bones[p].head);
+                r *= person.posed.local[k];
+            }
         }
+        last = Some(k);
     }
     let pelvis = person.body.bone("root").head;
     root.compute_affine()
@@ -1163,5 +1175,29 @@ pub fn scenario() -> Vec<Step> {
     s.push(Step::Wait(60));
     s.extend(close("face_jaw_teeth", "hood", 0.0, 0.45));
     s.extend(close("face_jaw_teeth_side", "hood", 30.0, 0.45));
+    // The groundskeeper's head cut off (dismember.rs: a piece of its own, placed by hand): the face goes on on it, its
+    // bones worked out from where the piece is (each bone's chain checked against medicine's whole skeleton), until the
+    // death that follows.
+    s.push(Step::Do(Box::new(move |w: &mut World| {
+        let e = who(w, g);
+        let neck = crate::npc::with(w, e, |npc| npc.world_of(npc.body().bones[npc.bone_index("neck02")].head, npc.bone_index("neck02"), None).0);
+        crate::dismember::sever(w, e, crate::dismember::Limb::Head, "", neck, Some(Vec3::X), crate::dismember::How::Blade);
+    })));
+    for (name, wait) in [("face_head_off", 30), ("face_head_off_later", 60 * 8)] {
+        s.push(Step::Wait(wait));
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            let e = who(w, g);
+            let ours: Vec<Affine3A> = {
+                let mut q = w.query::<(&Person, &Transform)>();
+                let (p, root) = q.get(w, e).unwrap();
+                (0..p.body.bones.len()).map(|i| bone_world(p, root, i)).collect()
+            };
+            let theirs = crate::npc::with(w, e, |npc| npc.bone_worlds()).unwrap();
+            let off = ours.iter().zip(&theirs).map(|(a, b)| (a.translation - b.translation).length() + (a.matrix3 - b.matrix3).abs().to_cols_array().iter().sum::<f32>()).fold(0.0, f32::max);
+            log(w, json!({ "event": "bone chains against the skeleton", "at": name, "worst": off }));
+            assert!(off < 1e-3, "face.rs bone_world off the skeleton by {off}");
+        })));
+        s.extend(close(name, g, 0.0, 0.4));
+    }
     s
 }

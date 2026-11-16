@@ -306,6 +306,29 @@ fn rehearse(app: &mut App) {
         });
         let _ = at;
     });
+    // The body opened (port/cut): a forearm cut off by a blade and a shin by a shot (the cut faces, the caps, the
+    // flesh round them), a belly torn open by a blast (the wall's cut faces and the organs out), a head off (a face on a
+    // piece of its own); each seen.
+    add(app, "limbs off", 6, |w| {
+        if let Some((who, _)) = aim(w, 0, "forearmL", 1.4) {
+            crate::dismember::sever(w, who, crate::dismember::Limb::Forearm, "L", None, None, crate::dismember::How::Blade);
+        }
+    });
+    add(app, "limbs off", 6, |w| {
+        if let Some((who, _)) = aim(w, 1, "shinR", 1.6) {
+            crate::dismember::sever(w, who, crate::dismember::Limb::Shin, "R", None, None, crate::dismember::How::Shot);
+        }
+    });
+    add(app, "the belly", 6, |w| {
+        if let Some((who, at)) = aim(w, 2, "belly", 1.0) {
+            crate::viscera::burst(w, who, at + Vec3::Z * 0.3, 1e4);
+        }
+    });
+    add(app, "the head", 6, |w| {
+        if let Some((who, _)) = aim(w, 3, "head", 1.0) {
+            crate::dismember::sever(w, who, crate::dismember::Limb::Head, "", None, None, crate::dismember::How::Blade);
+        }
+    });
     // Seen through (X), and back.
     add(app, "the insides", 3, |w| {
         aim(w, 1, "chest", 2.6);
