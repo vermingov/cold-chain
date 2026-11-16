@@ -23,10 +23,15 @@ try {
       let sim = 0; performance.now = () => sim * 1000;
       window.__M = { S, W, D, tick: (dt) => { sim += dt; S.update(dt); } };
       return true; })()`);
+    // The people held as they stand, as the port's check holds them (its ragdolls' bodies fixed): the TS's own stepping
+    // moves the ragdolls even with the render loop stopped.
+    await rig.eval(`(() => { for (const n of __M.S.world.npcs) for (const s of n.ragdoll.segments) s.body.setMotionType(BABYLON.PhysicsMotionType.STATIC); return true; })()`);
     // A few frames for everything to be made and drawn once.
     await rig.eval(`(() => { for (let i = 0; i < 30; i++) __M.tick(1 / 60); __M.S.scene.render(); return true; })()`);
     const views = await rig.eval(`(() => {
-      const { S, W, D } = __M, V = BABYLON.Vector3, npcs = S.world.npcs, views = [];
+      const { S, W, D } = __M, V = BABYLON.Vector3, views = [];
+      // (by body, as the port's line-up names them)
+      const npcs = ['oldman', 'sexton', 'buyer', 'hood'].map((b) => S.world.npcs.find((n) => n.person.bodyName.split('+')[0] === b));
       const near = (npc, bone, off) => { const b = npc.person.byName[bone]; return npc.worldOf(b.head, b).at.add(V.FromArray(off)); };
       const view = (name, k, c, d) => views.push({ name, k, rest: c.rest.clone(), owner: c.owner, n: c.restNormal.clone(), d });
       const skins = (npc, at, dir, far) => npc.surface(at, dir, far).filter((h) => h.kind === 'skin');
@@ -66,11 +71,17 @@ try {
     const photograph = async (t) => {
         for (const [i, name] of views.entries()) {
             await rig.eval(`(() => {
-              const { S } = __M, V = BABYLON.Vector3, v = window.__views[${i}], npc = S.world.npcs[v.k];
+              const { S } = __M, V = BABYLON.Vector3, v = window.__views[${i}], npc = ['oldman', 'sexton', 'buyer', 'hood'].map((b) => S.world.npcs.find((n) => n.person.bodyName.split('+')[0] === b))[v.k];
               const w = npc.worldOf(v.rest, v.owner, v.n);
               const eye = w.at.add(w.normal.scale(v.d)).add(new V(0, 0.02, 0));
               S.player.spawn(eye.x, eye.z, { toward: w.at.asArray(), eye: eye.y });
-              for (let i = 0; i < 3; i++) { __M.tick(1 / 60); S.scene.render(); }
+              for (let i = 0; i < 3; i++) __M.tick(1 / 60);
+              {
+                // (nothing in the player's hands over the picture: the first-person arms and what they hold hang off the camera)
+                const cam = S.scene.activeCamera;
+                for (const m of S.scene.meshes) if (cam && m.isDescendantOf(cam)) m.isVisible = false;
+                S.scene.render();
+              }
               return true; })()`);
             await rig.shot(`${OUT}/${name}_${t}.png`);
         }

@@ -739,7 +739,7 @@ fn paint_all(painting: &Painting, painter: &mut Painter, marks: &RenderPipeline,
     if !painting.stamps.is_empty() {
         painter.buffer.clear();
         painter.buffer.values_mut().extend_from_slice(&painting.stamps);
-        painter.buffer.write_buffer(ctx.render_device(), &queue);
+        painter.buffer.write_buffer(ctx.render_device(), queue);
     }
     let Some(buffer) = painter.buffer.buffer().cloned() else {
         // (Nothing stamped yet anywhere: only drying.)
@@ -902,7 +902,7 @@ fn hurt_them(w: &mut World) {
         // (Where it goes in and comes out: the first skin it crosses, and the last within a quarter of a metre of it.)
         let skins: Vec<Crossing> = npc.surface(at - side * 1.5, side, 3.0, false).into_iter().filter(|c| c.kind == Surface::Skin).collect();
         if let Some(first) = skins.first().cloned() {
-            if let Some(last) = skins.iter().filter(|c| c.t < first.t + 0.25).last().filter(|c| c.t > first.t) {
+            if let Some(last) = skins.iter().rfind(|c| c.t < first.t + 0.25).filter(|c| c.t > first.t) {
                 views.push(("rifle_out".to_string(), who, last.clone(), 0.3));
             }
             views.push(("rifle_in".to_string(), who, first, 0.3));
