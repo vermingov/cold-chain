@@ -701,7 +701,10 @@ weapon at the line-up as a player uses it, a grenade; then an eye shot, blood le
 The warm-up rehearses the same fight on fresh people (as the TS's rehearsed its shots): what found the gaps was the fight
 before it was rehearsed. Each gap was a different kind of thing, not a different place: the muzzle's sparks (a gun fired
 before it was up in view), a flash's card, the bowel a shotgun lets out over seconds (viscera.rs's ropes), an arm taken
-off by a sword's own cut (flesh.rs). Something new that only a rare event draws still needs its step here.
+off by a sword's own cut (flesh.rs: its caps are drawn plain while their faces are painted on another thread, then
+painted, so the pieces are drawn once more before the room is reset under them). Something new that only a rare event
+draws still needs its step here. Measured (2026-11-16, bevy-port at 7b746a3 with port/face, the scenario's synchronous
+compilation, lavapipe): 153 pipelines after the warm-up, 0 made during the fight, after each weapon and at the end.
 
 ### Building beside other worktrees (found by port/face)
 Worktrees sharing one CARGO_TARGET_DIR share the crate's fingerprint (the package is the same, only its path differs), so
