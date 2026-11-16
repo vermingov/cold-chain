@@ -15,7 +15,12 @@ const shot = async (name) => { await frames(4); await rig.shot(`${OUT}/${name}.p
 const all = part === 'all';
 const want = (p) => all || part.split(',').includes(p);
 try {
-    await rig.until('window.__sandbox && window.__sandbox.world.npcs.length === 4', 600000);
+    // (Booting on a busy machine takes minutes: said every 30 s, so a stall shows.)
+    for (let k = 0; !(await rig.eval('!!(window.__sandbox && window.__sandbox.world.npcs.length === 4)')); k++) {
+        if (k % 30 === 0) console.log('booting', await rig.eval('JSON.stringify({ s: !!window.__sandbox, n: window.__sandbox?.world?.npcs?.length, f: window.__sandbox?.world?.frame, ready: document.readyState })'));
+        if (k > 1200) throw new Error('never booted');
+        await rig.wait(1000);
+    }
     await rig.eval('document.getElementById("start")?.remove()');
     console.log('booted', await frame());
     await rig.until('window.__sandbox.world.frame > 90', 900000);
