@@ -338,3 +338,76 @@ bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the break
 `stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
 `jitter` of its situation as the TS's jitter.mjs measured it, and Rapier's time a step), `keys` (K and N), `joints` (every
 joint's angles and aims, standing).
+
+## Skin (phase 3, branch port/skin)
+
+What hurt looks like on the skin and clothes: marks.rs, film.rs, runs.rs, hider.rs, bruise.rs's drawing half,
+dressing.rs's look, and skin.rs, which owns the person's materials and the passes that paint them (skin.wesl,
+paint.wesl). Driven only by medicine's `Hurt::happened`.
+
+### A person's look
+skin.rs `clothe` gives everyone with a `Hurt` a `skin::Skin` (and a `runs::Runs`): their skin, the skin under their
+clothes (person.rs leaves it out; it is put in here, drawn only through holes), clothes, hair and brows get materials of
+their own, `skin::Flesh` (StandardMaterial with skin.wesl over it; `Wounded::info` says which kind of part it is: SKIN,
+UNDER, CLOTH, CARRIED, GAUZE), which read three textures of that person's:
+- `wounds` (2048², RGBA8): red how deep the flesh is open (to 4 cm), green the blood in it, blue a slow bullet's scraped
+  ring. marks.rs paints it; skin.wesl draws it as marks.ts's Gore did (cut edge, fat lobules, sheath, muscle, blood in
+  the bottom, the normal bent down the walls).
+- `film` (2048², RG16F): red the blood lying on the skin (to 0.6 mm), green how wet. film.rs and runs.rs paint it;
+  skin.wesl draws fluid.ts's bloodOver (absorption per mm, fresh and dried) and, while wet, a clear wet layer over the
+  skin (Bevy's clearcoat with the film's own normal, so its edges catch the light).
+- `state` (1024 wide, RGBA32F, nearest): a table. Row 0 the clock, the recent blows' shapes (bruise.ts records) and the
+  counts; row 1 the holes and slits in the clothes, row 2 the openings torn in the skin, row 3 the windows through the
+  clothes (hider.rs, rest space); rows 8 on three texels per corner of the body (bruise tint, shift, tilt) and past the
+  body's corners the dressings' rider slots. bruise.rs's changes are copied in each frame (`Bruise::changed`); only the
+  rows that changed are written to the card.
+
+### The passes (GPU, render world)
+Nothing is painted on the CPU and nothing is uploaded by tiles (the TS's 170-220 ms stalls). A frame's marks are stamps
+(skin.rs `Stamp`: a capsule, the entry's gradient, a soft disc, a blade's lens, an uneven blot, a radial fade; paint.wesl
+draws each shape in its fragment shader). In the RenderGraph's Begin set, before the cameras: for each person with
+anything this frame, one instanced draw into `wounds` and one into `film`, all of that frame's stamps, blended by Max
+(the canvas's 'lighten'); the film dried by a full-sheet pass that scales its wetness (blend constant), every 8 s while
+anything on it is drying (20 minutes after the last blood); the table's changed rows written with `write_texture`. The
+stamp buffer and all the lists are reused; nothing is allocated per frame once they have grown. `SKIN_TIMES=1` adds
+Bevy's render diagnostics and times the painting (`render/skin_paint/elapsed_gpu`).
+
+### What draws what (from `Happened`)
+`Wound` (skin: entry or exit in the depth sheet; cloth: a frayed hole and a window onto the skin under it), `Hole`
+(the scraped ring), `Stab` (the blade's slit; the clothes slit, a window), `Tear` (the skin opened along each split, the
+body's wall seen from inside through it, the lips turned out: marks.lip, by ray onto the skin round it), `Welling`
+(a blot and a run), `Runs` (runs.rs, or into the clothes), `Blot`, `Slit` (new: a stretch of a blade's cut, from
+`Npc::slash` in marks.rs, which weapons.rs calls with the crossings, as npc.ts slash; and skin split by a blow).
+Not drawn here: `Spatter`, `Spray`, `Stream`, `Soak` (blood.rs, soak.rs: port/blood), `Edge`, `Charge`, `Bled`,
+`Drawn`, `Through`, `Tooth`, `Tongue` (port/cut and the face).
+
+### For the others
+- port/blood: runs.rs sends `runs::Drip { at, ml }` (a drop let go from the skin), `runs::Pooled { at, ml }` (reached the
+  floor) and `runs::Soaked { person, rest, ml }` (into the clothes); blood landing on a person goes onto their skin with
+  `Skin::blot` and `Runs::start` (the TS's blood.ts did film.blot and runs.start). Cloth soak shading belongs in
+  skin.wesl's CLOTH branch: ask for a binding (a 3D texture) on `Wounded` rather than adding a material.
+- port/cut: `Skin::rim` (marks.rim) is there for dismember's cut edges; the hider's cuts (a limb cut off: the plane, which
+  side each mesh keeps) go in the table's row 4 with a branch in skin.wesl. Call npc.ts's swung/slashed at the top of
+  `Npc::slash`.
+- port/hands: weapons.rs calls `npc.slash_through(&points, depth, sweep)` once a swing is through (the points where the
+  blade went into the skin, laid back on the skin at rest by marks.rs); `npc.slash(&crossings, ..)` is the TS's own.
+
+### The check
+`cargo run -- --scenario skin --out <dir>` (skin.rs `scenario`): the people held still (their ragdolls fixed, as the TS
+check steps no physics), then a pistol in the young man's neck and a knife across his cheek, a rifle through the old
+man's face from the side, a knife in the groundskeeper's belly through his shirt and a punch to his eye, a pistol in the
+hooded man's forearm bandaged at once and a bat to his cheekbone. Each wound photographed close up at 0, 5, 30 and 120
+s (the cameras off in between: two minutes go by in about as long). tools/port-skin.mjs takes the same pictures in the
+TS game (render loop stopped, S.update stepped by hand, its ragdolls made static). Its pictures still show the
+first-person arms in a few views (they do not hang off the camera there); the soaked clothes in them are soak.ts's
+(port/blood).
+
+### What it costs
+Measured on lavapipe (software Vulkan, so only the proportions mean anything), four people hurt, `SKIN_TIMES=1`:
+the painting pass 0.2 to 0.7 ms a frame that has marks (a drying frame, the whole 2048² film scaled, about 5 ms on
+lavapipe: a few hundredths of a millisecond on a desktop card, once every 8 s a person while their film dries); the
+main pass with the person's materials against plain StandardMaterial (`SKIN_PLAIN=1`) was within the noise of the
+shared machine (150 to 540 ms a frame either way). The skin's fragment shader adds two texture reads where nothing is
+painted, five more for each of the wound and film sheets where something is, and loops over the person's holes (up to
+64), windows (64) and blow records (16) while they have any; the vertex shader three table reads a corner. CPU: the
+runs step 30 times a second (a few triangle tests a run), the bruise rows copied where they changed.

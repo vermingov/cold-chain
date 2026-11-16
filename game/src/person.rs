@@ -752,7 +752,7 @@ impl People {
     }
 }
 
-fn part_mesh(body: &Body, p: &Part) -> Mesh {
+pub fn part_mesh(body: &Body, p: &Part) -> Mesh {
     let range = p.vertex_start..p.vertex_start + p.vertex_count;
     let start = p.vertex_start as u32;
     let index: Vec<u32> = body.index[p.index_start..p.index_start + p.index_count].iter().map(|&i| i - start).collect();

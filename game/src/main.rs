@@ -18,10 +18,13 @@ mod dressing;
 mod fist;
 mod eyes;
 mod face;
+mod film;
 mod graphics;
+mod hider;
 mod hands;
 mod hud;
 mod map;
+mod marks;
 mod models;
 mod muzzle;
 mod motor;
@@ -33,8 +36,10 @@ mod poses;
 mod profiler;
 mod ragdoll;
 mod rng;
+mod runs;
 mod sandbox;
 mod scenario;
+mod skin;
 mod solids;
 mod sound;
 mod surfaces;
@@ -149,6 +154,9 @@ fn main() -> AppExit {
     .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin))
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
     .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
+    // The look of hurt on the skin: wounds, blood on and running down it, bruising, holes in the clothes (phase 3,
+    // port/skin).
+    .add_plugins((skin::plugin, runs::plugin))
     // The face, the eyes and the mouth (phase 3, port/face).
     .add_plugins((face::plugin, eyes::plugin, teeth::plugin, throat::plugin));
     // Every pipeline made behind a loading screen before play (warm.rs): in the game, and in the scenario that checks it.
