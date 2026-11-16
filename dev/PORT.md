@@ -389,7 +389,8 @@ Not drawn here: `Spatter`, `Spray`, `Stream`, `Soak` (blood.rs, soak.rs: port/bl
 - port/cut: `Skin::rim` (marks.rim) is there for dismember's cut edges; the hider's cuts (a limb cut off: the plane, which
   side each mesh keeps) go in the table's row 4 with a branch in skin.wesl. Call npc.ts's swung/slashed at the top of
   `Npc::slash`.
-- port/hands: `npc.slash(&hits, arm.cut, sweep)` for a blade drawn across; nothing else needed for marks.
+- port/hands: weapons.rs calls `npc.slash_through(&points, depth, sweep)` once a swing is through (the points where the
+  blade went into the skin, laid back on the skin at rest by marks.rs); `npc.slash(&crossings, ..)` is the TS's own.
 
 ### The check
 `cargo run -- --scenario skin --out <dir>` (skin.rs `scenario`): the people held still (their ragdolls fixed, as the TS
@@ -397,4 +398,16 @@ check steps no physics), then a pistol in the young man's neck and a knife acros
 man's face from the side, a knife in the groundskeeper's belly through his shirt and a punch to his eye, a pistol in the
 hooded man's forearm bandaged at once and a bat to his cheekbone. Each wound photographed close up at 0, 5, 30 and 120
 s (the cameras off in between: two minutes go by in about as long). tools/port-skin.mjs takes the same pictures in the
-TS game (render loop stopped, S.update stepped by hand).
+TS game (render loop stopped, S.update stepped by hand, its ragdolls made static). Its pictures still show the
+first-person arms in a few views (they do not hang off the camera there); the soaked clothes in them are soak.ts's
+(port/blood).
+
+### What it costs
+Measured on lavapipe (software Vulkan, so only the proportions mean anything), four people hurt, `SKIN_TIMES=1`:
+the painting pass 0.2 to 0.7 ms a frame that has marks (a drying frame, the whole 2048² film scaled, about 5 ms on
+lavapipe: a few hundredths of a millisecond on a desktop card, once every 8 s a person while their film dries); the
+main pass with the person's materials against plain StandardMaterial (`SKIN_PLAIN=1`) was within the noise of the
+shared machine (150 to 540 ms a frame either way). The skin's fragment shader adds two texture reads where nothing is
+painted, five more for each of the wound and film sheets where something is, and loops over the person's holes (up to
+64), windows (64) and blow records (16) while they have any; the vertex shader three table reads a corner. CPU: the
+runs step 30 times a second (a few triangle tests a run), the bruise rows copied where they changed.

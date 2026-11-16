@@ -890,7 +890,9 @@ fn hurt_them(w: &mut World) {
         if let Some(mid) = hits.get(hits.len() / 2) {
             views.push(("knife_cut".to_string(), who, mid.clone(), 0.28));
         }
-        npc.slash(&hits, 0.022, None);
+        // (as weapons.rs gives them: where the blade went into the skin, in the world)
+        let points: Vec<Vec3> = hits.iter().map(|h| h.point).collect();
+        npc.slash_through(&points, 0.022, crate::babylon(1.0, 0.0, 0.0));
         format!("{:?} cut {}", p.stopped, hits.len())
     });
     log(w, serde_json::json!({ "event": "neck and cut", "result": r }));
