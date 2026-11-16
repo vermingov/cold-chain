@@ -357,8 +357,9 @@ with the reasons in the comments. flesh.rs is new: it does on the geometry what 
   `end_world`; `viscera::open`, `blown`, `burst`, `openings`, `opening_world`.
 - What others draw: the stump's skin edge (`Skin::rim`) and an opening's lips (`Skin::lip`) are called on skin.rs's
   `Skin`; an opening is skin.rs's hider's (`skin_hole`, `cloth_hole`, `window`: the skin and clothes not drawn there, the
-  body's inside wall seen through it), and a cut's window onto the skin under the clothes too. Blood: `Happened::Spray`,
-  `Run` (new: what was in a piece, out of its end), `Drip` (new: off bowel that came out); `Sound`.
+  body's inside wall seen through it), and a cut's window onto the skin under the clothes too. Blood: `Happened::Spray`
+  from a fresh stump, and blood.rs's `Blood::run` (what was in a piece, out of its end) and `Blood::drip` (off bowel that
+  came out) called directly; `Sound`.
 
 ### The person's flesh (flesh.rs)
 The TS kept the triangles a cut runs through in both the body's mesh and the piece's and hid each side's other half per
@@ -394,8 +395,8 @@ at the break, the dark lines), once a frame at most however many breaks a blast 
   epsilon: on a cut face or a loop of bowel every normal came out zero and drew black. flesh.rs `normals` (Babylon's).
 - Cut faces are painted off the frame (AsyncComputeTaskPool): the ends go in at once flat and plain, painted a frame or
   two later (`Painting`).
-- Organs, ropes and the wall's inside are one extended material (organs.wesl, viscera.rs `Wet`): a corner's colour is its
-  place at rest and its alpha the blood on it. The wall's layers (wall.wesl) are a uniform of five vec4 a column.
+- Organs and ropes are one extended material (organs.wesl, viscera.rs `Wet`): a corner's colour is its place at rest and
+  its alpha the blood on it. The wall's layers (wall.wesl) are a uniform of five vec4 a column.
 - Rope meshes are in the world (their points are), so `gone` despawns them when the person goes.
 
 ### The check

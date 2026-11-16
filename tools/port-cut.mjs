@@ -41,7 +41,9 @@ try {
         look(e.at, e.at.add(off)); };
       window.__C = { S, V, D, W, VI, between, look, end, facing, lamp };
       return true; })()`);
-    const npc = (i) => `__C.S.world.npcs[${i}]`;
+    // (By body, in the line-up's order: world.npcs is not in it.)
+    const BODIES = ['oldman', 'sexton', 'buyer', 'hood'];
+    const npc = (i) => `__C.S.world.npcs.find((n) => n.person.bodyName === '${BODIES[i]}')`;
     if (want('limbs')) {
         console.log('forearm', await rig.eval(`(() => { const { D, V, between } = __C, n = ${npc(0)};
           const t = performance.now(); const off = D.chop(n, between(n, 'lowerarm01.R', 'wrist.R', 0.55), new V(-1, -0.3, 0).normalize(), 90); return [off, performance.now() - t]; })()`));
