@@ -841,7 +841,7 @@ fn render(tap: Option<Res<Tap>>, meter: Option<ResMut<Meter>>, time: Res<Time>) 
 // What hurt people say and what their hurts sound like (npc.rs Happened, the TS's npc.say and world.sound.shot): a cry
 // (`kind`-`voice`, the voice being the body's) from the head, following it as it falls or is dragged; the one playing cut
 // off when they are knocked out or killed mid-cry; a take at a place, or at the head.
-fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person, &crate::npc::Hurt)>, mut saying: Local<HashMap<Entity, Playing>>) {
+fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person, &crate::npc::Hurt)>, mut saying: ResMut<Voices>) {
     use crate::npc::Happened;
     for (e, p, h) in &people {
         let head = p.body.by_name.get("head").map(|&i| p.joints[i]);
@@ -849,23 +849,36 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
             match x {
                 Happened::Say { kind, gain } => {
                     if let Some(playing) = sound.play(&format!("{kind}-{}", p.body.name), Play { gain: *gain, follow: head, ..default() }) {
-                        saying.insert(e, playing);
+                        saying.0.insert(e, (playing, kind));
                     }
                 }
                 Happened::Cut => {
-                    if let Some(playing) = saying.remove(&e) {
+                    if let Some((playing, _)) = saying.0.remove(&e) {
                         playing.cut();
                     }
                 }
                 Happened::Sound { name, at, gain } => {
-                    sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, ..default() });
+                    let playing = sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, ..default() });
+                    // (A retch or a vomit comes out of the mouth, which the face opens to it, as a cry: throat.ts spoke them.)
+                    let kind = match name.as_str() {
+                        "retch" => Some("retch"),
+                        "vomit" => Some("vomit"),
+                        _ => None,
+                    };
+                    if let (Some(playing), Some(kind), None) = (playing, kind, at) {
+                        saying.0.insert(e, (playing, kind));
+                    }
                 }
                 _ => {}
             }
         }
     }
-    saying.retain(|e, _| people.contains(*e));
+    saying.0.retain(|e, _| people.contains(*e));
 }
+
+// What each person is saying now, and what kind of cry it is: the face mouths it (face.rs).
+#[derive(Resource, Default)]
+pub struct Voices(pub HashMap<Entity, (Playing, &'static str)>);
 
 // What the bodies make heard (thuds.rs): their thuds and falls where they happen, and a body dragged sliding on the
 // floor, from where it is, as loud as it slides fast (the 'drag' stream, made the first time it is wanted).
@@ -894,6 +907,7 @@ fn steps(mut sound: ResMut<Sound>, players: Query<&Player>, mut last: Local<u32>
 
 pub fn plugin(app: &mut App) {
     app.insert_resource(Sound::new())
+        .init_resource::<Voices>()
         .add_systems(Startup, (load, mix).chain())
         .add_systems(Update, steps)
         .add_systems(PostUpdate, (hurts, bodies, crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));

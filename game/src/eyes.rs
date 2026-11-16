@@ -4,9 +4,14 @@
 // eyes.rs's look in phase 3: this keeps what the TS's Eyes kept for it, in the same terms, and does what an eye's hurt
 // does to the person (blind in it, the pain, the lids clamped, what runs from it).
 
-use bevy::prelude::*;
+use std::sync::Arc;
 
-use crate::npc::{Crossing, Npc};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
+
+use crate::npc::{Crossing, Kind, Npc};
 use crate::vitals::{Bleed, Side};
 use crate::wounds::{cap, Missile};
 
@@ -105,10 +110,17 @@ impl EyesOf<'_, '_> {
 
     // The eye at crossing `hit` met by missile `m` going along `dir`: a bullet, a pellet or fragment, or a blade's point
     // (wounds.rs pierce). `deep` is how far into the body it went. What runs out of it runs from the lid it returns.
-    pub fn pierced(&mut self, hit: &Crossing, m: &Missile, _dir: Vec3, deep: f32, through: bool) -> Option<Crossing> {
+    pub fn pierced(&mut self, hit: &Crossing, m: &Missile, dir: Vec3, deep: f32, through: bool) -> Option<Crossing> {
         let s = self.side_of(hit);
         let word = if s == Side::L { "left" } else { "right" };
         let (u, w) = (hit.uv.x, hit.uv.y);
+        // Which way a blade's cut runs across the eye's picture: along its edge, found by a second line beside the first.
+        let mut along = None;
+        if let (true, Some(across)) = (m.blade, m.across) {
+            let o = hit.point - dir * 0.05 + across * 0.002;
+            let two = self.0.surface(o, dir, 0.1, true).into_iter().find(|h| h.kind == Kind::Eye && self.side_of(h) == s);
+            along = two.map(|h| h.uv - hit.uv).filter(|d| d.length() > 1e-5).map(|d| d.normalize());
+        }
         let d = &mut *self.0.dice;
         let e = self.0.hurt.eyes.eye(s);
         e.t = 0.0;
@@ -116,10 +128,9 @@ impl EyesOf<'_, '_> {
         if m.blade {
             // A blade's point: a straight cut as wide as the blade where it went in, along its edge. Aqueous goes at once and
             // the chamber falls flat; the iris is carried into the cut; deeper, lens and vitreous follow (eye-trauma.md sec.
-            // 2, Blade). (Which way the cut runs across the picture the TS found with a second line beside the first: the
-            // look's to work out from `m.across`.)
+            // 2, Blade).
             let width = m.calibre * (deep / m.taper.unwrap_or(0.01)).clamp(0.15, 1.0);
-            e.marks.push(Mark { u, v: w, iris: false, size: width / 2.0, uv: false, along: None, kind: "slit" });
+            e.marks.push(Mark { u, v: w, iris: false, size: width / 2.0, uv: false, along, kind: "slit" });
             e.lost = e.lost.max(if deep > 0.012 { 0.55 } else { 0.25 });
             e.blood_to = e.blood_to.max(0.35 + d.next() * 0.3);
             e.patches.push(Patch { u, v: w, iris: false, r: 0.02, to: 0.09 + d.next() * 0.05, tau: 12.0, dense: 0.9 });
@@ -254,4 +265,241 @@ impl EyesOf<'_, '_> {
             }
         }
     }
+}
+
+// --- the look (eyes.ts EyeLayer, and face.ts's PupilLayer and the eye's own wet material) ------------------------------
+//
+// Each person's eyes are drawn with a material of their own: the eye's picture, wet (the tear film is smoother than
+// anything else on a body: a sharp catchlight of every lamp), with eye.wesl over it. The pupil is drawn at any size:
+// inside the iris the picture is sampled from where the painted pupil and iris would put each point, so the pupil grows
+// into the iris and the iris's pattern is squeezed toward its rim, as a real iris's is (face.ts PupilLayer). Over that,
+// what the eye shows of its hurt: blood under the conjunctiva spreading over the white, the hole or the cut in its wall
+// with the dark uvea pushed out through it, blood in the front chamber, a red haze that settles into a layer with a flat
+// top, level in the world however the head is turned, and an emptied globe's wall in folds.
+//
+// The TS painted the hole, the cut and the bleeding under the conjunctiva on a 256-pixel canvas a person and sent it up;
+// here each is worked out where it is drawn, from a short list of them in the material's uniform (eye.wesl), at that
+// sheet's own sharpness. The uniform is written only when something in it moved.
+
+// As many patches of blood and holes or cuts as an eye's material draws (each of the two eyes keeps its first ones).
+pub const MOST: usize = 12;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ShaderType, Reflect)]
+pub struct EyeUniform {
+    // The two irises' centres on the picture (A then B: the first with the larger u, as the TS sorted them), the iris's
+    // and the painted pupil's radius and each pupil's as shown, the iris's radius in metres.
+    pub centres: Vec4,
+    pub sizes: Vec4,
+    pub iris: Vec4,
+    // Per eye (A, B): the iris's centre in the world now and the settled blood's height; the haze of blood stirred up,
+    // how far the globe has collapsed, how far the blood has clotted.
+    pub world: [Vec4; 2],
+    pub state: [Vec4; 2],
+    // How many patches and marks.
+    pub counts: UVec4,
+    // Blood under the conjunctiva: u, v, radius (picture units), density.
+    pub patches: [Vec4; MOST],
+    // Holes and cuts: u, v, radius, kind (0 a hole, 1 a pellet's, 2 a cut); a cut's way across the picture and the seed of
+    // a hole's torn edge.
+    pub marks: [Vec4; MOST],
+    pub along: [Vec4; MOST],
+}
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct EyeLook {
+    #[uniform(100)]
+    pub eye: EyeUniform,
+}
+
+impl MaterialExtension for EyeLook {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://cold_chain/eye.wesl".into()
+    }
+}
+
+pub type EyeMaterial = ExtendedMaterial<StandardMaterial, EyeLook>;
+
+// The iris in MakeHuman's eye textures (both eyes are painted on one sheet): the two centres on the picture (here v runs
+// down the picture, the TS's turned over), the iris's and the painted pupil's radius, measured from the pictures (the
+// dark disc's area and the brightness out from it).
+const BROWN: ([f32; 4], f32, f32) = ([0.7041, 1.0 - 0.7019, 0.2884, 1.0 - 0.29], 0.105, 0.0374);
+const BLUEGREEN: ([f32; 4], f32, f32) = ([0.7059, 1.0 - 0.7047, 0.2929, 1.0 - 0.299], 0.105, 0.0296);
+
+// What is read off a body's eyes once: each eye's (L, R) iris centre on the picture and on the body at rest, the iris's
+// and painted pupil's radius, and how many units of the picture a metre of eye is near the iris.
+pub struct Irises {
+    pub centre: [Vec2; 2],
+    pub at: [Vec3; 2],
+    pub iris: f32,
+    pub pupil: f32,
+    pub per_m: f32,
+}
+
+impl Irises {
+    pub fn new(body: &crate::person::Body) -> Irises {
+        let part = body.parts.iter().find(|p| p.kind == "eyes");
+        let file = part.and_then(|p| p.texture.as_ref()).map_or("", |t| t.file.as_str());
+        let (c, iris, pupil) = if file.contains("bluegreen") { BLUEGREEN } else { BROWN };
+        let centres = [Vec2::new(c[0], c[1]), Vec2::new(c[2], c[3])];
+        // Which painted eye is which, and how big the painted one is, from the mesh itself.
+        let mut near = [(f32::INFINITY, 0usize); 2];
+        let mut which = [0usize, 1];
+        let side = |v: usize| -> Option<usize> {
+            let name = &body.bones[body.joints[v][0] as usize].name;
+            if name.ends_with(".L") { Some(0) } else if name.ends_with(".R") { Some(1) } else { None }
+        };
+        let (mut scale, mut counted) = (0.0, 0);
+        if let Some(p) = part {
+            let range = p.vertex_start..p.vertex_start + p.vertex_count;
+            for v in range.clone() {
+                let Some(s) = side(v) else { continue };
+                for (k, c) in centres.iter().enumerate() {
+                    let d = body.uv[v].distance(*c);
+                    if d < near[s].0 && d < 0.1 {
+                        near[s] = (d, v);
+                        which[s] = k;
+                    }
+                }
+            }
+            // Metres of eye to a unit of the sheet near the iris: from the iris's middle out to a third of the way past it.
+            for s in 0..2 {
+                let c = near[s].1;
+                for v in range.clone() {
+                    if side(v) != Some(s) {
+                        continue;
+                    }
+                    let d = body.uv[v].distance(body.uv[c]);
+                    if !(0.05..=0.14).contains(&d) {
+                        continue;
+                    }
+                    scale += body.position[v].distance(body.position[c]) / d;
+                    counted += 1;
+                }
+            }
+        }
+        let tail = |s: usize| body.bone(if s == 0 { "eye.L" } else { "eye.R" }).tail;
+        Irises {
+            centre: [centres[which[0]], centres[which[1]]],
+            at: [0, 1].map(|s| if part.is_some() && near[s].0.is_finite() { body.position[near[s].1] } else { tail(s) }),
+            iris,
+            pupil,
+            per_m: if counted > 0 { counted as f32 / scale } else { 50.0 },
+        }
+    }
+}
+
+// A person's eyes' own material, and what it was last given.
+#[derive(Component)]
+pub struct EyesDrawn {
+    pub material: Handle<EyeMaterial>,
+    irises: Arc<Irises>,
+}
+
+// Each person with a face and no eyes of their own yet: the eyes' material made theirs.
+fn own_eyes(
+    mut commands: Commands,
+    people: Query<(Entity, &crate::person::Person), (With<crate::face::Face>, Without<EyesDrawn>)>,
+    parts: Query<&MeshMaterial3d<StandardMaterial>>,
+    standard: Res<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<EyeMaterial>>,
+    mut irises: Local<std::collections::HashMap<String, Arc<Irises>>>,
+) {
+    for (e, person) in &people {
+        let body = &person.body;
+        let Some(&(_, part)) = person.parts.iter().find(|(i, _)| body.parts[*i].kind == "eyes") else { continue };
+        let Some(base) = parts.get(part).ok().and_then(|m| standard.get(&m.0)) else { continue };
+        let mut base = base.clone();
+        // The tear film: a sharp catchlight of every lamp and the room behind.
+        base.perceptual_roughness = 0.04;
+        let irises = irises.entry(body.name.clone()).or_insert_with(|| Arc::new(Irises::new(body))).clone();
+        let material = materials.add(EyeMaterial { base, extension: EyeLook::default() });
+        commands.entity(part).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(material.clone()));
+        commands.entity(e).insert(EyesDrawn { material, irises });
+    }
+}
+
+// The eyes' uniform from the face's pupils and the eyes' hurt, written to the material when it changed.
+fn draw_eyes(
+    people: Query<(&crate::person::Person, &Transform, &crate::npc::Hurt, &crate::face::Face, &EyesDrawn)>,
+    mut materials: ResMut<Assets<EyeMaterial>>,
+) {
+    for (person, root, hurt, face, drawn) in &people {
+        let ir = &drawn.irises;
+        // A and B: the centre with the larger u first.
+        let order = if ir.centre[0].x >= ir.centre[1].x { [0, 1] } else { [1, 0] };
+        let eyes = [&hurt.eyes.l, &hurt.eyes.r];
+        let mut u = EyeUniform {
+            centres: Vec4::new(ir.centre[order[0]].x, ir.centre[order[0]].y, ir.centre[order[1]].x, ir.centre[order[1]].y),
+            iris: Vec4::new(ir.iris, ir.iris / ir.per_m, 0.0, 0.0),
+            ..default()
+        };
+        let mut shown = [0.0; 2];
+        let (mut patches, mut marks) = (0, 0);
+        for (k, &s) in order.iter().enumerate() {
+            let e = eyes[s];
+            // (an eye whose sphincter a blow tore stays wide whatever the other does: traumatic mydriasis)
+            shown[k] = ((if e.pupil > 0.0 { e.pupil } else { face.pupil }) / crate::face::MM_IRIS).clamp(0.12, 0.85) * ir.iris;
+            // The iris's centre in the world now (only wanted with blood in the chamber).
+            let w = if e.blood > 0.005 {
+                crate::face::bone_world(person, root, person.body.by_name[if s == 0 { "eye.L" } else { "eye.R" }]).transform_point3(ir.at[s])
+            } else {
+                Vec3::new(0.0, -1e3, 0.0)
+            };
+            let layer = if e.blood > 0.95 { 1.05 } else { e.blood * e.settled };
+            u.world[k] = w.extend(layer);
+            u.state[k] = Vec4::new(e.blood * (1.0 - e.settled) * 0.85, e.collapse, (e.t / 600.0).min(1.0) * if e.blood > 0.9 { 1.0 } else { 0.3 }, 0.0);
+            let c = ir.centre[s];
+            for p in &e.patches {
+                if patches < MOST {
+                    let at = if p.iris { c + Vec2::new(p.u, p.v) } else { Vec2::new(p.u, p.v) };
+                    u.patches[patches] = Vec4::new(at.x, at.y, p.r, p.dense);
+                    patches += 1;
+                }
+            }
+            for m in &e.marks {
+                if marks >= MOST {
+                    break;
+                }
+                let at = if m.iris { c + Vec2::new(m.u, m.v) * ir.iris * 1.25 } else { Vec2::new(m.u, m.v) };
+                // Its size on the picture, as the TS drew each kind.
+                let r = if m.uv {
+                    m.size
+                } else {
+                    match m.kind {
+                        "slit" => (m.size * ir.per_m).min(0.12),
+                        "pellet" => (m.size * ir.per_m).max(0.006),
+                        _ => (m.size * ir.per_m).max(0.05),
+                    }
+                };
+                let kind = match m.kind {
+                    "slit" => 2.0,
+                    "pellet" => 1.0,
+                    _ => 0.0,
+                };
+                let along = m.along.unwrap_or(Vec2::X);
+                u.marks[marks] = Vec4::new(at.x, at.y, r, kind);
+                u.along[marks] = Vec4::new(along.x, along.y, m.u * 7.0 + m.v * 13.0, m.u * 11.0 + m.v * 5.0);
+                marks += 1;
+            }
+        }
+        u.sizes = Vec4::new(ir.iris, ir.pupil, shown[0], shown[1]);
+        u.counts = UVec4::new(patches as u32, marks as u32, 0, 0);
+        let Some(m) = materials.get(&drawn.material) else { continue };
+        let was = &m.extension.eye;
+        // (A pupil changing by under half a percent, or nothing else changing, is not worth a new bind group.)
+        let near = |a: f32, b: f32| (a - b).abs() <= 0.005 * b.abs().max(1e-4);
+        if near(was.sizes.z, u.sizes.z) && near(was.sizes.w, u.sizes.w) && (EyeUniform { sizes: was.sizes, ..u }) == *was {
+            continue;
+        }
+        if let Some(mut m) = materials.get_mut(&drawn.material) {
+            m.extension.eye = u;
+        }
+    }
+}
+
+pub fn plugin(app: &mut App) {
+    bevy::asset::embedded_asset!(app, "eye.wesl");
+    app.add_plugins(MaterialPlugin::<EyeMaterial>::default())
+        .add_systems(Update, own_eyes)
+        .add_systems(PostUpdate, draw_eyes);
 }

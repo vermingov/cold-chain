@@ -17,6 +17,7 @@ mod bruise;
 mod dressing;
 mod fist;
 mod eyes;
+mod face;
 mod graphics;
 mod hands;
 mod hud;
@@ -41,6 +42,7 @@ mod thuds;
 mod teeth;
 mod throat;
 mod vitals;
+mod warm;
 mod weapons;
 mod wounds;
 
@@ -146,7 +148,11 @@ fn main() -> AppExit {
     // The hands and ears (dev/PORT.md phase 2): the thing in the hand's flash, the arms and fists, F2.
     .add_plugins((muzzle::plugin, hands::plugin, fist::plugin, profiler::plugin))
     // The body: its segments as Rapier bodies, what works them, and what is heard of them (phase 2, port/body).
-    .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin));
+    .add_plugins((ragdoll::plugin, behaviour::plugin, thuds::plugin))
+    // The face, the eyes and the mouth (phase 3, port/face).
+    .add_plugins((face::plugin, eyes::plugin, teeth::plugin, throat::plugin));
+    // Every pipeline made behind a loading screen before play (warm.rs): in the game, and in the scenario that checks it.
+    app.add_plugins(warm::plugin(run.as_ref().is_none_or(|r| r.name == "warm")));
     match run {
         // A scenario's frames are all a sixtieth of a second long, whatever the machine takes to draw them.
         Some(run) => {

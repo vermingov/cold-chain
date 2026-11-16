@@ -82,7 +82,8 @@ pub struct Muzzle {
     shown: Option<(Entity, u32)>,
     lamp: Entity,
     peak: f32,
-    at: f32,
+    // When the last flash was (the clock's seconds): the people startle at it (face.rs).
+    pub at: f32,
     card: Entity,
     card_shown: bool,
     specks: Vec<Speck>,

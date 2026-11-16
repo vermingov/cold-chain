@@ -83,7 +83,7 @@ const M: Missile = Missile {
 
 impl Missile {
     // As wounds.rs takes it (the TS's optional fields left out where weapons.ts left them out).
-    fn wounds(&self) -> wounds::Missile {
+    pub fn wounds(&self) -> wounds::Missile {
         let some = |x: f32| (x > 0.0).then_some(x);
         wounds::Missile {
             energy: self.energy, mass: self.mass, calibre: self.calibre, channel: self.channel, soft: self.soft, hard: self.hard,

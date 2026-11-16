@@ -165,6 +165,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "sound" => s = crate::sound::scenario(),
         "arsenal-use" => s = crate::weapons::scenario(),
         "wounds" => s = wounds(),
+        "face" => s = crate::face::scenario(),
+        "warm" => s = crate::warm::scenario(),
         _ => return body(name),
     }
     Some(s)
@@ -200,7 +202,7 @@ fn segments(w: &mut World) {
 }
 
 // Every texture a material in the world refers to, and every font, loaded (or failed: it will not come).
-fn loaded(world: &World) -> bool {
+pub fn loaded(world: &World) -> bool {
     let server = world.resource::<AssetServer>();
     let done = |id: bevy::asset::UntypedAssetId| server.get_load_state(id).is_none_or(|s| !s.is_loading());
     let materials = world.resource::<Assets<StandardMaterial>>();
@@ -215,7 +217,7 @@ fn run(world: &mut World) {
     if world.resource::<Runner>().started.is_none() {
         // Ready once the hall is filled, everything is in, and a few frames have gone to spawning the glTF scenes and
         // sending the textures' mipmaps up.
-        let ready = *world.resource::<State<Loading>>().get() == Loading::Done && loaded(world);
+        let ready = *world.resource::<State<Loading>>().get() == Loading::Done && loaded(world) && crate::warm::ready(world);
         let mut r = world.resource_mut::<Runner>();
         if ready {
             r.waited += 1;
