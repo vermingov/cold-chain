@@ -1,6 +1,7 @@
-// Reads a session log the F2 profiler saved (F4, profiler.ts) and prints what to look at first: the machine, the fps
-// spread and what bounds the frame, the systems that cost most, the worst spikes with what came just before each, and
-// how the frame went over the session, minute by minute.
+// Reads a session log the F2 profiler saved (F4 or quitting; profiler.ts, and the Bevy game's profiler.rs) and prints
+// what to look at first: the machine, the fps spread and what bounds the frame, the systems that cost most, the worst
+// spikes with what came just before each, the frames the game's own code took longest over (the Bevy game's), what is
+// drawn by source, and how the frame went over the session, minute by minute.
 //
 //     node tools/profile-report.mjs coldchain-profile-0.8.23-2026-11-15-143200.json
 
@@ -30,13 +31,26 @@ say(`${'worst systems (own time)'.padEnd(46)} ${'ms/frame'.padStart(8)} ${'worst
 for (const r of s['worst systems']) say(`${r.name.padEnd(46).slice(0, 46)} ${r['ms a frame'].toFixed(2).padStart(8)} ${r.worst.toFixed(1).padStart(7)} ${r.share.padStart(6)}`);
 say();
 say(`worst spikes (of ${log.spikes.length} kept)`);
-for (const k of s['worst spikes']) {
+const frame = (k) => {
     const clock = `${Math.floor(k.t / 60)}:${(k.t % 60).toFixed(1).padStart(4, '0')}`;
-    say(`  at ${clock}: ${k.ms} ms (game code ${k.cpu}, waiting ${k.waiting}), ${k.draws} draw calls${k.compiles ? `, ${k.compiles} shaders compiled` : ''}`);
+    say(`  at ${clock}: ${k.ms} ms (game code ${k.cpu}, waiting ${k.waiting}${k.render !== undefined ? `, render thread ${k.render}` : ''}), ${k.draws} draw calls`
+        + `${k.compiles ? `, ${k.compiles} shaders compiled` : ''}`);
     say(`    heaviest: ${k.top.join('; ') || 'none of the timed rows'}`);
+    if (k.meshes?.length) say(`    in view: ${k.meshes.join('; ')}`);
     say(`    the second before: ${k.before.join('; ') || 'nothing the player did'}`);
-}
+};
+for (const k of s['worst spikes']) frame(k);
 say();
+if (s['slowest game code']?.length) {
+    say(`slowest frames of the game's own code, whatever the GPU did (of ${log.slow?.length ?? 0} kept)`);
+    for (const k of s['slowest game code']) frame(k);
+    say();
+}
+if (s['draws by source']?.length) {
+    say('drawn a frame on average: draw calls by pass, then meshes in view by what they belong to');
+    for (const [name, n] of s['draws by source']) say(`  ${name.padEnd(46).slice(0, 46)} ${String(n).padStart(7)}`);
+    say();
+}
 // The frame over the session, a line a minute: where it slowed and with how many people and draw calls.
 say('minute  fps  ms mean  p95  worst  people  draws  scale  preset  heaviest system');
 const minutes = new Map();

@@ -15,16 +15,21 @@
 // Under the rows, what is drawn: the meshes in view by what they belong to (each is a draw call, less what Bevy batches
 // together), as the TS's draw calls by source.
 //
-// While it is open it also keeps a log of the session (F4 saves it as coldchain-profile-<version>-<time>.json, read by
+// While it is open it also keeps a log of the session (coldchain-profile-<version>-<time>.json, read by
 // tools/profile-report.mjs as the TS's was): a sample a second (the frame's mean, 95th percentile and worst, each row's
-// mean and worst, draws, people, render scale and preset), every spike frame with the rows heaviest in it, and what the
-// player did (`Notes`: a shot, a swing, a preset changed), so a spike can be put down to what came just before it. A
-// summary is worked out on saving and written at the top. Kept from the first opening to the end, through closing and
-// opening again, but only recorded while open; the samples are the last half hour's, the spikes the 300 worst.
+// mean and worst, draws, the meshes in view by source, people, render scale and preset), every spike frame with the
+// rows heaviest in it, the pipelines made in it and the meshes in view by source, the frames the game's own code took
+// longest over (whatever the GPU did), and what the player did (`Notes`: a shot, a swing, a limb cut off and what it
+// cost, a preset changed), so a spike can be put down to what came just before it. A summary is worked out on saving
+// and written at the top. Kept from the first opening to the end, through closing and opening again, but only recorded
+// while open; the samples are the last half hour's, the spikes the 300 worst. F4 saves it; so does quitting, if anything
+// was recorded. `cold-chain --profile` records from the start without the table (F2 shows it), for playing a whole
+// session and sending the log. It is written beside the game, or where the user's data goes if the game's folder cannot
+// be written to (`folder`); nothing is sent anywhere.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use bevy::app::MainScheduleOrder;
@@ -44,6 +49,8 @@ static OPEN: AtomicBool = AtomicBool::new(false);
 static ROWS: Mutex<Vec<(&'static str, u64, u32)>> = Mutex::new(Vec::new());
 static INNER: AtomicU64 = AtomicU64::new(0);
 static RENDER: AtomicU64 = AtomicU64::new(0);
+// The most time the game's code took over a frame kept in the log (`slow`), and how many.
+const SLOW: usize = 40;
 // The draw calls the render world's phases make this frame: the main picture's opaque, alpha-masked and blended passes,
 // and the shadow maps (each multidraw batch set, batchable bin, unbatchable mesh or sorted item is a call).
 static DRAWS: [AtomicU64; 4] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
@@ -114,17 +121,31 @@ where
     IntoAdapterSystem::new(Timer(name), system)
 }
 
-// What the player did, from where it is done (weapons.rs: a shot, a swing). Nothing while shut. Seconds from the start.
+// The profiler's clock: seconds of real time since it was first asked. (The game's own clock runs slower than real time
+// when frames are long, and a scenario's a sixtieth of a second a frame however long they take: a spike and what came
+// before it must be on one clock.)
+fn clock() -> f64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
+// What the player did, from where it is done (weapons.rs: a shot, a swing). Nothing while shut. Seconds from the start,
+// on the profiler's own clock (`_now`, the game's time it was called with, is not it).
 #[derive(Resource, Default)]
 pub struct Notes {
     pub events: Vec<(f64, String)>,
 }
 
 impl Notes {
-    pub fn note(&mut self, now: f64, what: String) {
+    pub fn note(&mut self, _now: f64, what: String) {
+        self.add(what);
+    }
+
+    pub fn add(&mut self, what: String) {
         if !OPEN.load(Ordering::Relaxed) {
             return;
         }
+        let now = clock();
         self.events.push(((now * 1000.0).round() / 1000.0, what));
         if self.events.len() > 6000 {
             self.events.drain(0..1000);
@@ -156,6 +177,21 @@ fn run_main(world: &mut World, mut once: Local<bool>) {
                 let own = all.saturating_sub(INNER.load(Ordering::Relaxed));
                 add(schedule_row(&format!("{label:?}")), own);
             }
+        }
+    });
+    // Quitting (the window closed, or a scenario done) saves what was recorded: a scenario's into its folder.
+    if world.get_resource::<Messages<AppExit>>().is_some_and(|m| !m.is_empty()) {
+        quit(world);
+    }
+}
+
+fn quit(world: &mut World) {
+    let dir = world.get_resource::<crate::scenario::Out>().map(|o| o.0.clone());
+    let now = clock();
+    world.resource_scope(|world, mut p: Mut<Profiler>| {
+        if p.all_frames > 0 && !p.kept {
+            save(&mut p, world.resource::<Notes>(), now, dir);
+            info!("profile{}", p.said.0);
         }
     });
 }
@@ -227,6 +263,12 @@ struct Profiler {
     preset: String,
     level: f32,
     last: Option<Instant>,
+    made: usize,
+    slow: Vec<Value>,
+    // Saved where a scenario asked (not again on quitting).
+    kept: bool,
+    // `--profile` given: to open once play begins.
+    at_start: bool,
     // A scenario's asks: open it (as F2, but recording only: its table is not drawn over the pictures), save the log into
     // a folder (as F4).
     ask_open: bool,
@@ -240,7 +282,8 @@ impl Default for Profiler {
             open: false, shown: None, rows: HashMap::new(), draws: HashMap::new(), gap: 16.7, slot: 0, drawn: 0.0, text: String::new(),
             said: (String::new(), 0.0), t0: None, started: String::new(), machine: Value::Null, samples: Vec::new(), spikes: Vec::new(),
             totals: HashMap::new(), hist: vec![0; 501], times: Vec::with_capacity(1024), second_at: 0.0, n: 0, spent: 0.0, cpu: 0.0, wait: 0.0,
-            wait_max: 0.0, calls: 0.0, meshes: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, ask_open: false, quiet: false, save_in: None,
+            wait_max: 0.0, calls: 0.0, meshes: 0.0, all_frames: 0, all_ms: 0.0, preset: String::new(), level: 1.0, last: None, made: 0, slow: Vec::new(),
+            kept: false, at_start: false, ask_open: false, quiet: false, save_in: None,
         }
     }
 }
@@ -276,14 +319,14 @@ fn keys(
     mut p: ResMut<Profiler>,
     mut commands: Commands,
     notes: Res<Notes>,
-    time: Res<Time<Real>>,
     adapter: Option<Res<bevy::render::renderer::RenderAdapterInfo>>,
     windows: Query<&Window>,
 ) {
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if (keys.just_pressed(KeyCode::F4) || p.save_in.is_some()) && p.open {
         let dir = p.save_in.take();
-        save(&mut p, &notes, time.elapsed_secs_f64(), dir);
+        p.kept |= dir.is_some();
+        save(&mut p, &notes, clock(), dir);
     }
     let ask = std::mem::take(&mut p.ask_open) && !p.open;
     if !keys.just_pressed(KeyCode::F2) && !ask {
@@ -291,17 +334,23 @@ fn keys(
     }
     if shift && p.open {
         info!("\n{}", p.text);
-        p.said = (", printed to the console".into(), time.elapsed_secs_f64());
+        p.said = (", printed to the console".into(), clock());
         return;
     }
     if shift {
+        return;
+    }
+    // Recording from the start (--profile) without the table: F2 shows it, and only after that closes it.
+    if p.open && p.shown.is_none() && !ask {
+        p.quiet = false;
+        p.shown = Some(overlay(&mut commands));
         return;
     }
     p.open = !p.open;
     OPEN.store(p.open, Ordering::Relaxed);
     if p.open {
         if p.t0.is_none() {
-            p.t0 = Some(time.elapsed_secs_f64());
+            p.t0 = Some(clock());
             p.started = stamp().0;
             let w = windows.iter().next();
             p.machine = json!({
@@ -313,7 +362,7 @@ fn keys(
                 "browser": format!("native: Bevy 0.20 on {} {}", std::env::consts::OS, std::env::consts::ARCH),
             });
         }
-        p.second_at = time.elapsed_secs_f64();
+        p.second_at = clock();
         p.last = None;
         let (n, spent, cpu, wait, wait_max, calls) = (0, 0.0, 0.0, 0.0, 0.0, 0.0);
         (p.n, p.spent, p.cpu, p.wait, p.wait_max, p.calls) = (n, spent, cpu, wait, wait_max, calls);
@@ -321,18 +370,7 @@ fn keys(
         if p.quiet {
             return;
         }
-        let e = commands
-            .spawn((
-                Node { position_type: PositionType::Absolute, left: px(12), top: px(40), padding: UiRect::all(px(8)), ..default() },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
-                Text::new(""),
-                TextFont { font_size: bevy::text::FontSize::Px(11.0), ..default() },
-                TextColor(Color::srgb(0.85, 0.83, 0.78)),
-                GlobalZIndex(10),
-                Overlay,
-            ))
-            .id();
-        p.shown = Some(e);
+        p.shown = Some(overlay(&mut commands));
     } else {
         ROWS.lock().unwrap().clear();
         p.rows.clear();
@@ -343,24 +381,39 @@ fn keys(
     }
 }
 
+// The table, over the picture.
+fn overlay(commands: &mut Commands) -> Entity {
+    commands
+        .spawn((
+            Node { position_type: PositionType::Absolute, left: px(12), top: px(40), padding: UiRect::all(px(8)), ..default() },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
+            Text::new(""),
+            TextFont { font_size: bevy::text::FontSize::Px(11.0), ..default() },
+            TextColor(Color::srgb(0.85, 0.83, 0.78)),
+            GlobalZIndex(10),
+        Overlay,
+    ))
+    .id()
+}
+
 // Each frame (at its very end): this frame's times into the averages and the worst of this second, and the log.
 #[allow(clippy::too_many_arguments)]
 fn tick(
     mut p: ResMut<Profiler>,
     mut notes: ResMut<Notes>,
-    time: Res<Time<Real>>,
     graphics: Res<Graphics>,
     people: Query<(), With<Person>>,
     seen: Query<(Entity, &ViewVisibility), With<Mesh3d>>,
     parents: Query<&ChildOf>,
     names: Query<&Name>,
     mut text: Query<&mut Text, With<Overlay>>,
+    pipelines: Option<Res<crate::warm::Pipelines>>,
 ) {
     if !p.open {
         return;
     }
     let real = Instant::now();
-    let now = time.elapsed_secs_f64();
+    let now = clock();
     let dt = p.last.map_or(1000.0 / 60.0, |l| real.duration_since(l).as_secs_f32() * 1000.0);
     p.last = Some(real);
     let k = (dt / 1000.0).min(1.0);
@@ -418,14 +471,21 @@ fn tick(
     for (name, n) in draws {
         p.draws.entry(name).or_default().now = n;
     }
+    // Pipelines made this frame (each a shader compiled on first use: what the warm-up is there to prevent).
+    let made = pipelines.map_or(0, |x| x.made.load(Ordering::Relaxed));
+    let compiles = made.saturating_sub(p.made);
+    p.made = made;
     let mut calls = 0.0;
     for (d, name) in DRAWS.iter().zip(PASSES) {
         let n = d.load(Ordering::Relaxed) as f32;
         calls += n;
         p.draws.entry(name.to_string()).or_default().now = n;
     }
-    // A spike against the frame rate it is running at: over 50 ms on a slow machine is every frame.
-    if dt > 50f32.max(2.5 * p.gap) {
+    // A spike against the frame rate it is running at (two frames missed at 60 fps at least: over 50 ms on a slow machine
+    // is every frame), or one of the frames the game's own code took longest over, whatever the GPU was doing.
+    let spike = dt > 34f32.max(2.5 * p.gap);
+    let slow = busy > 4.0 && (p.slow.len() < SLOW || p.slow.iter().any(|x| x["cpu"].as_f64().unwrap_or(0.0) < busy as f64));
+    if spike || slow {
         let t = since(now);
         let from = t - dt as f64 / 1000.0 - 1.0;
         let mut heard: Vec<(String, u32)> = Vec::new();
@@ -442,10 +502,24 @@ fn tick(
         let mut top: Vec<(&'static str, f32)> = rows.iter().map(|r| (r.0, r.1 as f32 / 1e6)).filter(|r| r.1 >= 0.5).collect();
         top.sort_by(|a, b| b.1.total_cmp(&a.1));
         let top: Vec<String> = top.iter().take(6).map(|(n, ms)| format!("{n} {}", r2(*ms))).collect();
-        p.spikes.push(json!({ "t": t, "ms": r2(dt), "cpu": r2(busy), "waiting": r2((dt - busy).max(0.0)), "compiles": 0, "draws": DRAWS.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>(), "top": top, "before": before }));
-        if p.spikes.len() > 300 {
-            let (i, _) = p.spikes.iter().enumerate().min_by(|a, b| a.1["ms"].as_f64().unwrap_or(0.0).total_cmp(&b.1["ms"].as_f64().unwrap_or(0.0))).unwrap();
-            p.spikes.remove(i);
+        let mut by: Vec<(&String, f32)> = p.draws.iter().filter(|r| r.1.now >= 1.0 && !r.0.starts_with("draw calls")).map(|r| (r.0, r.1.now)).collect();
+        by.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let meshes: Vec<String> = by.iter().take(6).map(|(n, k)| format!("{n} {k}")).collect();
+        let entry = json!({ "t": t, "ms": r2(dt), "cpu": r2(busy), "waiting": r2((dt - busy).max(0.0)), "render": r2(render), "compiles": compiles,
+                            "draws": DRAWS.iter().map(|d| d.load(Ordering::Relaxed)).sum::<u64>(), "meshes": meshes, "top": top, "before": before });
+        let keep = |list: &mut Vec<Value>, key: &str, most: usize| {
+            if list.len() > most {
+                let (i, _) = list.iter().enumerate().min_by(|a, b| a.1[key].as_f64().unwrap_or(0.0).total_cmp(&b.1[key].as_f64().unwrap_or(0.0))).unwrap();
+                list.remove(i);
+            }
+        };
+        if slow {
+            p.slow.push(entry.clone());
+            keep(&mut p.slow, "cpu", SLOW);
+        }
+        if spike {
+            p.spikes.push(entry);
+            keep(&mut p.spikes, "ms", 300);
         }
     }
     p.gap += (dt - p.gap) * k;
@@ -513,12 +587,15 @@ fn sample(p: &mut Profiler, t: f64, people: usize, graphics: &Graphics) {
         keep(name, sum, max, &mut p.totals);
     }
     keep(IDLE.into(), p.wait, p.wait_max, &mut p.totals);
+    // The draw calls by pass and the meshes in view by what they belong to, a frame on average over the second.
+    let sources: JsonMap<String, Value> = p.draws.iter().filter(|r| r.1.sum / n >= 0.5).map(|(k, r)| (k.clone(), json!((r.sum / n).round()))).collect();
     p.samples.push(json!({
         "t": t, "frames": p.n, "fps": (1000.0 * n / p.spent.max(1e-3)).round(),
         "ms": [r2(p.spent / n), r2(at(0.95)), r2(at(1.0))],
         "cpu": r2(p.cpu / n), "waiting": r2(p.wait / n), "gpu": Value::Null,
         "draws": (p.calls / n).round(), "meshes": (p.meshes / n).round(), "people": people,
         "scale": (100.0 / graphics.level).round(), "preset": graphics.name(), "systems": systems,
+        "sources": sources,
     }));
     if p.samples.len() > 1800 {
         p.samples.remove(0);
@@ -590,6 +667,18 @@ fn summary(p: &Profiler) -> Value {
     let pf = |ms: usize| if ms < 500 { ms.to_string() } else { "500+".into() };
     let mut worst: Vec<(&String, &(f32, f32))> = p.totals.iter().collect();
     worst.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+    // The meshes in view and the draw calls by source over the session, a frame on average.
+    let mut sources: HashMap<String, f64> = HashMap::new();
+    for s in &p.samples {
+        let f = s["frames"].as_f64().unwrap_or(0.0);
+        for (k, v) in s["sources"].as_object().into_iter().flatten() {
+            *sources.entry(k.clone()).or_default() += v.as_f64().unwrap_or(0.0) * f / frames;
+        }
+    }
+    let mut sources: Vec<(String, f64)> = sources.into_iter().collect();
+    sources.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut slow = p.slow.clone();
+    slow.sort_by(|a, b| b["cpu"].as_f64().unwrap_or(0.0).total_cmp(&a["cpu"].as_f64().unwrap_or(0.0)));
     let mut spikes = p.spikes.clone();
     spikes.sort_by(|a, b| b["ms"].as_f64().unwrap_or(0.0).total_cmp(&a["ms"].as_f64().unwrap_or(0.0)));
     json!({
@@ -602,6 +691,8 @@ fn summary(p: &Profiler) -> Value {
         "worst systems": worst.iter().take(12).map(|(name, (ms, w))| json!({ "name": name, "ms a frame": r2((*ms as f64 / frames) as f32), "worst": r2(*w),
             "share": format!("{}%", (100.0 * *ms as f64 / p.all_ms.max(1.0)).round()) })).collect::<Vec<_>>(),
         "worst spikes": spikes.into_iter().take(10).collect::<Vec<_>>(),
+        "slowest game code": slow.into_iter().take(10).collect::<Vec<_>>(),
+        "draws by source": sources.iter().take(24).map(|(k, v)| json!([k, (v * 10.0).round() / 10.0])).collect::<Vec<_>>(),
     })
 }
 
@@ -614,14 +705,32 @@ fn save(p: &mut Profiler, notes: &Notes, now: f64, dir: Option<std::path::PathBu
     let events: Vec<Value> = notes.events.iter().map(|(t, w)| json!([((t - t0) * 1000.0).round() / 1000.0, w])).collect();
     let head = json!({ "summary": summary(p), "version": version, "started": p.started, "machine": p.machine });
     let head = serde_json::to_string_pretty(&head).unwrap();
-    let json = format!("{},\n  \"spikes\": {},\n  \"events\": {},\n  \"samples\": {}\n}}\n", &head[..head.len() - 2], lines(&p.spikes), lines(&events), lines(&p.samples));
-    // Where a browser would have put it: the Downloads folder, if there is one.
-    let dir = dir.unwrap_or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Downloads")).filter(|d| d.is_dir()).unwrap_or_else(|| ".".into()));
-    let path = dir.join(&name);
-    p.said = match std::fs::write(&path, json) {
-        Ok(()) => (format!(", saved {}", path.display()), now),
-        Err(e) => (format!(", not saved: {e}"), now),
-    };
+    let json = format!("{},\n  \"spikes\": {},\n  \"slow\": {},\n  \"events\": {},\n  \"samples\": {}\n}}\n", &head[..head.len() - 2], lines(&p.spikes),
+                       lines(&p.slow), lines(&events), lines(&p.samples));
+    let mut tried = Vec::new();
+    for dir in dir.into_iter().chain(folders()) {
+        let path = dir.join(&name);
+        match std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &json)) {
+            Ok(()) => {
+                p.said = (format!(", saved {}", path.display()), now);
+                return;
+            }
+            Err(e) => tried.push(format!("{}: {e}", dir.display())),
+        }
+    }
+    p.said = (format!(", not saved ({})", tried.join("; ")), now);
+}
+
+// Where the log goes: beside the game; if its folder cannot be written to (installed for every user), where the user's
+// data goes (%APPDATA% on Windows, ~/.local/share elsewhere); the folder it was started in, last.
+fn folders() -> Vec<std::path::PathBuf> {
+    let beside = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|d| d.to_path_buf()));
+    let data = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_DATA_HOME").map(Into::into))
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))
+        .map(|d| d.join("cold-chain"));
+    beside.into_iter().chain(data).chain([".".into()]).collect()
 }
 
 fn draw(p: &mut Profiler, now: f64) {
@@ -664,6 +773,14 @@ fn draw(p: &mut Profiler, now: f64) {
     p.text = out.join("\n");
 }
 
+// `--profile`: opened, quietly, once play begins (the loading and the warm-up are not play).
+fn begin(world: &mut World) {
+    if *world.resource::<State<crate::Loading>>().get() == crate::Loading::Done && crate::warm::ready(world) {
+        let mut p = world.resource_mut::<Profiler>();
+        (p.at_start, p.ask_open, p.quiet) = (false, true, true);
+    }
+}
+
 // For a scenario: the profiler opened, as F2 opens it; its log saved into `dir`, as F4 saves it.
 pub fn open(world: &mut World) {
     let mut p = world.resource_mut::<Profiler>();
@@ -689,5 +806,10 @@ pub fn plugin(app: &mut App) {
         render.update_schedule = Some(TimedRender.intern());
         render.add_systems(bevy::render::Render, count_draws.after(bevy::render::RenderSystems::PhaseSort).before(bevy::render::RenderSystems::Render));
     }
-    app.init_resource::<Notes>().init_resource::<Profiler>().add_systems(Update, keys).add_systems(Last, tick);
+    // `--profile`: recording from the start of play (once loaded and warmed up), the table not shown until F2.
+    let from_start = std::env::args().any(|a| a == "--profile");
+    app.init_resource::<Notes>()
+        .insert_resource(Profiler { at_start: from_start, ..default() })
+        .add_systems(Update, (begin.run_if(|p: Res<Profiler>| p.at_start), keys).chain())
+        .add_systems(Last, tick);
 }
