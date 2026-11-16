@@ -757,5 +757,6 @@ fn draw_mouth(
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, looks).add_systems(PostUpdate, draw_mouth);
+    // (Before what happened is forgotten: a tear made anywhere in the last frame is drawn.)
+    app.add_systems(Startup, looks).add_systems(First, draw_mouth.before(crate::npc::forget));
 }

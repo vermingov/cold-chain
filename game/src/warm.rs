@@ -55,7 +55,7 @@ pub struct Warm {
 
 // A step of the warm-up: what the loading screen says, at least how many frames it is given, and what it does.
 pub fn add(app: &mut App, say: &str, frames: u32, f: impl FnMut(&mut World) + Send + Sync + 'static) {
-    app.world_mut().resource_mut::<Warm>().list.push((say.to_string(), frames, Box::new(f)));
+    app.world_mut().get_resource_or_init::<Warm>().list.push((say.to_string(), frames, Box::new(f)));
 }
 
 // Whether the game can start: warmed, or not warming.
@@ -184,7 +184,7 @@ fn describe(d: &bevy::render::render_resource::PipelineDescriptor) -> String {
 // --- what is rehearsed here (everything on this branch that is drawn only after an event) -----------------------------
 
 // The player `far` in front of segment `part` of the `n`th person (the line-up's order), looking at it.
-fn aim(w: &mut World, n: usize, part: &str, far: f32) -> Option<(Entity, Vec3)> {
+pub fn aim(w: &mut World, n: usize, part: &str, far: f32) -> Option<(Entity, Vec3)> {
     let mut q = w.query::<(Entity, &crate::person::Person, &crate::ragdoll::Ragdoll)>();
     let mut people: Vec<_> = q.iter(w).map(|(e, p, rd)| (e, p.body.name.clone(), rd.segs.iter().find(|s| s.def.name == part).map(|s| s.now.translation))).collect();
     people.sort_by_key(|p| crate::sandbox::BODIES.iter().position(|b| *b == p.1));
@@ -199,7 +199,7 @@ fn aim(w: &mut World, n: usize, part: &str, far: f32) -> Option<(Entity, Vec3)> 
 }
 
 // `key` in the hand, ready and loaded.
-fn take(w: &mut World, key: &'static str) {
+pub fn take(w: &mut World, key: &'static str) {
     let mut wp = w.resource_mut::<Weapons>();
     wp.slots[0] = Some(key);
     wp.busy = 0.0;
@@ -210,14 +210,14 @@ fn take(w: &mut World, key: &'static str) {
     wp.queue.push(Act::Select(0));
 }
 
-fn press(w: &mut World, button: u8) {
+pub fn press(w: &mut World, button: u8) {
     let mut wp = w.resource_mut::<Weapons>();
     wp.busy = 0.0;
     wp.reloading = 0.0;
     wp.queue.push(Act::Press(button));
 }
 
-fn release(w: &mut World, button: u8) {
+pub fn release(w: &mut World, button: u8) {
     w.resource_mut::<Weapons>().queue.push(Act::Release(button));
 }
 
@@ -248,6 +248,15 @@ fn rehearse(app: &mut App) {
         });
         add(app, crate::weapons::arm(key).name, 4, |w| release(w, 0));
     }
+    // A dressing on someone's wound (its gauze, port/skin).
+    add(app, "a dressing", 4, |w| {
+        let Some((who, _)) = aim(w, 0, "belly", 1.2) else { return };
+        crate::npc::with(w, who, |npc| {
+            if let Some(wound) = crate::dressing::wounds(npc).into_iter().next() {
+                crate::dressing::dress(npc, &wound);
+            }
+        });
+    });
     // A stab and a cut, a blow with the bat, a punch; a thing thrown, and the grenade.
     for (key, button, part, far) in [("knife", 0u8, "belly", 0.7), ("sword", 2, "forearmL", 0.7), ("bat", 0, "head", 0.7), ("fists", 2, "head", 0.5)] {
         add(app, "blades and blows", 3, move |w| {
@@ -303,8 +312,11 @@ fn rehearse(app: &mut App) {
 pub fn plugin(on: bool) -> impl Fn(&mut App) {
     move |app: &mut App| {
         let p = Pipelines::default();
+        // (What this file rehearses first, then what the other plugins added, whichever was added to the app first.)
+        let theirs = app.world_mut().remove_resource::<Warm>().map_or_else(Vec::new, |w| w.list);
         app.insert_resource(p.clone()).insert_resource(Warm { on, ..default() }).add_systems(Last, drive);
         rehearse(app);
+        app.world_mut().resource_mut::<Warm>().list.extend(theirs);
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.insert_resource(p).add_systems(Render, count.in_set(RenderSystems::Cleanup));
         }

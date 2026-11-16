@@ -411,3 +411,97 @@ shared machine (150 to 540 ms a frame either way). The skin's fragment shader ad
 painted, five more for each of the wound and film sheets where something is, and loops over the person's holes (up to
 64), windows (64) and blow records (16) while they have any; the vertex shader three table reads a corner. CPU: the
 runs step 30 times a second (a few triangle tests a run), the bruise rows copied where they changed.
+
+## The face (phase 3, branch port/face)
+
+face.rs (face.ts), the look halves of eyes.rs (eye.wesl: eyes.ts EyeLayer, face.ts PupilLayer), teeth.rs (teeth.ts
+`_draw`, `_stump`, `_fall`) and throat.rs (throat.ts `_coat`, `_tears`, `_pool`), and warm.rs (warm.ts). The numbers and
+the reasons are the TS's (dev/research/faces.md, eye-trauma.md), in the same words.
+
+### A face (face.rs)
+Everyone with a `Hurt` is given a `face::Face` (the rig, MakeHuman's face pose units out of the body's file, made once a
+body: 55 face bones, each unit as the bones it turns, about which axis, how far). Every frame, after the body has put the
+head where it is (Update, after `ragdoll::send`), the face is worked out in FACS action units (pain by the PSPI's units,
+fear, the startle at a shot or blast, each cry's face, air hunger, shock, out cold, dead), the units mixed into pose
+units (`AUS`), the lids and the gaze added, and the mix blended as MakeHuman blends (each unit's turn scaled by its
+weight, later units on the left) into those bones' turns in `person.posed.local`, which person.rs puts on the skeleton.
+What it reads: the vitals; `Hurt` (the eyes' clamp, blindness and collapse, `bruise.swollen`, `crying`,
+`bones.jaw_hangs`, `throat.gape`); the voice; the player's eye and what they hold (the threat); `Muzzle::at` (when the
+last flash was: a startle); the head's ragdoll segment (how a slack jaw sags, where to glance); `Behaviour::wound` (a
+fresh wound is looked at).
+- The voice: sound.rs's `Voices` (a resource: person to the `Playing` and its kind) holds what each person is saying, put
+  there where sound.rs plays a cry (`Happened::Say`) or a retch or vomit at the head; taken out when it is cut
+  (`Happened::Cut`). The face opens the jaw by the loudness of the last 30 ms of the take's own samples at the moment it
+  is playing (`Voice::data`, `from`, `rate`, `start` on `Sound::now`), as face.ts read its AudioBuffer.
+- What others can read: `Face::jaw` (degrees open), `blink`, `pupil` (mm), `pale` (0 to 1), `fear`. throat.rs reads the
+  jaw off the jaw bone (`bones().mouth_open()`), which the face now turns.
+- The eyes' bones as their hurt leaves them (a collapsed globe shorter front to back and drawn into the socket, a
+  blown-out floor letting it sink): their joints' Transform scale and translation (person.rs writes only rotations).
+- Pallor: the skin's colour as the blood leaves it, on port/skin's `Flesh` (its `base.base_color`, alpha kept for the
+  x-ray), written when it changes by an eightieth.
+- Its own randomness (blinks, glances, microsaccades): an `Rng` per face seeded by the entity, so the face throws none of
+  the scenario's or medicine's dice and the other checks' numbers are as they were.
+- The head turned to the player is behaviour.rs's `look` (the TS's behaviour `_look`); person.ts's own `_lookAt` and
+  `_face` (blinks, the smile) were not used by the sandbox (face.ts overwrote those bones) and are not ported.
+
+### The eyes (eyes.rs's look, eye.wesl)
+Each person's eyes get a material of their own, `eyes::EyeMaterial` (StandardMaterial with `EyeLook`, eye.wesl's fragment
+shader), the frame after the face: the picture wet (roughness 0.04: a sharp catchlight of every lamp), the pupil drawn at
+any size (inside the iris the picture is sampled from where the painted pupil and iris would put each point: PupilLayer),
+and over it what the eye shows of its hurt (EyeLayer): blood under the conjunctiva spreading over the white, the hole or
+cut in the wall with the uvea pushed out through it, blood in the front chamber settling into a layer level in the world,
+a collapsed globe's wall in folds. The TS painted the holes, cuts and patches on a 256-pixel canvas a person and uploaded
+it; here they are a list in the material's uniform (`EyeUniform`: up to 12 patches and 12 marks for both eyes) worked out
+where they are drawn, edges a pixel of that sheet soft, and the uniform is written only when something in it moved (a
+pupil by under half a percent is not worth a new bind group). Which painted eye is which, the iris's size and metres of
+eye a unit of the picture are read off each body's mesh once (`Irises`). A blade's cut runs across the picture along its
+edge: eyes.rs `pierced` now finds which way with the TS's second line beside the first (`m.across`).
+
+### The teeth and the mouth (teeth.rs's and throat.rs's looks)
+- `Happened::Tooth`: the person's teeth mesh made their own the first time one goes (the body's teeth part copied), its
+  index written again without the teeth chipped, broken or out; a stump (the tooth's corners pressed flat at the break)
+  as a plain mesh under the bone it stands in (no skinning); the piece, or a bullet's three bits, a Rapier ball
+  (`GROUP_31`, meeting only the hall) thrown with the TS's seven throws a piece. At most 24 pieces lie about.
+- `Happened::Tongue`: a card lying on the tongue under the bone that carries it (the torn hole painted once, at start).
+- The coat (blood on the tongue and teeth), and the pool: the blood lying in the mouth as a level disc where the
+  horizontal plane at its height cuts the cavity's ellipsoid (the cut ellipse's own axes found from its conjugate
+  diameters, so the disc is a Transform), under the person.
+- Both run in First before `npc::forget`, so a tooth or a tear made anywhere in the last frame, a scenario's step
+  included, is drawn.
+
+### The check
+`cargo run -- --scenario face --out <dir>` (face.rs `scenario`): the groundskeeper close up at rest, in the middle of
+each cry (scream, yell, groan, weeping, gasp, cough: said from the step and played and mouthed as sound.rs would), in
+pain, mid-blink, looking at the player from the side; a pellet in the young man's right eye (1.5 s and 20 s on); the old
+man dead (his last breath, and half a minute on: lids part open, jaw dropped, pupils wide); a bat into the hooded man's
+chin and his front teeth knocked out. Each picture's face (action units, jaw, blink, pupil, gaze) goes into the log.
+tools/port-face.mjs takes the same pictures in the TS game (the waits in each face's own seconds).
+
+## The warm-up (warm.rs): a list for every job
+Every render pipeline the game will need is made behind a loading screen before play, in the game and in the `warm`
+scenario (other scenarios start as they did: compiling synchronously, they hold a frame up instead, and the rehearsal
+would change what they log). A pipeline is made for each mix of material, mesh layout and view that is drawn, the first
+time it is drawn in view: so the warm-up puts the people through what happens to people, in front of the camera, waiting
+after each step until the render world's `PipelineCache` has nothing left waiting for three frames running, then resets
+the room as K does (new people, what was carried given back, the player where the game starts them). Sound is muted
+meanwhile.
+
+Anything a job draws only after an event goes on the list, in its plugin:
+
+    crate::warm::add(app, "the floor's blood", 4, |w: &mut World| {   // what the screen says, frames at least, the event
+        crate::npc::with(w, who, |npc| ...);                           // a wound, a cut, a stream: whatever brings it on
+    });
+
+Steps run in the order added (each plugin's in the order main.rs adds the plugins); `warm::aim(w, n, part, far)` puts the
+player in front of the `n`th person of the line-up's segment `part`, `warm::take(w, key)` puts a weapon in the hand. What
+is on the list now (warm.rs `rehearse`): everything on the board in the hand (the held models and arms, held.wesl), each
+gun at someone and the same shot put through them (flash, case, the hole behind, the wound), a dressing, a stab, a cut, a
+bat, a punch, a thing thrown, the grenade, an eye shot with teeth knocked out, the tongue torn and blood in the mouth,
+the x-ray on and off. To add: port/blood (drops, the floor's pools, the clothes' stains, the reflection), port/cut (a limb
+severed by a blade and by a shot, shards, organs out of an opened belly, the wall's cut faces).
+
+`warm::Pipelines` (a resource) counts what the render world's cache has made (`made`) and is still making (`waiting`);
+with `note` on it keeps what each new one was made for (its label and vertex shader switches).
+`cargo run -- --scenario warm --out <dir>` waits for the warm-up, then plays a fight (each kind of weapon at the line-up,
+a grenade, an eye shot, blood left to run, the x-ray) and logs `made_after_warm_up`, which should be 0, and the new
+pipelines' descriptions if not.

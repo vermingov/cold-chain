@@ -857,12 +857,12 @@ fn faces(
     }
 }
 
-// The skin's colour as the blood leaves it: the red goes first, toward a grey-yellow white (pallor). The person's skin
-// materials are made their own the first time it shows, and written only when it has changed enough to see.
-// (port/skin gives the skin materials of its own, `skin::Flesh`: there the same colour goes on `Flesh::base`.)
-#[derive(Component)]
+// The skin's colour as the blood leaves it: the red goes first, toward a grey-yellow white (pallor), written to the
+// person's own skin materials (port/skin's `Flesh`; or, without them, SKIN_PLAIN=1, their StandardMaterial made their
+// own the first time it shows), only when it has changed enough to see.
+#[derive(Component, Default)]
 pub struct Pallor {
-    materials: Vec<Handle<StandardMaterial>>,
+    plain: Vec<Handle<StandardMaterial>>,
     shown: f32,
 }
 
@@ -872,34 +872,54 @@ pub fn pallor_colour(pale: f32) -> Color {
 
 fn pallor(
     mut commands: Commands,
-    mut people: Query<(Entity, &Person, &Face, Option<&mut Pallor>)>,
+    mut people: Query<(Entity, &Person, &Face, Option<&crate::skin::Skin>, Option<&mut Pallor>)>,
     parts: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut flesh: ResMut<Assets<crate::skin::Flesh>>,
 ) {
-    for (e, person, face, own) in &mut people {
-        match own {
-            None if face.pale > 0.002 => {
-                let mut list = Vec::new();
-                for &(i, part) in &person.parts {
-                    if person.body.parts[i].kind != "skin" {
-                        continue;
+    for (e, person, face, skin, own) in &mut people {
+        let shown = own.as_ref().map_or(0.0, |p| p.shown);
+        if (shown - face.pale).abs() <= 0.0125 {
+            continue;
+        }
+        let colour = pallor_colour(face.pale);
+        let mut plain = own.as_ref().map_or_else(Vec::new, |p| p.plain.clone());
+        match skin {
+            Some(skin) => {
+                for (_, _, h, mode) in &skin.materials {
+                    if *mode == crate::skin::SKIN || *mode == crate::skin::UNDER {
+                        // (keeping its alpha: the x-ray sees through the skin by it)
+                        if let Some(mut m) = flesh.get_mut(h) {
+                            let a = m.base.base_color.alpha();
+                            m.base.base_color = colour.with_alpha(a);
+                        }
                     }
-                    let Some(m) = parts.get(part).ok().and_then(|m| materials.get(&m.0)).cloned() else { continue };
-                    let h = materials.add(StandardMaterial { base_color: pallor_colour(face.pale), ..m });
-                    commands.entity(part).insert(MeshMaterial3d(h.clone()));
-                    list.push(h);
                 }
-                commands.entity(e).insert(Pallor { materials: list, shown: face.pale });
             }
-            Some(mut own) if (own.shown - face.pale).abs() > 0.0125 => {
-                own.shown = face.pale;
-                for h in &own.materials {
+            None => {
+                if plain.is_empty() {
+                    for &(i, part) in &person.parts {
+                        let Some(m) = parts.get(part).ok().filter(|_| person.body.parts[i].kind == "skin").and_then(|m| materials.get(&m.0)).cloned() else { continue };
+                        let h = materials.add(m);
+                        commands.entity(part).insert(MeshMaterial3d(h.clone()));
+                        plain.push(h);
+                    }
+                }
+                for h in &plain {
                     if let Some(mut m) = materials.get_mut(h) {
-                        m.base_color = pallor_colour(face.pale);
+                        m.base_color = colour;
                     }
                 }
             }
-            _ => {}
+        }
+        match own {
+            Some(mut p) => {
+                p.shown = face.pale;
+                p.plain = plain;
+            }
+            None => {
+                commands.entity(e).insert(Pallor { plain, shown: face.pale });
+            }
         }
     }
 }
@@ -972,6 +992,15 @@ fn face_at(w: &mut World, e: Entity) -> (Vec3, Vec3) {
 fn close(name: &'static str, body: &'static str, turn: f32, far: f32) -> Vec<Step> {
     vec![
         Step::Do(Box::new(move |w: &mut World| {
+            // (Nothing of the HUD over the pictures, and nothing in the hands.)
+            for mut v in w.query_filtered::<&mut Visibility, With<Text>>().iter_mut(w) {
+                *v = Visibility::Hidden;
+            }
+            let mut wp = w.resource_mut::<Weapons>();
+            if wp.slots[wp.slot] != Some("hands") {
+                wp.slots[0] = Some("hands");
+                wp.queue.push(crate::weapons::Act::Select(0));
+            }
             let e = who(w, body);
             let (at, fwd) = face_at(w, e);
             let cam = at + Quat::from_rotation_y(turn * RAD) * fwd * far;
@@ -998,6 +1027,16 @@ fn close(name: &'static str, body: &'static str, turn: f32, far: f32) -> Vec<Ste
     ]
 }
 
+// So many frames gone by with nothing drawn (on a software renderer a long wait is otherwise most of a run).
+fn dark(frames: u32) -> [Step; 3] {
+    let cameras = |on: bool| Step::Do(Box::new(move |w: &mut World| {
+        for mut c in w.query::<&mut Camera>().iter_mut(w) {
+            c.is_active = on;
+        }
+    }));
+    [cameras(false), Step::Wait(frames), cameras(true)]
+}
+
 fn npc(body: &'static str, f: impl Fn(&mut crate::npc::Npc) + Send + Sync + 'static) -> Step {
     Step::Do(Box::new(move |w: &mut World| {
         let e = who(w, body);
@@ -1005,13 +1044,25 @@ fn npc(body: &'static str, f: impl Fn(&mut crate::npc::Npc) + Send + Sync + 'sta
     }))
 }
 
+// A cry said now (npc.say), and played and mouthed as sound.rs does with what medicine says in Update: said from a step,
+// at the end of the frame, it would be forgotten before sound.rs looks.
+fn say(w: &mut World, body: &str, kind: &'static str) {
+    let e = who(w, body);
+    crate::npc::with(w, e, |npc| npc.say(kind, 1.0, true));
+    let head = w.get::<Person>(e).map(|p| p.joints[p.body.by_name["head"]]);
+    let playing = w.resource_mut::<Sound>().play(&format!("{kind}-{body}"), crate::sound::Play { gain: 1.0, follow: head, ..default() });
+    if let Some(playing) = playing {
+        w.resource_mut::<Voices>().0.insert(e, (playing, kind));
+    }
+}
+
 pub fn scenario() -> Vec<Step> {
     let mut s = vec![Step::Wait(90)];
     let g = "sexton";
-    s.extend(close("face_rest", g, 0.0, 0.55));
+    s.extend(close("face_rest", g, 0.0, 0.4));
     // Each cry, caught where its recording is loud (the frames counted from the takes' loudness: scenario log).
     for (kind, wait) in [("scream", 24), ("yell", 14), ("groan", 30), ("cry", 40), ("gasp", 14), ("cough", 10)] {
-        s.push(npc(g, move |npc| npc.say(kind, 1.0, true)));
+        s.push(Step::Do(Box::new(move |w: &mut World| say(w, g, kind))));
         s.push(Step::Wait(wait));
         s.extend(close(match kind {
             "scream" => "face_scream",
@@ -1020,8 +1071,8 @@ pub fn scenario() -> Vec<Step> {
             "cry" => "face_cry",
             "gasp" => "face_gasp",
             _ => "face_cough",
-        }, g, 0.0, 0.55));
-        s.push(Step::Wait(200));
+        }, g, 0.0, 0.4));
+        s.extend(dark(200));
     }
     // Pain, as it comes.
     s.push(Step::Do(Box::new(move |w: &mut World| {
@@ -1029,12 +1080,12 @@ pub fn scenario() -> Vec<Step> {
         w.get_mut::<Vitals>(e).unwrap().pain = 0.8;
     })));
     s.push(Step::Wait(20));
-    s.extend(close("face_pain", g, 0.0, 0.55));
+    s.extend(close("face_pain", g, 0.0, 0.4));
     s.push(Step::Do(Box::new(move |w: &mut World| {
         let e = who(w, g);
         w.get_mut::<Vitals>(e).unwrap().pain = 0.0;
     })));
-    s.push(Step::Wait(300));
+    s.extend(dark(300));
     // A blink, shut.
     s.push(Step::Do(Box::new(move |w: &mut World| {
         let e = who(w, g);
@@ -1043,7 +1094,7 @@ pub fn scenario() -> Vec<Step> {
         f.blink_long = 1.0;
     })));
     s.push(Step::Wait(2));
-    s.extend(close("face_blink", g, 0.0, 0.55));
+    s.extend(close("face_blink", g, 0.0, 0.4));
     // Looking at the player, who stands to one side.
     s.push(Step::Do(Box::new(move |w: &mut World| {
         let e = who(w, g);
@@ -1064,7 +1115,7 @@ pub fn scenario() -> Vec<Step> {
     }));
     s.push(Step::Wait(90));
     s.extend(close("face_eye_pellet", "buyer", 0.0, 0.4));
-    s.push(Step::Wait(60 * 20));
+    s.extend(dark(60 * 20));
     s.extend(close("face_eye_pellet_later", "buyer", 0.0, 0.4));
     // The old man dead: his last breath, and his face half a minute on.
     s.push(Step::Do(Box::new(|w: &mut World| {
@@ -1075,7 +1126,7 @@ pub fn scenario() -> Vec<Step> {
     })));
     s.push(Step::Wait(30));
     s.extend(close("face_dying", "oldman", 0.0, 0.5));
-    s.push(Step::Wait(60 * 30));
+    s.extend(dark(60 * 30));
     s.extend(close("face_dead", "oldman", 0.0, 0.5));
     // The man in the hood: a bat into his chin, and his front teeth knocked out.
     s.push(npc("hood", |npc| {

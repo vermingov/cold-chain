@@ -470,5 +470,7 @@ fn draw_teeth(
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Debris>().add_systems(PostUpdate, draw_teeth);
+    // (Before what happened is forgotten, so that a tooth knocked out anywhere in the last frame, a scenario's step
+    // included, is drawn.)
+    app.init_resource::<Debris>().add_systems(First, draw_teeth.before(crate::npc::forget));
 }
