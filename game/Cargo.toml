@@ -25,3 +25,8 @@ debug = 0
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The game as shipped (`cargo build --release`): Cargo's release profile as it is, everything at opt-level 3 in 16
+# codegen units. Cross-crate LTO (even thin) is left off: it keeps LLVM bitcode in every dependency's library, which
+# makes target/release (2.4 GB without it) more than the build machine's disk holds beside the debug builds, and every
+# build of the game then optimises all of Bevy again at the link. The package's binary is stripped after the build.

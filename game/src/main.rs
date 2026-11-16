@@ -7,6 +7,8 @@
 // shortcut: the foundation reads in everything the TS files hold (the anatomy's vessels, the face's pose units, the
 // map's questions for blood and sound) before the phase 2 modules that use it exist; take this out once they do.
 #![allow(dead_code)]
+// A release build on Windows opens no console window beside the game's (a debug build keeps it for the log).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod anatomy;
 mod arm;
