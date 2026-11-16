@@ -167,8 +167,9 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
 - `play` returns `Option<Playing>` (None: no such recording; nothing is made up). `Playing::voice()` gives what is
   playing (`data`: the take's samples, `from`, `length`, `rate`, `start` on `Sound::now()`'s clock): a face mouthing
   its voice. `sound.has(name)`.
-- The same take asked for again in the same frame within a metre of where it was asked is merged into the first (as
-  loud as both by power): a shotgun's pellets into one body are one sound. A `follow` or `most` sound never merges.
+- The same take asked for again in the same frame within a metre of any already asked is merged into it (as loud as
+  both by power): a shotgun's pellets into one body are one sound. (The TS merged only with the first; a grenade's
+  fragments into four people then made 123 sounds at once, now 8.) A `follow` or `most` sound never merges.
 - What was played and how (distance gain, wall, cutoff, pan, merged count) is pushed to `sound.heard` (Heard), which a
   scenario may drain into its log.
 - Takes are the manifests' (assets/sounds, assets/cries); the room is 'cold' and the room tone 'room-sandbox' is driven
@@ -205,8 +206,15 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
   the room rings about 1.2 s to -60 dB (Freeverb at the 'cold' room's 1.1 s, the shot's own tail in the figure); behind
   the cover wall a shot is cut to 0.35 and 1 kHz on its way to the ears, and the total falls only 0.6 dB, as in the TS,
   the room's ring being unmuffled; nine 'bullet-flesh' asked for in one frame within a metre are one sound at gain 3.
+- Measured (`arsenal-use`, dev build, software Vulkan, a shared 4-core machine): a nine-pellet blast into a person 1.7
+  to 4.6 ms (the TS: 110 to 360 ms; medicine's npc.surface is cached for the frame, so the nine reuse it); the arms
+  (hands.rs `put`) 0.02 to 0.09 ms a frame, the fists 0.06, the hand's pose under 0.05 (worst single frames 3 to 6 ms
+  with other jobs building beside it; the TS's arms were 29 ms on a laptop). Casings are 40 rigid bodies a cartridge,
+  reused; bullet holes 600 entities on one mesh and material (Bevy batches them), reused. `ARSENAL_USE=grenade,shotgun`
+  runs the scenario with only those.
 - Profiler (F2): `profiler::timed("row name", system)` in place of a system gives it a row of its own; every main
-  schedule has a row for the rest of its systems, and the render world one for its own thread. `Notes::note(now, what)`
+  schedule has a row for the rest of its systems, and the render world one for its own thread; under them the draw calls by pass (the render world's phases: opaque, alpha
+  masked, blended, shadow maps) and the meshes in view by what they belong to. `Notes::note(now, what)`
   is the TS's `world.note`. F4 saves `coldchain-profile-<version>-<time>.json` in ~/Downloads (or the working directory)
   in the TS's format; `node tools/profile-report.mjs` reads it.
 ## Medicine (phase 2, branch port/medicine)

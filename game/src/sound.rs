@@ -354,7 +354,7 @@ pub struct Sound {
     mixer: Option<Mixer>,
     places: Vec<Place>,
     asked: Vec<Asked>,
-    together: HashMap<String, usize>,
+    together: HashMap<String, Vec<usize>>,
     ear: Option<(Vec3, Quat)>,
     room: &'static str,
     // Its own dice, so what is heard never changes what the game's own random numbers do next.
@@ -441,15 +441,16 @@ impl Sound {
     pub fn play(&mut self, name: &str, how: Play) -> Option<Playing> {
         let takes = self.takes.get(name)?;
         if let (Some(at), None, true) = (how.at, how.follow, how.most == 0.0) {
-            if let Some(&k) = self.together.get(name) {
+            // (Any of them already asked for this moment, not only the first: a grenade's fragments into four people
+            // asked for 123 at once, and the TS's first-only made 123 places.)
+            let near = self.together.get(name).and_then(|ks| {
+                ks.iter().copied().find(|&k| matches!(&self.asked[k].place, Some(From::At(there)) if there.distance(at) < 1.0))
+            });
+            if let Some(k) = near {
                 let same = &mut self.asked[k];
-                if let Some(From::At(there)) = &same.place {
-                    if there.distance(at) < 1.0 {
-                        same.gain = (same.gain * same.gain + how.gain * how.gain).sqrt();
-                        same.merged += 1;
-                        return Some(same.voice.clone());
-                    }
-                }
+                same.gain = (same.gain * same.gain + how.gain * how.gain).sqrt();
+                same.merged += 1;
+                return Some(same.voice.clone());
             }
         }
         let take = takes[(self.rng.next() * takes.len() as f32) as usize % takes.len()].clone();
@@ -475,7 +476,7 @@ impl Sound {
             _ => None,
         };
         if matches!(place, Some(From::At(_))) && how.most == 0.0 {
-            self.together.entry(name.into()).or_insert(self.asked.len());
+            self.together.entry(name.into()).or_default().push(self.asked.len());
         }
         self.asked.push(Asked { take, from, length, fade_in: 0.004, fade_out, gain: how.gain, rate, place, voice: voice.clone(), merged: 1 });
         Some(voice)

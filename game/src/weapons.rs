@@ -2667,7 +2667,9 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
         wp.select(0);
     })));
     let level = |l: f32| Step::Do(Box::new(move |w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = l));
-    for a in ARMS {
+    // (ARSENAL_USE=grenade,shotgun tries only those.)
+    let only: Option<Vec<String>> = std::env::var("ARSENAL_USE").ok().map(|v| v.split(',').map(String::from).collect());
+    for a in ARMS.iter().filter(|a| only.as_ref().is_none_or(|o| o.iter().any(|k| k == a.key))) {
         let key = a.key;
         // Taken off the board: stood a metre and a half out from it, looking at it, E. (Into the slot held, which is put
         // back on the board first so each goes into the same slot.)
