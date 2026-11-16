@@ -272,14 +272,16 @@ impl Skin {
         let ex = arms[0].0;
         let ey = n.cross((ex - n * ex.dot(n)).normalize_or(tangent(n)));
         let angle = |a: Vec3| a.dot(ey).atan2(a.dot(ex));
-        let arm = |j: usize| arms.get(j).map_or([0.0, 0.0, 0.0], |(a, h)| [angle(*a), h[0], h[1]]);
+        // The splits after the first are the tears off it, shorter and narrower than it: a slit with a split or two
+        // across it, not a cross of equals (DiMaio's exits are slits, crescents, irregular tears, stars only over bone).
+        let mut arm = |j: usize| arms.get(j).map_or([0.0, 0.0, 0.0], |(a, h)| [angle(*a), h[0] * (0.35 + 0.4 * rng.next()), h[1] * 0.6]);
         let (a2, a3) = (arm(1), arm(2));
         let longest = arms.iter().map(|(_, h)| h[0]).fold(0.0, f32::max);
         let wide = arms[0].1[0] * 2.0;
         // A single slit now and then a crescent, most only a little bent; a star's splits straight (bent the same way they
         // would turn it into a pinwheel).
         let bend = if arms.len() > 1 { (rng.next() - 0.5) * 0.2 } else if rng.next() < 0.35 { (0.6 + 0.4 * rng.next()) * if rng.next() < 0.5 { -1.0 } else { 1.0 } } else { (rng.next() - 0.5) * 0.5 };
-        let burst = wide * (0.1 + 0.08 * rng.next());
+        let burst = wide * (0.07 + 0.06 * rng.next());
         // (Its lips turned out in a band a millimetre and a half wide and more for a bigger tear: wounds.rs's `lip`.)
         let reach = longest + 0.0015 + wide * 0.04 + 0.003;
         let born = k.map_or(0.0, |k| self.table[SHOTS * WIDE + 1 + (k - 1) * PER_SHOT + 5][3]);

@@ -242,7 +242,7 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
         h = 0.45 + min(-d * 14.0, DEEPEST);
         if s.kind == CHARGE {
             // A crater, its floor torn tissue a few millimetres down.
-            h = min(h, 4.0 + 4.5 * noise2(q * 0.3 + s.seed) + 2.5 * noise2(mat2x2(0.8, 0.6, -0.6, 0.8) * q * 0.7 + s.seed));
+            h = min(h, 4.0 + 2.5 * noise2(q * 0.3 + s.seed) + 1.5 * noise2(mat2x2(0.8, 0.6, -0.6, 0.8) * q * 0.7 + s.seed));
         }
     } else if d < fall {
         let t = 1.0 - d / fall;
@@ -319,7 +319,7 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     // The lips turned out in a band (wounds.rs `tear`'s lip, 1.5 mm and more for a bigger tear), raised half a
     // millimetre to a millimetre.
     let lip = 1.5 + 0.08 * along;
-    let lift = min(0.3 + 0.035 * along, 0.75);
+    let lift = min(0.2 + 0.025 * along, 0.5);
     if inside < -lip {
         return vec4(0.0, inside, 0.0, 0.0);
     }
@@ -355,7 +355,7 @@ fn blood_level(s: Shot, age: f32) -> f32 {
         return 5.0 - 4.2 * (1.0 - exp(-age / 20.0));
     }
     if s.kind == CHARGE {
-        return 9.0 - 8.0 * (1.0 - exp(-age / 25.0));
+        return 6.0 - 5.0 * (1.0 - exp(-age / 25.0));
     }
     return 6.0 - 5.5 * (1.0 - exp(-age / 30.0));
 }
@@ -421,9 +421,18 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     // then that place found closely between the last two steps.
     let top = select(0.0, -LIPS, exits);
     let near = SHALLOW - top;
+    // Most of a wound's patch is skin it never opened (the bruise round the ring, the powder round a close shot): where
+    // the ray meets nothing above the skin, at it or just under it, it stops at the skin without the march.
+    var opened = false;
+    for (var p = 0; p < 3; p++) {
+        let d = select(select(SHALLOW, 0.0, p == 1), top, p == 0);
+        for (var j = 0u; j < count; j++) {
+            opened = opened || shot_at(shots[j], base[j] + stride[j] * d, fine).x != 0.0;
+        }
+    }
     var lo = top;
-    var hi = DEEPEST;
-    for (var i = 1; i <= STEPS; i++) {
+    var hi = select(0.0, DEEPEST, opened);
+    for (var i = 1; i <= select(0, STEPS, opened); i++) {
         let t = f32(i) / f32(STEPS);
         var d = top + near * t * 2.0;
         if t > 0.5 {
@@ -441,7 +450,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         }
         lo = d;
     }
-    for (var i = 0; i < 7; i++) {
+    for (var i = 0; i < select(0, 7, opened); i++) {
         let d = (lo + hi) * 0.5;
         var surface = 0.0;
         for (var j = 0u; j < count; j++) {
@@ -562,8 +571,8 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         // The lips turned out: the skin bruised red along them, blood smeared at the edge.
         let lip = 1.5 + 0.08 * s.a.z * 1000.0;
         let t = clamp(1.0 + inside / lip, 0.0, 1.0);
-        c = mix(c, c * vec3(0.9, 0.7, 0.72), t * 0.5);
-        c = blood_over(c, 0.03 * pow(t, 4.0), wet);
+        c = mix(c, c * vec3(0.8, 0.52, 0.52), t * 0.7);
+        c = blood_over(c, 0.05 * t * t * t, wet);
         // The skin's cut edge seen over the lip (the turned-out dermis, pale), then the fat bulging between, glistening and
         // filmed with blood, red muscle where it is torn deeper, and the track black-red.
         let edge = smoothstep(-0.1, 0.12, inside);
