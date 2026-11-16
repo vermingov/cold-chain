@@ -262,6 +262,19 @@ pub fn release(w: &mut World, button: u8) {
     w.resource_mut::<Weapons>().queue.push(Act::Release(button));
 }
 
+// A fight as a player has it: what, at whom in the line-up, where, from how far, which button, held how many frames.
+const FIGHT: &[(&str, usize, &str, f32, u8, u32)] = &[
+    ("pistol", 1, "chest", 2.5, 0, 2),
+    ("shotgun", 2, "belly", 2.0, 0, 2),
+    ("ak", 0, "thighR", 3.0, 0, 15),
+    ("rifle", 3, "head", 3.0, 0, 2),
+    ("knife", 1, "belly", 0.6, 0, 10),
+    ("sword", 2, "upperarmL", 0.8, 2, 10),
+    ("bat", 0, "head", 0.8, 0, 10),
+    ("fists", 3, "head", 0.5, 2, 10),
+    ("grenade", 1, "chest", 5.0, 0, 3),
+];
+
 fn rehearse(app: &mut App) {
     // Everything in the hall drawn at once, whether in view or not (a pipeline is made for what is drawn in view: a prop
     // first seen from the far side of the hall would be made then), and then culled again.
@@ -389,6 +402,19 @@ fn rehearse(app: &mut App) {
         press(w, 0);
     });
     add(app, "the bowel", 2, |w| release(w, 0));
+    // The fight the check plays, on fresh people: each kind of weapon as a player uses it (a sword's cut takes an arm
+    // off by the cut's own geometry, flesh.rs, not as sever() above does).
+    add(app, "a fight", 60, |w| {
+        let _ = w.run_system_once(crate::sandbox::reset);
+    });
+    for &(key, n, part, far, button, hold) in FIGHT {
+        add(app, "a fight", 50, move |w| {
+            take(w, key);
+            aim(w, n, part, far);
+        });
+        add(app, "a fight", hold, move |w| press(w, button));
+        add(app, "a fight", 40, move |w| release(w, button));
+    }
     // Whatever the rehearsal made and keeps hidden till it is wanted (a pool of sparks, smoke, a flash's card), and
     // whatever it left out of view, drawn once.
     add(app, "the rest", 3, show_all);
@@ -452,15 +478,9 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
             log(w, json!({ "event": "after", "what": key, "made_after_warm_up": made }));
         })));
     };
-    fight("pistol", 1, "chest", 2.5, 0, 2);
-    fight("shotgun", 2, "belly", 2.0, 0, 2);
-    fight("ak", 0, "thighR", 3.0, 0, 15);
-    fight("rifle", 3, "head", 3.0, 0, 2);
-    fight("knife", 1, "belly", 0.6, 0, 10);
-    fight("sword", 2, "upperarmL", 0.8, 2, 10);
-    fight("bat", 0, "head", 0.8, 0, 10);
-    fight("fists", 3, "head", 0.5, 2, 10);
-    fight("grenade", 1, "chest", 5.0, 0, 3);
+    for &(key, n, part, far, button, hold) in FIGHT {
+        fight(key, n, part, far, button, hold);
+    }
     s.push(Step::Wait(240));
     s.push(act(|w| {
         // An eye and the teeth, as the face's own check does them.
