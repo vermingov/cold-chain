@@ -104,6 +104,12 @@ try {
     await tick(60);
     await close('face_jaw_teeth', 'hood', 0, 0.45);
     await close('face_jaw_teeth_side', 'hood', 30, 0.45);
+    // The groundskeeper's head cut off: the face on it half a second and eight seconds on.
+    await rig.eval(`(async () => { const D = await import('/src/sandbox/dismember.ts'); D.sever(__M.npc('${g}'), 'head', '', null, null, 'blade'); return true; })()`);
+    await tick(30);
+    await close('face_head_off', g, 0, 0.4);
+    await tick(60 * 8);
+    await close('face_head_off_later', g, 0, 0.4);
     console.log('errors', JSON.stringify(rig.errors?.().slice(0, 5)));
 } finally {
     await rig.close();
