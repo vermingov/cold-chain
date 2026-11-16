@@ -1131,7 +1131,10 @@ fn undress(w: &mut World) {
             skin.window(Vec3::ZERO, Vec3::Y, 5.0, 5.0);
         }
     }
-    w.spawn((Lamp, PointLight { intensity: crate::map::CANDELA, range: 6.0, shadow_maps_enabled: false, ..default() }, Transform::default()));
+    // The check's lamp fills the shadows only: at a candela, 35 cm off, it doubled the hall's light, and pale skin came out
+    // nearly white (sRGB 235) with every red on it glowing. A third of one keeps the skin as exposed as the hall leaves a
+    // face in the people check, in this game and the TS's (sRGB 150-165).
+    w.spawn((Lamp, PointLight { intensity: 0.3 * crate::map::CANDELA, range: 6.0, shadow_maps_enabled: false, ..default() }, Transform::default()));
 }
 
 fn shoot_them(w: &mut World) {
