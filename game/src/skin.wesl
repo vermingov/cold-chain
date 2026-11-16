@@ -389,7 +389,10 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
     var exits = false;
     for (var j = 0u; j < 4u && k > 0u && count < 3u; j++) {
         let s = shot(k);
-        if distance(rest, s.at) < s.reach * 1.2 + 0.004 {
+        // (Not one on skin facing another way close by: the inside of the cheek behind the cheek, the far side of a
+        // finger.)
+        let faces = dot(normalize(m0 * s.n.x + m1 * s.n.y + m2 * s.n.z), n);
+        if distance(rest, s.at) < s.reach * 1.2 + 0.004 && faces > 0.25 {
             shots[count] = s;
             count++;
             exits = exits || s.kind == EXIT;

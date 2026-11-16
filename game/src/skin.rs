@@ -370,7 +370,6 @@ fn look(
         let traced = hurt.traced.clone();
         let npc = Npc { person, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut *dice, frame: 0 };
         let from = skin.seen.min(npc.hurt.happened.len());
-        let holes = skin.skin_holes;
         // A bullet's way in comes as its scraped ring (Hole) and then its hole (Wound); a way in with no Hole before it is
         // the bullet going in again after coming out.
         let mut ringed: Option<(Vec3, bool)> = None;
@@ -435,8 +434,10 @@ fn look(
             }
         }
         skin.seen = if late { 0 } else { npc.hurt.happened.len() };
-        // The inside of the body seen through a hole right through its wall: the skin drawn both ways from now on.
-        if skin.skin_holes > holes {
+        // The inside of the body seen through a hole right through its wall (hider.rs `skin_hole`, viscera.rs): the skin
+        // drawn both ways from now on.
+        let single = |h: &Handle<Flesh>, flesh: &Assets<Flesh>| flesh.get(h).is_some_and(|m| m.base.cull_mode.is_some());
+        if skin.opened && skin.materials.iter().any(|(_, _, h, mode)| (*mode == SKIN || *mode == UNDER) && single(h, flesh)) {
             for (_, _, h, mode) in &skin.materials {
                 if (*mode == SKIN || *mode == UNDER)
                     && let Some(mut m) = flesh.get_mut(h)

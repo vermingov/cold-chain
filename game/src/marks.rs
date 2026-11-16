@@ -88,6 +88,55 @@ impl Skin {
             }
         }
     }
+
+    // The lips of an opening right through the body's wall (viscera.rs, port/cut): its edge through skin
+    // crossings `edge` (in order, all round it), and out from it, in a band about `lip` metres wide, the layers as its
+    // torn face shows them: the skin's cut edge, the fat under it, the white sheath, then the muscle, deeper the nearer
+    // the hole. A torn wall draws back unevenly, so the band is wider here and narrower there. Each layer takes the share
+    // of the band its thickness is of the face seen: skin about 2 mm, the fat `fat` metres where it is (Derraik 2014: 18
+    // mm on a man's belly; a few on a forearm), and some 20 mm of torn muscle in view (an estimate). Blood lies over all
+    // of it, most in the muscle and the hole, so the fat shows as glimpses through it (dev/research/stab-wounds.md,
+    // gunshot-blood.md).
+    pub fn lip(&mut self, edge: &[Crossing], lip: f32, fat: f32, rng: &mut Rng) {
+        let n = edge.len();
+        let scale = edge[0].scale;
+        let phase = rng.next() * 6.0;
+        let wide: Vec<f32> = (0..n)
+            .map(|k| {
+                let k = k as f32;
+                lip * (0.55 + 0.5 * (0.5 + 0.5 * (k * 0.6 + phase).sin() * (k * 0.21 + phase * 1.7).sin()) + 0.2 * rng.next())
+            })
+            .collect();
+        // Where across the band (0 its outer edge, 1 the hole) each layer ends, and the depth in millimetres the wound is
+        // drawn at there: the skin's edge to 1.6, the fat to 9.5, the sheath to 12, the muscle on to 16 (skin.wesl).
+        let total = 0.002 + fat + 0.02;
+        let skin_end = 0.002 / total;
+        let fat_end = skin_end + fat / total;
+        let depth_at = |u: f32| {
+            if u < skin_end {
+                0.8 + 0.8 * (u / skin_end)
+            } else if u < fat_end {
+                1.6 + 7.9 * ((u - skin_end) / (fat_end - skin_end))
+            } else if u < fat_end + 0.04 {
+                9.5 + 2.5 * ((u - fat_end) / 0.04)
+            } else {
+                12.0 + 4.0 * ((u - fat_end - 0.04) / (1.0 - fat_end - 0.04)).min(1.0)
+            }
+        };
+        const STEPS: usize = 20;
+        for s in 0..STEPS {
+            let u = s as f32 / STEPS as f32;
+            let out = 1.0 - u;
+            let v = Vec4::new(depth_at(u) / 40.0, 0.45 + 0.45 * u, 0.0, 0.0);
+            for k in 0..n {
+                let (a, b) = (edge[k].uv, edge[(k + 1) % n].uv);
+                if a.distance(b) > 0.04 {
+                    continue;
+                }
+                self.capsule(a, b, px(out * (wide[k] + wide[(k + 1) % n]), scale) / 2.0, v);
+            }
+        }
+    }
 }
 
 impl Npc<'_> {
