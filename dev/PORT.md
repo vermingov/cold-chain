@@ -318,3 +318,21 @@ dismember.ts sprayed from a fresh stump (`blood.spray`) and ran from a stump's e
   TS's small ones did. Drops gathered at hems come back by readback each step and fall from where that cube is now.
 - The CPU's copies: the floor's depths and ages every 0.2 s (only the awake tiles), each wet person's cloth every 0.5 s.
   Between copies the CPU keeps what it added and took itself.
+
+### The check
+`cargo run -- --scenario blood --out <dir>`: the second person knocked out and down on his back, then at once a knife
+nicking the old man's right femoral artery as he stands, a pistol shot down through the groundskeeper's neck, nine shotgun
+pellets into the young man's chest, a knife into the hooded man's belly and 40 ml put in his left airways to cough up; each
+seen at 0, 2, 10, 30 and 120 s (views half a second apart; drawn small between pictures, which on lavapipe is most of a
+run). The log has, at each time, the drops and streams in the air, the floor's awake tiles, each person's blood lost and
+in their clothes, and what blood cost: CPU per system (`take`, `update`, `soak`, `draw`, `floor`) and the GPU's floor and
+clothes passes (Bevy's render diagnostics, timestamp queries; on lavapipe these are CPU time). tools/port-blood.mjs does
+the same in the TS game (people picked by body; its world.npcs order is not the line-up's) and writes the same views.
+
+### Not done, and why
+- Blood on skin (film.rs, runs.rs) is port/skin's: until it lands, a wound on bare skin (the neck shot here) puts nothing
+  on the floor, and the chin stays clean after a cough; drops landing on skin are handed over and go no further.
+- Drops are drawn without the hall reflected (plain StandardMaterial): beads a few millimetres across; the pools and marks
+  carry it.
+- The reflection is rendered once, when the hall is loaded, with whatever stands in it then left out (people are not on
+  its layer), as the TS's REFRESHRATE_RENDER_ONCE.
