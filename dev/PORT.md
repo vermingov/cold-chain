@@ -836,10 +836,47 @@ Measured (release, lavapipe, the shared machine; ms of the frame, wall time):
 Off the frame: a cut's meshes 8 to 19 ms, its face's painting 17 to 60, a drawing of breaks a few ms, a regroup 0.4 to
 3. The arms, the fists, the face and the sound are each under 0.1 ms a frame on average (their rows).
 
+### The grenade's frame (branch port/grenade)
+weapons.rs `explode` was 30 to 50 ms of the blast's frame: four blows that each skinned a body's corners on one
+thread, then about two hundred fragment lines, each working every bone's place out again for each question medicine
+asked of it (`bone_worlds`, through trace, the bones, the throat), inverting 259 parts' matrices and moving 636 vessel
+points per trace, before the triangle tests of surface and trace themselves.
+- `Npc::hold` / `let_go` (npc.rs): the bones in the world, their inverses and the vessels' points worked out once
+  (`Held`) while nothing can move the body; explode holds everyone for its whole run.
+- Skinning (`Npc::skinned`) on the compute threads with npc.rs `spread`: the waiting thread does only that work. Bevy's
+  `scope` has it take other systems' tasks meanwhile (seen: a material's specialisation run inside the grenade).
+- The fragments' first legs (weapons.rs `legs`): every way drawn first (the dice in their old order: a shot throws none),
+  each one's wall, person and what it meets in them (npc.rs `Look::surface`, anatomy.rs `trace`, wounds.rs `lines`)
+  worked out at once with `spread`, then each followed in turn by `pierce_with` as before.
+- The same outcome: a digest of every person's `Happened`, injuries, bleeds, breaks, pain and daze at the end of the
+  blast, and of their injuries, bleeds, breaks and vitals 5.7 s on, identical over three runs before and six after,
+  and every pierce, blow and wall hit in the log the same. (One thud 1.1 s after the blast, `limb-slap` or `lay`,
+  differs between runs of the same build, before as after: when an off-frame cut lands.)
+
+Measured with the debug build's profile (the game crate at opt-level 3, Bevy and Rapier at 3 with debug assertions,
+which make wgpu capture backtraces; a release build would have left under 1 GB of disk), lavapipe, the grenade part of
+arsenal-use, three runs each, median (range), ms of wall time:
+
+| what | before | after |
+| --- | --- | --- |
+| explode (its log's `grenade_ms`) | 38 (29 to 40) | 24 (20 to 30) |
+| the "weapons" row | 44 (34 to 48) | 29 (25 to 37) |
+| Update in all | 50 (41 to 55) | 35 (32 to 46) |
+| Rapier's two steps | 9 (7 to 10) | 11 (11 to 12) |
+| PostUpdate | 16 (13 to 20) | 11 (9 to 13) |
+| the frame's main loop | 78 (64 to 89) | 62 (62 to 71) |
+
+On this machine the compute pool has two threads and shares four cores with lavapipe's, so the fragments' lines go
+little more than twice as fast; with more cores they go faster. Rapier and PostUpdate on the blast's frame are what they
+are on any frame here (10 to 30 and 5 to 15).
+
 ### What is left
-- The grenade's frame: weapons.rs `explode`'s fragments (each one hitting a person a surface test and a full pierce
-  with its trace: 21 to 31 ms) and the physics of the blast (Rapier, 10 to 30 ms here), and 16 to 28 ms of
-  PostUpdate that no row of ours accounts for (Bevy's own transforms, visibility and bounds over what the blast made).
+- The grenade: explode's own 20 to 30 ms here (the blows' bones and bruising, each fragment's medicine in turn); 3000
+  blood drops from the fragments' spatter drawn the next frame (blood.rs's pool: Bevy's transforms and visibility over
+  them, PostUpdate 17 to 24 ms for a few frames); and, in four of some twenty runs (before and after this work), one frame 1 to 4 after the blast with
+  140 to 280 ms of PostUpdate that no row accounts for. Once it came with every PostUpdate system of ours timed but
+  person.rs `pose_people` (each in a row of its own for the run) and none of them was over 3 ms: so Bevy's own work,
+  pose_people or Rapier's PostUpdate systems, likely over what the two shins' cuts put in from their thread. Not found.
 - Rapier is the biggest steady cost of the game's own: 10 to 15 ms a frame on average here, 30 to 60 in a bad frame
   (two to four 120 Hz steps a frame, four ragdolls with sixteen solver passes).
 - Opening a belly or a chest (viscera.rs `open`: the lips' 40 surface tests and the wall's 40 traces): about 2 ms.
