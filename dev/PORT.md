@@ -339,8 +339,9 @@ Every person made (`person::spawn`) is given, before the next physics step (beha
 ### Holding and dragging (for the hands)
 `behaviour::Grabbed` on the person is weapons.ts's grab of a body: `Grabbed::at(&ragdoll, point, eye)` takes hold of the
 segment nearest the point (insert it; they go down and writhe, `why` "grabbed"), `grabbed.aim(eye, ahead)` each frame is
-`_hold` (drawn to in front of the eye, as far as it was taken from, at most 2.2 m), and the pull is weapons.ts `step`,
-given every physics step (behaviour.rs `pull`). Let go: remove the component.
+`_hold` (drawn to in front of the eye, as far as it was taken from, at most 2.2 m), and the pull is weapons.ts `step`'s
+spring as a joint (behaviour.rs `hold`: a fixed body, linear ForceBased motors, its anchor moved every physics step; a
+part under 2 kg pulled as if it weighed 2 kg). Let go: remove the component; the joint goes the next step.
 
 ### Sounds and slams (thuds.rs)
 `thuds::Heard { name, at, gain }` (a message): the takes a body makes (thuds, `body-fall` from behaviour) for sound.rs to
@@ -355,6 +356,12 @@ bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the break
 ### Physics
 120 Hz, one step a tick, as phase 1 set it. Rapier's solver is given sixteen passes and warm-started joints (ragdoll.rs
 `solver`): at its defaults a standing body's knees sagged and its feet crept along the floor.
+Rapier's joint motors read a turn about each axis as twice the arcsine of the quaternion's part along it, its limits as
+twice the arctangent of that part over the real part: the same for a turn about one axis, far apart for a turn about two.
+The ranges are in the motors' measure, and `Ragdoll::ranges` puts them into the limits' every physics step for the joint
+as it is turned (only a change is sent, so a body at rest sleeps). A limit row pushes along its own axis in the parent's
+frame, and on a joint bent far from its zero a twist and a side limit move each other tan(bend / 2) as much as
+themselves: hinges (elbows, knees, wrists) are zeroed at the middle of their bend (`join`).
 
 ### Scenarios
 `stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
@@ -901,11 +908,12 @@ person a minute (14 against the TS's 27), on average 0.28 voices sounding at onc
   logs' end positions were read against the wrong people (the scenario's person 0 stands at +x, the TS's npc 0 at -x).
 
 ### What still differs
-- Jitter (rad/s, the TS's measure): crawl 1.32 (0.75 before the legs went flaccid: their feet stick and slip on the
-  floor) against the TS's 2.40; drag 0.27 against 1.60; dead 0.31 against 0.10. Dead was 0.058 in phase 2 and is 0.56 on
-  this branch's base (the phase-3 merges): an arm lying across its own body keeps a dead person's forearm turning about
-  1 rad/s, buzzing against its contact. Not found.
-- The drag: the TS's dragged person is pulled about the floor (the chest 0.1 to 0.3 m a second); in the port the held hand
-  stays about half a metre from where it is drawn to and the body hardly moves (the `drag` log's `held`). The pull is the
-  TS's (320 N/m a kilogram of the part held, a hand's half kilogram), and the writhing arm's muscles hold against it
-  here; why Havok's did not is not known.
+- Jitter (rad/s, the TS's measure; port/body-fix, after the bevy-port merge at c8fdfab): dead 0.001 (seeds 2 and 3:
+  0.16, 0.03) against the TS's 0.10; fall 0.021; crawl 0.97 against 2.40; drag 0.76 against 1.60 (0.96 by
+  tools/port-drag.mjs on the same body); stand 0.024. The dead buzz (0.31 before; 0.56 at 20a6c1a) was no phase-3
+  change: the body merge's own tree measures 0.39 here (0.06 was measured elsewhere), and which joint buzzes depends on
+  how the bodies land. Its causes were the limits' measure and the hinges' zero ("Physics" above).
+- The drag: the TS's hand was as far from where it was drawn to as the port's (0.7 to 1.4 m, the same 150 N pull); Havok
+  let that slide the groundskeeper about at 0.1 to 0.5 m a second, Rapier's floor friction did not. With the hold a joint
+  as stiff as 2 kg at the least, the port's chest goes 0.06 to 0.7 m a second over the sweep, the hand 0.55 to 0.65 m
+  off. The arm left free still shakes most (forearm2L 1.67 rad/s), as the TS's does (forearmL 2.65).
