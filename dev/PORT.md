@@ -4,8 +4,10 @@ The user's decision (2026-11-15): the whole game moves from Babylon.js + Havok (
 (Rust, native). Nothing new is added during the port (dev/BACKLOG.md waits until it is done and the user says go):
 the Bevy game must do what the TypeScript one does, as well or better, and look at least as good.
 
-The TypeScript game stays in the tree (src/, play.html) as the reference until the port has caught up; the Rust game
-is game/. Branch: bevy-port.
+The Rust game is game/. Branch: bevy-port. The TypeScript game was the reference until the port caught up; it was
+deleted from this branch on 2026-11-17 (src/, play.html, the Vite configs, package.json, server.js, vendor/, and the
+browser checks tools/rig.mjs and tools/port-*.mjs that the notes below name). `git checkout 33de55b -- <path>` brings
+any of it back; main, wip/0.8.19 and gh-pages still have the TS game.
 
 ## Stack
 - Bevy 0.20 (Rust 1.97.1+), its PBR renderer (wgpu: Vulkan, DX12, Metal; WebGPU later if the user wants the web build).

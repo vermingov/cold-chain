@@ -1,56 +1,42 @@
-# Cold Chain: handoff (2026-11-15)
+# Cold Chain: handoff (2026-11-17)
 
 Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
-## The Bevy port: where it stands (2026-11-16, end of the third cloud session; read before the rest)
+## The Bevy port: done (2026-11-17, fourth cloud session; read before the rest)
 
-The game is being ported to Bevy (the user's word, 2026-11-15); the Babylon game below is the reference until the port
-is done. Branch `bevy-port` (f7ecdd1) has phases 1-4 merged: everything the TS game does, the phase-4 parity passes of
-the body/medicine, the look and performance, and the AppImage build. `dev/PORT.md` is the plan and every job's notes;
-`dev/BACKLOG.md` the user's post-port list and the order they gave.
+The game is now the Bevy one in `game/` (Rust: Bevy 0.20.1, bevy_rapier3d 0.37, kira 0.12), branch `bevy-port`. The
+Babylon game was deleted from this branch once the port matched it (PORT.md, top: how to bring a file back); `main`,
+`wip/0.8.19` and `gh-pages` still have it. Everything below "What it was" describes the TS game: the history the Rust
+code's comments refer to. `dev/PORT.md` is every port job's notes; `dev/BACKLOG.md` the user's list and its order.
 
-The user and a friend play-test the Linux AppImage (build: PORT.md "Performance and release builds"; no Windows build
-for now, the user's word). Their reports after the second AppImage, not yet done:
-- **Audio is "extremely laggy"** though the frame rate is fine. Likely cpal's `BufferSize::Default` on ALSA through
-  PipeWire/Pulse (sound.rs ~654-663 makes the manager with default backend settings): set a small fixed buffer with a
-  fallback, log the buffer and latency at start, check nothing else delays a sound (loading per play, a frame's lag).
-- **"The NPCs are a bit too excessive with the screaming"**: count voice starts per person per minute against the TS
-  first (a bug in sound.rs `hurts`, where a new cry now cuts the old one, could restart cries), then make it realistic
-  (screams for a big new injury, then moans and breathing, a cooldown, fewer voices at once). The unconscious and dead
-  stay silent (the `voices` scenario).
-- **An Escape menu**: pause, Resume / Settings / Quit; master, effects and voice volume, graphics (the F3 presets,
-  scale, VSync, window mode, FOV), mouse sensitivity; saved where graphics.rs keeps the F3 preset.
+Merged this session: the play-testers' reports (sound.rs opens the device with a 256-frame buffer and logs the latency
+at start; people cry less, npc.rs `speak`; menu.rs, the Escape menu with volume, graphics and mouse settings saved in
+~/.config/cold-chain/settings.json), the dead-body buzz and the drag (ragdoll.rs `ranges` in Rapier's limit measure,
+hinges zeroed mid-bend; behaviour.rs `hold` a joint), the grenade's frame 38 -> 24 ms of `explode` (debug profile).
+Not verified on real hardware: the sound latency (ask for the `sound:` line the game prints at start), fullscreen and
+vsync switches. Open: a 140-280 ms PostUpdate frame after some blasts (PORT.md "What is left").
 
-Open from phase 4:
-- **Dead bodies buzz** (0.31 against the TS's 0.10; it came in with the phase-3 merges) and **dragging hardly moves
-  the person** (the held hand stays ~0.5 m off; the arm's muscles out-hold the pull in Rapier). Branch `port/body-fix`
-  (962af3c) has an unbuilt, unmeasured fix for the buzz in ragdoll.rs `ranges` (Rapier's per-axis angle differs from
-  the arcsine the limits used, for a turn about two axes) and tools/port-drag.mjs; the drag is not started.
-- The grenade's frame is still ~84 ms (weapons.rs `explode`: a surface test and pierce per fragment; Rapier).
-- Then: delete the Babylon game from `bevy-port` only (PORT.md "Order of work" 4), then BACKLOG item 7 (what the TS
-  left unfinished). Items 1-6 wait for the user.
-
-## What it is
-
-A realistic ragdoll / vitals / blood sandbox in first person, Babylon.js 9.27.1 + Havok, TypeScript 7 built with Vite 8.
-Played at `play.html`; code in `src/sandbox/`. The old grave-robbing story and the table were removed in 0.8.19 (git
-history has them); only `src/table/arm.ts` stays, as the player's first-person arm.
-You walk a hall with four people (MakeHuman bodies with real anatomy: organs, bones, layers of skin/fat/muscle), take
-weapons off an arsenal board (pistol, knife, sword, bat, AK, M4, shotgun, rifle, grenade, things to throw, fists) and
-hurt them: wounds, bleeding, blood on floor/clothes, fractures, dismemberment, evisceration, bruising, vitals.
-Keys: N spawns a person where you look, X shows insides, K clears the room and lines up new people (reset).
+Next: BACKLOG item 7 (what the TS left unfinished). Items 1-6 wait for the user.
 
 ## Run it
 
 ```
-npm install
-npx vite                 # dev on 127.0.0.1:8669; hmr is off on purpose: reload the page after edits
-npm run check            # tsc --noEmit, must stay clean
-npm run build            # dist/; node server.js serves dist/ + assets from the tree
+cd game && cargo run                                   # the game
+cargo run -- --scenario <name> --out <dir>             # a scripted check (scenario.rs lists them)
+cargo test
 ```
-`tools/rig.mjs` drives headless Chromium over DevTools (read its header; `RIG_GPU=1` for real frame times). Every change
-is judged from screenshots taken with it. `window.__sandbox` (play.html) is the sandbox, reachable from the rig.
-Bump `version` in package.json with every update (shown top left). Current: 0.8.25.
+Headless here: `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json WGPU_BACKEND=vulkan xvfb-run -a -s "-screen 0
+1280x720x24" <bin> --scenario <name> --out <dir>`; the binary finds `assets/` beside itself or in the tree. Every
+change is judged from a scenario's screenshots and log.json. `--profile` records a session (profiler.rs);
+`node tools/profile-report.mjs <file>` summarises it. The AppImage: PORT.md "Release builds".
+
+## What it was (the TS game, for the history)
+
+A realistic ragdoll / vitals / blood sandbox in first person, Babylon.js 9.27.1 + Havok, TypeScript 7 built with Vite 8.
+You walk a hall with four people (MakeHuman bodies with real anatomy: organs, bones, layers of skin/fat/muscle), take
+weapons off an arsenal board (pistol, knife, sword, bat, AK, M4, shotgun, rifle, grenade, things to throw, fists) and
+hurt them: wounds, bleeding, blood on floor/clothes, fractures, dismemberment, evisceration, bruising, vitals.
+Keys: N spawns a person where you look, X shows insides, K clears the room and lines up new people (reset).
 
 Not in this zip: `node_modules`, `dist`, the git history (the last two commits' text diff is in
 `dev/last-commits.patch`), and `~/.cache/cold-chain` (fetched MakeHuman/BodyParts3D sources for tools/*.py, and old
@@ -66,9 +52,9 @@ cloud. Hand back a build or a commit; they redeploy.
 - Sounds: only the ElevenLabs takes in assets/sounds (tools/sfx.py builds them). Never synthesise a sound (no
   oscillators, noise, procedural audio). Fix a bad sound by regenerating that one take.
 - Models: CC0/CC-BY from online sources (credited, see assets/people/CREDITS.md) or built in code. Never Blender.
-- Babylon.js stays (never three.js).
+- The engine is Bevy (the user's word, 2026-11-15; it replaced Babylon.js).
 - Regressions: "it worked before" means find what changed and fix that; no workaround layers.
-- Don't guess API/function names; check the Babylon/Havok docs or source.
+- Don't guess API/function names; check the Bevy/Rapier/kira docs or source.
 - Code style: match the surrounding code (prose comments that explain why, no slop, no needless abstraction).
 - Commits are authored `vermingov <vermingov@users.noreply.github.com>`.
 - Don't wait for replies; work autonomously and report what was verified and what was not.
