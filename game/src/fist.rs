@@ -27,12 +27,14 @@ use crate::player::Player;
 use crate::sound::{Play, Sound};
 use crate::weapons::{e, Kind, Weapons};
 
-// How hard (dev/research/blunt-trauma.md): Olympic boxers' straight punches land at 9.1 +- 2.1 m/s with an effective mass
-// of 2.9 kg and 3427 N peak (Walilko05); a jab, thrown from the guard with the arm alone, at about 6 m/s with the fist and
-// forearm's 1.5 kg or so, lands at 1 to 2 kN. A full wind-up is taken as the boxer's straight: the hips and shoulder put
-// the body's mass behind the fist and speed it up. In between, by how long it was wound up (`WIND` s).
-const JAB: (f32, f32) = (6.0, 1.5);
-const FULL: (f32, f32) = (10.0, 2.9);
+// How hard (dev/research/blunt-trauma.md sec. 9). A jab, thrown from the guard with the arm alone, lands at 1 to 1.5 kN
+// (lead straights of boxers of two levels, Liu22); a straight with the hips and shoulder behind it at 2.4 kN for a novice
+// boxer, 3.7 for an intermediate and 4.8 for the elite (Smith00), 3.4 +- 0.8 kN for Olympic boxers, whose fists landed at
+// 9.1 +- 2.1 m/s with an effective mass of 2.9 +- 2.0 kg (Walilko05), and 4.1 kN for a heavyweight's (Atha85). A tap is
+// a jab, a full wind-up (`WIND` s) a trained man's hardest straight, and between by how long it was wound up: on a jaw
+// about 1.5 kN to 4.2, on the chest, which gives more, 1 to 3 (bones.rs `impact`, with FIST_GIVES).
+const JAB: (f32, f32) = (6.0, 1.0);
+const FULL: (f32, f32) = (10.5, 3.2);
 const WIND: f32 = 1.0;
 
 // The knuckles, in the eye's frame (mirrored for the left fist, which is held a little further out in front, the lead
@@ -48,15 +50,15 @@ const HANGS: Vec3 = Vec3::new(0.3, -1.0, -0.15); // the way the elbow is off the
 const AWAY: Vec3 = Vec3::new(0.0, -0.015, -0.06);
 const INTO: Vec3 = Vec3::new(-0.03, 0.0, 0.08);
 const LEAN: (f32, f32) = (0.025, 0.015);
-// What it lands with: how far the fist and arm give (N/m). Taken so that on a face (bones.rs: the bone's pad in series,
-// the head's mass behind it) a jab lands with about 1.2 kN and a full wind-up with about 2.6 kN.
-pub const FIST_GIVES: f32 = 5e4;
+// What it lands with: how far the fist and arm give (N/m), the bone's pad in series (bones.rs) and the struck part's mass
+// behind it. Taken so that a full punch to a jaw peaks at about the elite's 4 to 5 kN and is over in some 13 ms (a mass on
+// a spring is in contact for pi sqrt(m / k); Atha's heavyweight's peaked 14 ms in). (Under 1e5: wounds.rs takes a
+// stiffer thing as narrower than the eye's socket.)
+pub const FIST_GIVES: f32 = 9.5e4;
 
 #[derive(Clone, Copy)]
 enum Ease {
     Smooth,
-    // Fastest at two thirds of the way, still moving when it gets there.
-    Drive,
     Off,
     Onto,
 }
@@ -64,7 +66,6 @@ enum Ease {
 fn ease(e: Ease, u: f32) -> f32 {
     match e {
         Ease::Smooth => u * u * (3.0 - 2.0 * u),
-        Ease::Drive => u * u * (2.0 - u),
         Ease::Off => 1.0 - (1.0 - u) * (1.0 - u),
         Ease::Onto => u * u,
     }
@@ -137,11 +138,12 @@ impl Fist {
         let far = self.at.distance(to);
         self.speed = JAB.0 + (FULL.0 - JAB.0) * c;
         self.mass = JAB.1 + (FULL.1 - JAB.1) * c;
-        // At its speed through the end (drive() is fastest two thirds of the way and goes on at its mean speed).
-        let go = (far / self.speed).clamp(0.05, 0.2);
+        // Speeding up all the way, as a punch does, to land at its speed: from rest, that takes twice as long as going the
+        // whole way at it (Atha's heavyweight's fist went 0.49 m in 0.1 s and landed at 8.9 m/s).
+        let go = (2.0 * far / self.speed).clamp(0.06, 0.25);
         self.keys = vec![
             Key { at: self.at, t: 0.0, turn: self.turn, body: self.body, ease: Ease::Smooth },
-            Key { at: to, t: go, turn: 1.0, body: 0.4 + 0.6 * c, ease: Ease::Drive },
+            Key { at: to, t: go, turn: 1.0, body: 0.4 + 0.6 * c, ease: Ease::Onto },
         ];
         self.contact = go;
         self.t = 0.0;
@@ -408,15 +410,15 @@ pub fn punch(
                     let traced = hurt.traced.clone();
                     let mut npc = Npc { person: p, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut dice, frame: frame.0 };
                     let Some(c) = crate::weapons::surface(&mut npc, was, dir, far) else { continue };
-                    wounds::blow(&mut npc, c.point, dir, f.mass, f.speed, Some(wounds::Tool::Stiff(FIST_GIVES)));
-                    met = Some((e, p.label.clone(), p.segments[c.segment].name.clone(), c));
+                    let force = wounds::blow(&mut npc, c.point, dir, f.mass, f.speed, Some(wounds::Tool::Stiff(FIST_GIVES)));
+                    met = Some((e, p.label.clone(), p.segments[c.segment].name.clone(), c, force));
                     break;
                 }
-                if let Some((_, label, segment, c)) = met {
+                if let Some((_, label, segment, c, force)) = met {
                     weapons.log.push(json!({ "hit": "blow", "person": label, "segment": segment, "point": c.point.to_array(),
                                              "dir": dir.to_array(), "mass": f.mass, "speed": f.speed, "joules": 0.5 * f.mass * f.speed * f.speed,
-                                             "tool": format!("Stiff({FIST_GIVES})"), "with": format!("{side} fist") }));
-                    sound.play("blunt", Play::at(c.point).gain(0.45 + 0.35 * (f.mass - 1.5) / 1.4));
+                                             "newtons": force, "charge": (f.speed - JAB.0) / (FULL.0 - JAB.0), "tool": format!("Stiff({FIST_GIVES})"), "with": format!("{side} fist") }));
+                    sound.play("blunt", Play::at(c.point).gain(0.45 + 0.35 * (f.mass - JAB.1) / (FULL.1 - JAB.1)));
                     f.stop_at(c.point, &eye);
                     f.was = None;
                 }
@@ -432,4 +434,64 @@ pub fn punch(
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Fists>().add_systems(Update, crate::profiler::timed("fists", punch).after(crate::weapons::animate));
+}
+
+// --- the `punches` scenario -------------------------------------------------------------------------------------------------
+//
+// Punches thrown at the line-up as a player throws them: each person in turn stood in front of, looked at in the face or the
+// chest from `far` metres, and a fist pressed and let go after `held` frames (2: a tap, a jab; 60: wound up a second).
+// What each landed with (newtons, joules, the charge) and what it did are in the log, a picture of each as it lands.
+const PUNCHES: &[(usize, &str, f32, u8, u32)] = &[
+    (0, "head", 0.42, 0, 2),
+    (1, "head", 0.42, 2, 30),
+    (2, "head", 0.42, 2, 60),
+    (3, "chest", 0.4, 0, 60),
+    (0, "chest", 0.4, 2, 2),
+    (1, "belly", 0.4, 0, 30),
+    (2, "chest", 0.4, 2, 60),
+    (3, "head", 0.42, 0, 60),
+];
+
+pub fn scenario() -> Vec<crate::scenario::Step> {
+    use crate::scenario::Step;
+    let mut s = vec![Step::Do(Box::new(|w: &mut World| crate::warm::take(w, "fists"))), Step::Wait(30)];
+    for (i, &(n, part, far, button, held)) in PUNCHES.iter().enumerate() {
+        if i == 4 {
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                use bevy::ecs::system::RunSystemOnce;
+                let _ = w.run_system_once(crate::sandbox::reset);
+            })));
+            s.push(Step::Wait(60));
+        }
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            // (The head segment starts at the neck: the face is looked at a little over it, the nose.)
+            if let Some((_, at)) = crate::warm::aim(w, n, part, far) {
+                let lift = if part == "head" { Vec3::Y * 0.09 } else { Vec3::ZERO };
+                w.resource_scope(|w, map: Mut<crate::map::Map>| {
+                    for mut p in w.query::<&mut Player>().iter_mut(w) {
+                        p.spawn(&map, at.x, at.z + far, Some(at + lift), 1.65);
+                    }
+                });
+            }
+            w.resource_mut::<Weapons>().log.clear();
+        })));
+        s.push(Step::Wait(30));
+        s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::press(w, button))));
+        s.push(Step::Wait(held));
+        s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::release(w, button))));
+        s.push(Step::Wait(4));
+        s.push(Step::Shot(format!("punch_{i}_{part}_{}", if button == 0 { "left" } else { "right" })));
+        s.push(Step::Wait(40));
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            let hits = std::mem::take(&mut w.resource_mut::<Weapons>().log);
+            let mut q = w.query::<(&crate::person::Person, &Vitals, &Hurt)>();
+            let mut people: Vec<_> = q.iter(w).map(|(p, v, h)| (p.body.name.clone(), p.label.clone(), v.injuries.iter().map(|i| i.text.clone()).collect::<Vec<_>>(),
+                                                               h.bones.breaks.iter().map(|b| b.text.clone()).collect::<Vec<_>>(), v.conscious())).collect();
+            people.sort_by_key(|p| crate::sandbox::BODIES.iter().position(|b| *b == p.0));
+            let (_, label, injuries, breaks, conscious) = &people[n];
+            crate::scenario::log(w, json!({ "event": "punch", "at": part, "fist": if button == 0 { "left" } else { "right" }, "held_frames": held,
+                                            "hits": hits, "person": label, "injuries": injuries, "breaks": breaks, "conscious": conscious }));
+        })));
+    }
+    s
 }

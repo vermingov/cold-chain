@@ -79,7 +79,9 @@ pub fn hold(name: &str) -> Hold {
         // The other hand on a gun's grip, round the fingers of the one holding it: all four wrapped, opened wider.
         "support" => h([48.0, 58.0, 34.0], [52.0, 62.0, 38.0], [56.0, 64.0, 40.0], [60.0, 66.0, 42.0], 6.0, 10.0, 15.0, 8.0),
         // A forend or handguard, 4 to 5 cm across, cradled from below: fingers round its far side, the thumb along this one.
-        "wrap" => h([36.0, 50.0, 30.0], [40.0, 54.0, 32.0], [44.0, 56.0, 34.0], [48.0, 58.0, 36.0], 5.0, 10.0, 20.0, 8.0),
+        // (The middle joints bent about 70 degrees: a finger's three joints lie on a circle some 3 cm round the bones, a
+        // 4.5 cm forend and the finger's own flesh; at 55 the circle was 4 cm and the palm hung a centimetre under it.)
+        "wrap" => h([38.0, 66.0, 38.0], [42.0, 70.0, 42.0], [46.0, 72.0, 44.0], [50.0, 74.0, 46.0], 6.0, 10.0, 20.0, 10.0),
         // A handle about 3 cm across (knife, sword, bat): a full grip, the index too, the thumb over the fingers.
         "handle" => h([64.0, 84.0, 54.0], [68.0, 88.0, 58.0], [72.0, 90.0, 60.0], [74.0, 92.0, 62.0], 10.0, 25.0, 20.0, 35.0),
         // A ball 6 to 7 cm across (the grenade, the gauze roll): fingers spread round it, the thumb against them.

@@ -381,6 +381,9 @@ Falls (Falls25) [M]: fatal falls most often fracture skull, vertebrae and thorax
 | Bat-shaped cylinder on cadaver heads | ~112 J per hit produced fractures, often hard to localise | | M, Goots18 |
 | Punch, Olympic boxers (straight) | 3427 ± 811 N; hand 9.1 m/s; effective mass 2.9 kg; head 58 ± 13 g and 6343 ± 1789 rad/s² | Rotational value ≈ 50% concussion risk; mandible lateral 0.82-3.4 kN | M, Walilko05 |
 | Punch, untrained adults | Men 500-850 N; women 350-550 N | Nasal bone lowest; maxilla from 0.63 kN | M, HennLignitz04 |
+| Punch, boxers on a padded dynamometer (straight rear hand) | Elite 4800 N, intermediate 3722 N, novice 2381 N | | M, Smith MS et al., Br J Sports Med 2000;34:174-7, via Walilko05 |
+| Punch, one heavyweight (straight) | 4096 N peak, reached within 14 ms of contact; the fist went 0.49 m and reached 8.9 m/s within 0.1 s of starting | | M, Atha J et al., Med Sci Sports Exerc 1985 ("The damaging punch", BMJ 1985;291:1756) |
+| Lead straight (jab), boxers of two levels | 1508 ± 411 N and 1035 ± 220 N | | M, Liu Y et al., Front Physiol 2022;13:1015154 https://frontiersin.org/articles/10.3389/fphys.2022.1015154/full |
 | Kick | Men 750-1200 N; women 500-750 N; kicked dummy head 103 g | | M, HennLignitz04 |
 | Kick/stamp assaults (series) | Head the main target; 64% skull/base/facial fractures; 42% died of blood loss | | M, HennLignitz04 |
 | Thrown object | E = ½mv². Examples: 2 kg rock at 10 m/s = 100 J; 5 kg at 6 m/s = 90 J; brick ~2.5 kg at 8 m/s = 80 J. Throw speeds are my assumptions | Compare with skull/rib/limb tables; small contact faces focus force | D/E |

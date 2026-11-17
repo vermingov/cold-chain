@@ -166,6 +166,9 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         }
         "sound" => s = crate::sound::scenario(),
         "arsenal-use" => s = crate::weapons::scenario(),
+        "viewmodel" => s = crate::weapons::viewmodel(),
+        "punches" => s = crate::fist::scenario(),
+        "blasts" => s = crate::weapons::blasts(),
         "wounds" => s = wounds(),
         "cut" => s = crate::cut_scenario::steps(""),
         "cut-limbs" | "cut-belly" | "cut-bones" => s = crate::cut_scenario::steps(&name[4..]),
@@ -1199,7 +1202,9 @@ fn wounds() -> Vec<Step> {
                 let mut res = Vec::new();
                 match shot.weapon {
                     "bat" => match npc.surface(target - dir * 0.5, dir, 1.0, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin) {
-                        Some(skin) => crate::wounds::blow(npc, skin.point, dir, 0.79, 15.5, None),
+                        Some(skin) => {
+                            crate::wounds::blow(npc, skin.point, dir, 0.79, 15.5, None);
+                        }
                         None => res.push(json!("missed")),
                     },
                     "knife" => {
