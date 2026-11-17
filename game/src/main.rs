@@ -34,6 +34,7 @@ mod hands;
 mod hud;
 mod map;
 mod marks;
+mod menu;
 mod models;
 mod muzzle;
 mod motor;
@@ -117,6 +118,8 @@ pub enum Loading {
 
 fn main() -> AppExit {
     let run = scenario::Run::from_args();
+    // The player's settings (menu.rs); a scenario's are the defaults, the same on any machine.
+    let settings = if run.is_none() { menu::Settings::load() } else { menu::Settings::default() };
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -145,7 +148,11 @@ fn main() -> AppExit {
             })
             // A scenario's screenshots are of everything drawn: a pipeline still compiling would leave a mesh out of
             // the frame it was wanted in.
-            .set(RenderPlugin { synchronous_pipeline_compilation: run.is_some(), ..default() }),
+            .set(RenderPlugin { synchronous_pipeline_compilation: run.is_some(), ..default() })
+            // Bevy's own audio (rodio) is not used: sound.rs mixes with kira on a device of its own. Left in, it opened a
+            // second stream on the same device and played silence into it for the whole game (a card opened without a
+            // mixer of its own can take only one: kira's would then not open at all).
+            .disable::<bevy::audio::AudioPlugin>(),
     )
     .add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
     // Every physics step a hundred and twentieth of a second, as the TS's (sandbox.ts): as many a frame as its time
@@ -155,7 +162,8 @@ fn main() -> AppExit {
     .insert_resource(TimestepMode::Fixed { dt: 1.0 / 120.0, substeps: 1 })
     .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.022)))
     .init_state::<Loading>()
-    .insert_resource(graphics::Graphics::new(run.is_none()))
+    .insert_resource(graphics::Graphics::new(run.is_none(), &settings.quality))
+    .add_plugins(menu::plugin(settings))
     .add_systems(Startup, cap_frame)
     .add_plugins((
         rng::plugin,

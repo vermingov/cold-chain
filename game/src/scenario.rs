@@ -177,6 +177,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         // The face, the eyes and the mouth (port/face): face.rs; every pipeline made before play (warm.rs).
         "face" => s = crate::face::scenario(),
         "warm" => s = crate::warm::scenario(),
+        // The Escape menu and its settings (menu.rs).
+        "menu" => s = crate::menu::scenario(),
         _ => return body(name),
     }
     Some(s)
@@ -775,16 +777,6 @@ fn body(name: &str) -> Option<Vec<Step>> {
                     npc.hurt.throat.stomach = 900.0;
                 });
             })));
-            let shoot = |i: usize, a: &'static str, b: &'static str, t: f32, weapon: &'static str| Step::Do(Box::new(move |w: &mut World| {
-                let who = person_at(w, i);
-                crate::npc::with(w, who, |npc| {
-                    let (ia, ib) = (npc.bone_index(a), npc.bone_index(b));
-                    let at = npc.rest_to_world(ia).transform_point3(npc.body().bones[ia].head.lerp(npc.body().bones[ib].head, t));
-                    let dir = babylon(0.0, 0.0, 1.0);
-                    crate::wounds::pierce(npc, at - dir * 1.5, dir, &missile(weapon), 3.0);
-                });
-                log(w, json!({ "event": "shot", "person": i, "at": a }));
-            }));
             let out = |i: usize, dead: bool| Step::Do(Box::new(move |w: &mut World| {
                 let who = person_at(w, i);
                 let mut v = w.get_mut::<crate::vitals::Vitals>(who).unwrap();
@@ -826,6 +818,51 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Do(Box::new(|w: &mut World| {
                 let s = w.remove_resource::<Said>().unwrap();
                 log(w, json!({ "event": "voices", "said": s.said, "heard_out": s.out }));
+            })));
+        }
+        // How often people cry out (the user: "a bit too excessive with the screaming"), against the TS's
+        // (tools/port-screams.mjs does the same there): the four standing, each shot once with the pistol where it
+        // hurts but does not kill (the old man's right upper arm, the groundskeeper's left thigh, the young man's belly,
+        // the hooded man's left shin), the old man again in the left thigh half a minute on, four shots into the
+        // groundskeeper a quarter second apart at 45 s, and a minute of what follows with the physics running (they fall, writhe, crawl). Every voice started (a cry, a cough, a retch),
+        // by person and kind, and how many are sounding at once across the room.
+        "screams" => {
+            s.push(Step::Wait(90));
+            s.push(cameras(false));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                w.init_resource::<Cries>();
+            })));
+            s.push(shoot(0, "upperarm01.R", "lowerarm01.R", 0.5, "pistol"));
+            s.push(shoot(1, "upperleg01.L", "lowerleg01.L", 0.5, "pistol"));
+            s.push(shoot(2, "spine03", "spine02", 0.5, "pistol"));
+            s.push(shoot(3, "lowerleg01.L", "foot.L", 0.5, "pistol"));
+            // (And at 45 s four shots a quarter second apart into the groundskeeper, as a magazine is emptied.)
+            let burst = [("upperarm01.L", "lowerarm01.L"), ("lowerarm01.L", "wrist.L"), ("upperarm01.R", "lowerarm01.R"), ("upperleg01.R", "lowerleg01.R")];
+            for frame in 0..3600 {
+                if frame == 1800 {
+                    s.push(shoot(0, "upperleg01.L", "lowerleg01.L", 0.5, "pistol"));
+                }
+                if (2700..2760).contains(&frame) && frame % 15 == 0 {
+                    let (a, b) = burst[(frame as usize - 2700) / 15];
+                    s.push(shoot(1, a, b, 0.5, "pistol"));
+                }
+                s.push(Step::Do(Box::new(cries)));
+                s.push(Step::Wait(2));
+            }
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let c = w.remove_resource::<Cries>().unwrap();
+                let minutes = c.frames as f32 / 3600.0;
+                let count = |list: &[(u32, usize, &'static str)]| {
+                    let mut by: Vec<std::collections::BTreeMap<&str, u32>> = vec![Default::default(); 4];
+                    for &(_, i, kind) in list {
+                        *by[i].entry(kind).or_default() += 1;
+                    }
+                    let per_minute: Vec<f32> = by.iter().map(|k| (k.values().sum::<u32>() as f32 / minutes * 10.0).round() / 10.0).collect();
+                    let when: Vec<Value> = list.iter().map(|&(f, i, k)| json!([(f as f32 / 6.0).round() / 10.0, i, k])).collect();
+                    json!({ "by_person": by, "per_person_per_minute": per_minute, "when": when })
+                };
+                log(w, json!({ "event": "screams", "seconds": c.frames as f32 / 60.0, "asked": count(&c.started), "voiced": count(&c.voiced),
+                               "most_at_once": c.most, "mean_at_once": (c.sum as f32 / c.frames.max(1) as f32 * 100.0).round() / 100.0 }));
             })));
         }
         // A gun fired into a person standing, as a player fires it (taken in the hand, aimed at the chest from 3 m, a
@@ -887,6 +924,20 @@ fn body(name: &str) -> Option<Vec<Step>> {
 }
 
 // The cameras on or off (skin.rs's).
+// Person `i` shot from 1.5 m in front (the TS's +z) through the point `t` of the way from bone `a`'s head to `b`'s.
+fn shoot(i: usize, a: &'static str, b: &'static str, t: f32, weapon: &'static str) -> Step {
+    Step::Do(Box::new(move |w: &mut World| {
+        let who = person_at(w, i);
+        crate::npc::with(w, who, |npc| {
+            let (ia, ib) = (npc.bone_index(a), npc.bone_index(b));
+            let at = npc.rest_to_world(ia).transform_point3(npc.body().bones[ia].head.lerp(npc.body().bones[ib].head, t));
+            let dir = babylon(0.0, 0.0, 1.0);
+            crate::wounds::pierce(npc, at - dir * 1.5, dir, &missile(weapon), 3.0);
+        });
+        log(w, json!({ "event": "shot", "person": i, "at": a }));
+    }))
+}
+
 fn cameras(on: bool) -> Step {
     Step::Do(Box::new(move |w: &mut World| {
         let mut q = w.query::<&mut Camera>();
@@ -936,6 +987,45 @@ struct Said {
     playing: Vec<(Entity, crate::sound::Playing)>,
     said: Vec<Value>,
     out: Vec<Value>,
+}
+
+// The `screams` count: every voice started (frame since the shots, person, kind), and how many sound at once.
+#[derive(Resource, Default)]
+struct Cries {
+    frames: u32,
+    started: Vec<(u32, usize, &'static str)>,
+    voiced: Vec<(u32, usize, &'static str)>,
+    most: usize,
+    sum: usize,
+}
+
+fn cries(w: &mut World) {
+    let people: Vec<Entity> = (0..4).map(|i| person_at(w, i)).collect();
+    let now = w.resource::<crate::sound::Sound>().now();
+    let voices: Vec<(Entity, crate::sound::Playing, &'static str)> = w.resource::<crate::sound::Voices>().0.iter().map(|(e, (p, k))| (*e, p.clone(), *k)).collect();
+    let at_once = voices.iter().filter(|(_, p, _)| p.sounding(now)).count();
+    let mut c = w.remove_resource::<Cries>().unwrap();
+    // (What was asked for above; what sound.rs voiced, begun this frame, here.)
+    for (e, p, kind) in voices {
+        if let Some(i) = people.iter().position(|&x| x == e).filter(|_| p.voice().start == now) {
+            c.voiced.push((c.frames, i, kind));
+        }
+    }
+    for (i, &e) in people.iter().enumerate() {
+        let Some(h) = w.get::<crate::npc::Hurt>(e) else { continue };
+        for x in &h.happened {
+            let kind = match x {
+                crate::npc::Happened::Say { kind, .. } => *kind,
+                crate::npc::Happened::Sound { name, at: None, .. } if matches!(name.as_str(), "retch" | "vomit" | "cough-wet") => "retch, vomit or wet cough",
+                _ => continue,
+            };
+            c.started.push((c.frames, i, kind));
+        }
+    }
+    c.most = c.most.max(at_once);
+    c.sum += at_once;
+    c.frames += 1;
+    w.insert_resource(c);
 }
 
 fn said(w: &mut World) {

@@ -11,11 +11,11 @@ use crate::player::Player;
 use crate::vitals::Vitals;
 use crate::weapons::{arm, Weapons};
 
-const REM: f32 = 16.0;
-const INK: Color = Color::srgb(0.867, 0.843, 0.784); // #ddd7c8
-const FAINT: Color = Color::srgb(0.561, 0.537, 0.486); // #8f897c
-const DIM: Color = Color::srgb(0.373, 0.353, 0.318); // #5f5a51
-const BRIGHT: Color = Color::srgb(0.945, 0.925, 0.878); // #f1ece0
+pub const REM: f32 = 16.0;
+pub const INK: Color = Color::srgb(0.867, 0.843, 0.784); // #ddd7c8
+pub const FAINT: Color = Color::srgb(0.561, 0.537, 0.486); // #8f897c
+pub const DIM: Color = Color::srgb(0.373, 0.353, 0.318); // #5f5a51
+pub const BRIGHT: Color = Color::srgb(0.945, 0.925, 0.878); // #f1ece0
 const PALE: Color = Color::srgb(0.788, 0.765, 0.706); // #c9c3b4
 const WARN: Color = Color::srgb(0.878, 0.541, 0.455); // #e08a74
 const HELP: Color = Color::srgb(0.647, 0.624, 0.565); // #a59f90
@@ -55,11 +55,11 @@ struct Help;
 #[derive(Component)]
 struct NoteText;
 
-fn font(f: &Handle<Font>, rem: f32) -> TextFont {
+pub fn font(f: &Handle<Font>, rem: f32) -> TextFont {
     TextFont { font: f.into(), font_size: FontSize::Px(rem * REM), ..default() }
 }
 
-fn shadow() -> TextShadow {
+pub fn shadow() -> TextShadow {
     TextShadow { offset: Vec2::new(0.0, 1.0), color: Color::srgba(0.0, 0.0, 0.0, 0.85) }
 }
 
@@ -96,7 +96,7 @@ fn spawn(mut commands: Commands, assets: Res<AssetServer>) {
         "Fists: left click punches with the left, right click with the right; hold to wind up a harder punch.",
         "1 to 6 or the mouse wheel: change what you hold. R: reload. E: take from the wall. G: put it back. Tab: what you carry.",
         "Bandage or medkit: hold left click on a wound (the medkit dresses all of them, one after another).",
-        "N: another person where you are looking. X: see inside them. K: clear the room. H: hide this.",
+        "N: another person where you are looking. X: see inside them. K: clear the room. H: hide this. Escape: pause, settings.",
     ];
     commands.spawn((Node { width: px(34.0 * REM), flex_direction: FlexDirection::Column, ..at(Some(1.0), None, None, Some(1.0)) }, Help)).with_children(|c| {
         for line in help {

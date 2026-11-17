@@ -188,6 +188,26 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
   scenario may drain into its log.
 - Takes are the manifests' (assets/sounds, assets/cries); the room is 'cold' and the room tone 'room-sandbox' is driven
   at 0.35 from the start, as sandbox.ts did. Footsteps (player.ts onStep) are sound.rs's `steps`.
+- The device (port/sound-menu, after a play-tester heard the sound "extremely laggy" with the frame rate fine): sound.rs
+  opens it itself (`Device`, a kira Backend on cpal 0.18) instead of kira's DefaultBackend. kira's asked cpal for its
+  default buffer; on Linux that is what ALSA's "default" device picks unasked, the longest buffer with the shortest
+  periods that fill it (alsa-lib's snd_pcm_hw_params_choose), which cpal 0.18.2 then cuts to two of those periods: 512
+  frames a period through PipeWire's ALSA plugin (two periods, 21 ms), three through PulseAudio's (its least, 32 ms), a
+  dmix's own (often 1024), a card's own; plus what the sound server keeps. kira also opened the "default" device again
+  every half second to look for a new one. Now 256 frames a period are asked for (two periods: about 11 ms at 48 kHz),
+  1024 if refused, the device's default if that is refused too; `--audio-buffer <frames>` asks for another. Once it has
+  run 1.5 s the log says what it got: `sound: <device>, 48000 Hz, 2 channels: 256 frames a period (5.3 ms; 256 asked
+  for); the device plays N ms ahead of each period, so a sound is heard about M ms after it is started` (N is cpal's
+  playback time less the callback's: what the device and server hold). Three underruns in ten seconds of play reopen it
+  with twice the buffer (to 2048, not if the size was the player's); once a minute the log has how long sounds waited
+  to reach the mixer (asked for during the frame, handed over at its end in `listen`: under a frame). Not measured on a
+  sound device: the cloud machine has none. Bevy's own audio (rodio) is off: it held a second, silent stream open on
+  the same device.
+- Volumes: everything is under one track (`all`: the master volume, paused with the Escape menu); people's voices
+  (`Play::voice`: the cries, coughs and retches from the head) hang under `voice` and go into the room through
+  `ring_voice`, everything else under `direct`, `dry`, `ring_far` and `ring_dry`: `Sound::volume` (master, effects,
+  voices; the menu's sliders, squared as gains). A place's track is made with its gain, cutoff and pan as they are.
+- At most two people's groans, sobs or gasps are voiced at once (`hurts`, AT_ONCE); a cry at a new hurt always is.
 
 ## The hands (weapons.rs, muzzle.rs, arm.rs, hands.rs, fist.rs, profiler.rs), for the jobs that plug into them
 - Everything a weapon does to a person goes through two functions in weapons.rs, `pierce(cx, who, origin, dir, &Missile,
@@ -714,6 +734,21 @@ Worktrees sharing one CARGO_TARGET_DIR share the crate's fingerprint (the packag
 you run is yours (`strings` for a name only your branch has), and force your own link with
 `cargo rustc --bin cold-chain -- --cfg <your branch>` (a flag of its own: only this crate is built again).
 
+## The Escape menu (menu.rs, branch port/sound-menu)
+Escape in play opens it (not over the warm-up's loading screen): the game paused (Time<Virtual>; Rapier's fixed steps
+come out of it, so the bodies stand still, and Update runs with dt 0, which every system that divides by it already
+guards), the sound held (`Sound::paused`: the `all` track paused), the pointer given back. Resume or Escape goes on and
+takes the pointer; on the settings page Escape goes back; a click on the room takes the pointer as before (player.rs
+`grab`, not while the menu is open). N and K wait while it is open. Quit is AppExit (the profiler's log is saved).
+Settings (`menu::Settings`, serde JSON): master, effects and voices volume; the F3 preset (F3 writes it too); the
+resolution (following the frame rate, or fixed at 100, 85, 70, 55 or 40% a side: graphics.rs `scale`); vertical sync
+(Fifo, or AutoNoVsync); windowed or borderless fullscreen; the field of view across (60 to 110 degrees, 86 the TS's);
+the mouse's speed (`Player::look_speed`). Kept in ~/.config/cold-chain/settings.json (%APPDATA%\cold-chain on Windows;
+`graphics::kept`), read at start for the game only (a scenario has the defaults and writes nothing); a file from before
+reads the preset from the old `quality` file; anything out of range is put right. Drawn as the HUD is (IM Fell, plain
+nodes and text), so it makes no new pipeline: the `menu` scenario counts none made by opening it, photographs both pages
+and the settings after a slider is dragged and a choice clicked, and writes them to its folder and reads them back.
+
 ## The look against the TS (phase 4, branch port/parity-look)
 
 ### Comparing under the same light
@@ -835,6 +870,17 @@ One mouth: a new cry, retch or wet cough cuts the one before (the TS left it pla
 went out); going out cuts whatever is playing; out cold or dead nothing new is voiced (the throat's cough, retch and vomit
 still clear and empty them, silently), and the TS's last breath ('dying') is no longer said, at the user's word that people
 "can still make noises when they die".
+
+The user then found the people "a bit too excessive with the screaming" (port/sound-menu). Counted with the `screams`
+scenario and tools/port-screams.mjs (four people each shot once with the pistol where it hurts but does not kill, the old
+man again at 30 s, four shots into the groundskeeper a quarter second apart at 45 s, a minute with the physics running):
+the port voiced what the TS did (without the burst 3, 1, 10, 10 a person a minute against the TS's 2, 1, 12, 11; with it
+the TS's 2, 4, 10, 11): no bug, the TS's own rule, a cry at every new hurt and a groan or a sob every 3.5 to 8.5 s for as
+long as it hurts. npc.rs `speak` now: a new hurt within 1.4 s of the cry the last one started is part of it unless twice
+as bad; between, a sound at each of the TS's moments only by chance, falling with the time since the last new hurt (half
+at 20 s) and with consciousness, and quieter the same way; just after a cry, a gasp. Medicine's dice are thrown as the
+TS's were (the voice has its own for the rest), so the `wounds` comparison is not moved by it. After: 2, 4, 4, 4 a
+person a minute (14 against the TS's 27), on average 0.28 voices sounding at once against 0.52.
 
 ### The checks (scenario.rs; on lavapipe the body scenarios draw only the frames they photograph)
 - `voices`: shot, knocked out mid-cry, killed, coughing and retching then knocked out; every voice started and anything

@@ -125,5 +125,6 @@ pub fn plugin(app: &mut App) {
     use bevy::input::common_conditions::input_just_pressed;
     app.init_resource::<Made>()
         .add_systems(Startup, line_up)
-        .add_systems(Update, (spawn_looked_at.run_if(input_just_pressed(KeyCode::KeyN)), reset.run_if(input_just_pressed(KeyCode::KeyK))));
+        // (Not behind the Escape menu, the game paused.)
+        .add_systems(Update, (spawn_looked_at.run_if(input_just_pressed(KeyCode::KeyN)), reset.run_if(input_just_pressed(KeyCode::KeyK))).run_if(crate::menu::playing));
 }
