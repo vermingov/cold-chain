@@ -532,6 +532,15 @@ pub fn joint_angles(q: Quat, frame: Quat) -> [f32; 3] {
     [l.x, l.y, l.z].map(|c| 2.0 * c.clamp(-1.0, 1.0).asin())
 }
 
+// A bound `b` of a joint's angle about one axis (twice the arcsine of the quaternion's part along it) as Rapier's limits
+// read it (twice the arctangent of that part over the real part), the squares of the other two parts being `others`
+// (`ranges`). Out of reach (the others leave no room for that part) it is open: half a turn.
+fn rapier_bound(b: f32, others: f32) -> f32 {
+    let c = (b / 2.0).sin();
+    let w2 = 1.0 - c * c - others;
+    if w2 <= 0.0 { std::f32::consts::PI.copysign(b) } else { 2.0 * c.atan2(w2.sqrt()) }
+}
+
 // What a muscle is sending its joint's motors now, so that nothing is sent that has not changed.
 #[derive(Clone, Default)]
 struct Motor {
@@ -548,7 +557,7 @@ pub struct Seg {
     pub def: Segment,
     pub entity: Entity,
     // The joint's friction, a joint of its own beside the segment's (its motors are the muscles').
-    pub friction: Option<Entity>,
+    friction: Option<Entity>,
     // Where its body is (its bone's head, and its turn), and how it moves: read after every physics step. `was` is how
     // it was moving before the last one (thuds.rs: what it met something at).
     pub now: Transform,
@@ -802,7 +811,17 @@ impl Ragdoll {
         // not measured independently of where the bend's zero is, and a shoulder zeroed at the middle of its range, 58
         // degrees up, held a hurt arm across the belly 40 degrees less turned than it was asked and shook it at 5 Hz.)
         // `zero` is in the joint's own angles (angles(), hold(), range()).
-        s.zero = (s.hi[0] - 145.0 * crate::person::RAD).max((s.lo[0] + 145.0 * crate::person::RAD).min(0.0));
+        // A hinge (an elbow, a knee: nothing swings it sideways, and its twist and side have a few degrees between them)
+        // is zeroed at the middle of its bend. Rapier pushes a limit along its own axis in the parent's frame, and a turn
+        // about the twist's axis there moves the side angle tan(bend / 2) as much (and the side's the twist's): a dead
+        // man's knee bent 116 degrees from straight, against its twist and side limits at once, was pushed off one by the
+        // other 1.6 times as far each pass, never settled, and shook the shin and foot at 0.5 to 1 rad/s. From the middle
+        // the bend is at most 75 degrees, and the two limits move each other less than they move themselves.
+        s.zero = if j.side.0.is_none() {
+            (s.lo[0] + s.hi[0]) / 2.0
+        } else {
+            (s.hi[0] - 145.0 * crate::person::RAD).max((s.lo[0] + 145.0 * crate::person::RAD).min(0.0))
+        };
         let mut joint = GenericJointBuilder::new(if j.lock { JointAxesMask::all() } else { JointAxesMask::LIN_AXES })
             .local_anchor1(pivot - parent.head)
             .local_basis1(frame * Quat::from_rotation_x(s.zero))
@@ -939,7 +958,7 @@ impl Ragdoll {
                 if let Some(Ok(mut j)) = s.friction.map(|e| joints.get_mut(e)) {
                     let g: &mut GenericJoint = j.data.as_mut();
                     for axis in ANGULAR {
-                        g.set_motor_max_force(axis, if std::env::var("CC_NOGRIP").is_ok() { 0.0 } else { s.grip });
+                        g.set_motor_max_force(axis, s.grip);
                     }
                 }
             }
@@ -985,11 +1004,7 @@ impl Ragdoll {
             let want: [[f32; 2]; 3] = std::array::from_fn(|i| {
                 let others: f32 = (0..3).filter(|&j| j != i).map(|j| part[j] * part[j]).sum();
                 let z = if i == 0 { s.zero } else { 0.0 };
-                [s.lo[i] - z, s.hi[i] - z].map(|b| {
-                    let c = (b / 2.0).sin();
-                    let w2 = 1.0 - c * c - others;
-                    if w2 <= 0.0 { std::f32::consts::PI.copysign(b) } else { 2.0 * c.atan2(w2.sqrt()) }
-                })
+                [s.lo[i] - z, s.hi[i] - z].map(|b| rapier_bound(b, others))
             });
             let Ok(j) = joints.get(s.entity) else { continue };
             let g: &GenericJoint = j.data.as_ref();
@@ -1026,10 +1041,9 @@ impl Ragdoll {
             let most = if up < half { 60.0 - 15.0 * up / half } else { 45.0 - 25.0 * (up - half) / half } * crate::person::RAD;
             // (Behind the body is +Z here, -Z in the TS.)
             let past = d.z.clamp(-1.0, 1.0).asin() - most;
-            if past <= 0.0 || std::env::var("CC_NOCAPSULE").is_ok() {
+            if past <= 0.0 {
                 continue;
             }
-            if std::env::var("CC_PROBE").is_ok() { println!("C {side} past={past:.3}"); }
             // About the axis that brings the arm forward again, in the world.
             let ahead = self.segs[chest].now.rotation * Vec3::NEG_Z;
             let axis = v.cross(ahead);
@@ -1433,22 +1447,6 @@ fn solver(mut contexts: Query<&mut RapierContextSimulation, Added<RapierContextS
     for mut c in &mut contexts {
         c.integration_parameters.warmstart_joints = true;
         c.integration_parameters.num_solver_iterations = SOLVER_PASSES;
-        // EXPERIMENT (not to commit)
-        if std::env::var("CC_NORECYCLE").is_ok() {
-            c.integration_parameters.contact_recycling = false;
-        }
-        if std::env::var("CC_COULOMB").is_ok() {
-            c.integration_parameters.friction_model = FrictionModel::Coulomb;
-        }
-        if std::env::var("CC_NOWARM").is_ok() {
-            c.integration_parameters.warmstart_joints = false;
-        }
-        if let Ok(v) = std::env::var("CC_ITER") {
-            c.integration_parameters.num_solver_iterations = v.parse().unwrap();
-        }
-        if let Ok(v) = std::env::var("CC_RECYCLE") {
-            c.integration_parameters.normalized_contact_recycle_distance = v.parse().unwrap();
-        }
     }
 }
 const SOLVER_PASSES: usize = 16;
@@ -1457,4 +1455,24 @@ pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, solver).configure_sets(FixedUpdate, (Steps::Push, Steps::Give).chain().before(PhysicsSet::SyncBackend))
         .configure_sets(FixedUpdate, Steps::Read.after(PhysicsSet::Writeback))
         .add_systems(FixedUpdate, (read.in_set(Steps::Read), shoulders.in_set(Steps::Push), (give, ranges).in_set(Steps::Give)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A joint turned about two axes at once: each axis's own angle, as a bound, is where Rapier's measure puts the joint
+    // now; about one axis the two measures are the same.
+    #[test]
+    fn bounds_in_rapiers_measure() {
+        let l = (Quat::from_rotation_x(1.2) * Quat::from_rotation_z(1.1) * Quat::from_rotation_y(-0.3)).normalize();
+        let part = [l.x, l.y, l.z];
+        for i in 0..3 {
+            let others: f32 = (0..3).filter(|&j| j != i).map(|j| part[j] * part[j]).sum();
+            let own = 2.0 * part[i].asin();
+            assert!((rapier_bound(own, others) - 2.0 * part[i].atan2(l.w)).abs() < 1e-4);
+        }
+        assert!((rapier_bound(0.7, 0.0) - 0.7).abs() < 1e-5);
+        assert_eq!(rapier_bound(2.5, 0.9), std::f32::consts::PI);
+    }
 }

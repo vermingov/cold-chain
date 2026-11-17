@@ -323,7 +323,6 @@ pub fn plugin(this: Run) -> impl Fn(&mut App) {
             })
             .init_resource::<Jitter>()
             .add_systems(FixedUpdate, jitter.after(crate::ragdoll::Steps::Read))
-            .add_systems(FixedUpdate, (probe.after(jitter), tweak.in_set(crate::ragdoll::Steps::Push)))
             .add_systems(Last, (heard, run).chain());
     }
 }
@@ -388,76 +387,6 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
             now[k] = (Some(w), last[k].0);
         }
         j.last.insert(e, now);
-    }
-}
-
-// EXPERIMENT (not to commit): a change made at one frame, after the people have landed.
-fn tweak(runner: Res<Runner>, people: Query<&Ragdoll>, mut joints: Query<&mut bevy_rapier3d::prelude::ImpulseJoint>, mut sims: Query<&mut bevy_rapier3d::prelude::RapierContextSimulation>) {
-    let Ok(at) = std::env::var("CC_AT") else { return };
-    let Some(started) = runner.started else { return };
-    if runner.frame - started != at.parse::<u64>().unwrap() { return }
-    if std::env::var("CC_T_NOWARM").is_ok() {
-        for mut c in &mut sims { c.integration_parameters.warmstart_joints = false; }
-    }
-    for rd in &people {
-        for s in &rd.segs {
-            if s.def.parent.is_none() || s.locked { continue }
-            let Ok(mut j) = joints.get_mut(s.entity) else { continue };
-            let g: &mut bevy_rapier3d::prelude::GenericJoint = j.data.as_mut();
-            if std::env::var("CC_T_NOLIMIT").is_ok() && s.def.name.starts_with("upperarm") {
-                for a in [bevy_rapier3d::prelude::JointAxis::AngX, bevy_rapier3d::prelude::JointAxis::AngY, bevy_rapier3d::prelude::JointAxis::AngZ] { g.set_limits(a, [-10.0, 10.0]); }
-            }
-            if let Ok(hz) = std::env::var("CC_T_SOFT") {
-                g.raw.softness = bevy_rapier3d::rapier::dynamics::SpringCoefficients::new(hz.parse().unwrap(), 1.0);
-            }
-        }
-    }
-    println!("tweaked at {at}");
-}
-
-// EXPERIMENT (not to commit): what the shaking segments are doing, each step of a stretch of frames.
-fn probe(runner: Res<Runner>, people: Query<(Entity, &Ragdoll)>, ctx: bevy_rapier3d::prelude::ReadRapierContext, names: Query<&Name>, handles: Query<&bevy_rapier3d::prelude::RapierImpulseJointHandle>) {
-    let Ok(range) = std::env::var("CC_PROBE") else { return };
-    let Some(started) = runner.started else { return };
-    let f = runner.frame - started;
-    let r: Vec<u64> = range.split(',').map(|x| x.parse().unwrap()).collect();
-    if f < r[0] || f >= r[1] { return }
-    let mut v: Vec<(Entity, &Ragdoll)> = people.iter().collect();
-    v.sort_by_key(|x| x.0);
-    let Ok(ctx) = ctx.single() else { return };
-    for (i, (_, rd)) in v.iter().enumerate() {
-        if !r[2..].contains(&(i as u64)) { continue }
-        for (k, s) in rd.segs.iter().enumerate() {
-            if s.spin.length() < 0.3 { continue }
-            let a = if s.def.parent.is_some() { rd.angles(k) } else { [0.0; 3] };
-            // Rapier's limit measure: 2 atan2(part, w) of the same quaternion, from the middle of its range.
-            let mut rap = String::new();
-            if s.def.parent.is_some() && !s.locked {
-                let q = Quat::from_axis_angle(s.frame * Vec3::X, -s.zero) * rd.relative(k) * s.unneutral;
-                let mut l = s.frame.inverse() * q * s.frame;
-                if l.w < 0.0 { l = -l; }
-                for (i, c) in [l.x, l.y, l.z].into_iter().enumerate() {
-                    let z = if i == 0 { s.zero } else { 0.0 };
-                    let (lo, hi) = (s.lo[i] - z, s.hi[i] - z);
-                    let m = 2.0 * c.atan2(l.w);
-                    let flag = if m <= lo { "LO" } else if m >= hi { "HI" } else { "" };
-                    rap += &format!("{:.2}[{:.2},{:.2}]{flag} ", m, lo, hi);
-                }
-            }
-            let a = [a[0], a[1], a[2]];
-            let _ = &rap;
-            let mut line = format!("P f{f} p{i} {} w=[{:.2},{:.2},{:.2}] |w|={:.2} ang=[{:.2},{:.2},{:.2}] lo=[{:.2},{:.2},{:.2}] hi=[{:.2},{:.2},{:.2}] rapier {rap}|", s.def.name, s.spin.x, s.spin.y, s.spin.z, s.spin.length(), a[0], a[1], a[2], s.lo[0], s.lo[1], s.lo[2], s.hi[0], s.hi[1], s.hi[2]);
-            let imp = |e: Entity| handles.get(e).ok().and_then(|h| ctx.joints.impulse_joints.get(h.0)).map(|j| format!("[{:.3},{:.3},{:.3}|{:.4},{:.4},{:.4}]", j.impulses[0], j.impulses[1], j.impulses[2], j.impulses[3], j.impulses[4], j.impulses[5])).unwrap_or_default();
-            line += &format!(" J{} F{} |", imp(s.entity), s.friction.map(imp).unwrap_or_default());
-            for pair in ctx.contact_pairs_with(s.entity) {
-                if !pair.has_any_active_contact() { continue }
-                let other = if pair.collider1() == Some(s.entity) { pair.collider2() } else { pair.collider1() };
-                let n = other.and_then(|o| names.get(o).ok()).map(|n| n.as_str().to_string()).unwrap_or("?".into());
-                let deep = pair.find_deepest_contact().map(|(_, c)| c.dist()).unwrap_or(0.0);
-                line += &format!(" {} imp={:.3} deep={:.4} n={};", n, pair.total_impulse_magnitude(), deep, pair.manifolds().map(|m| m.points().len()).sum::<usize>());
-            }
-            println!("{line}");
-        }
     }
 }
 
