@@ -28,7 +28,7 @@ use crate::models::Models;
 use crate::behaviour::{Behaviour, Grabbed};
 use crate::dressing::{self, REACH, SECONDS};
 use crate::ragdoll::Ragdoll;
-use crate::npc::{self, Hurt, Npc};
+use crate::npc::{self, Hurt, Look, Npc};
 use crate::person::Person;
 use crate::vitals::{Dice, Vitals};
 use crate::wounds;
@@ -746,9 +746,14 @@ pub struct Pierced {
 // The two calls a weapon makes into a body (wounds.rs pierce and blow): everything a shot, a blade or a blow does to a
 // person goes through here, and into the log of what was hit.
 fn pierce(cx: &mut Cx, who: Entity, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> Pierced {
+    pierce_with(cx, who, origin, dir, m, far, None)
+}
+
+// pierce, with what the line meets in them already worked out (wounds.rs `lines`), or not.
+fn pierce_with(cx: &mut Cx, who: Entity, origin: Vec3, dir: Vec3, m: &Missile, far: f32, lines: Option<wounds::Lines>) -> Pierced {
     let missile = m.wounds();
     let Some((res, seg)) = cx.npc(who, |n| {
-        let res = wounds::pierce(n, origin, dir, &missile, far);
+        let res = wounds::pierce_with(n, origin, dir, &missile, far, lines);
         let seg = res.enter.as_ref().and_then(|c| n.nearest(c.point).0).map(|k| n.person.segments[k].name.clone());
         (res, seg)
     }) else {
@@ -956,16 +961,35 @@ pub fn jitter(rng: &mut Rng, dir: Vec3, spread: f32) -> Vec3 {
 }
 
 // One bullet, pellet or fragment from `from` along `dir`, followed through whoever it goes through.
-fn shot(cx: &mut Cx, from: Vec3, mut dir: Vec3, m: Missile, skips: f32) {
+fn shot(cx: &mut Cx, from: Vec3, dir: Vec3, m: Missile, skips: f32) {
+    shot_from(cx, from, dir, m, skips, None);
+}
+
+// Where a shot from its start first meets the room and someone, and what it meets in them, worked out beforehand (`legs`).
+struct Leg {
+    wall: Option<Wall>,
+    person: Option<(Entity, f32)>,
+    lines: Option<wounds::Lines>,
+}
+
+// shot, its first leg already worked out, or not.
+fn shot_from(cx: &mut Cx, from: Vec3, mut dir: Vec3, m: Missile, skips: f32, mut first: Option<Leg>) {
     let mut origin = from;
     let mut energy = m.energy;
     for _ in 0..6 {
         if energy <= 15.0 {
             return;
         }
-        let wall = cx.wall(origin, dir);
+        let (wall, near, lines) = match first.take() {
+            Some(leg) => (leg.wall, leg.person, leg.lines),
+            None => {
+                let wall = cx.wall(origin, dir);
+                let near = cx.person(origin, dir, wall.as_ref().map_or(200.0, |w| w.distance));
+                (wall, near, None)
+            }
+        };
         let far = wall.as_ref().map_or(200.0, |w| w.distance);
-        let Some((who, t)) = cx.person(origin, dir, far) else {
+        let Some((who, t)) = near else {
             let Some(w) = wall else { return };
             hole(cx, w.point, w.normal, m.calibre);
             cx.weapons.log.push(json!({ "hit": "wall", "point": w.point.to_array(), "missile": m.name }));
@@ -982,7 +1006,7 @@ fn shot(cx: &mut Cx, from: Vec3, mut dir: Vec3, m: Missile, skips: f32) {
             continue;
         };
         let reach = (3.0f32).min(far - t + 2.0) + t;
-        let res = pierce(cx, who, origin, dir, &Missile { energy, ..m }, reach);
+        let res = pierce_with(cx, who, origin, dir, &Missile { energy, ..m }, reach, lines);
         if !res.hit {
             origin += dir * (t + 0.3);
             continue;
@@ -1394,6 +1418,7 @@ fn let_fly(cx: &mut Cx, speed: f32) {
 fn explode(cx: &mut Cx, ball: Entity) {
     let Ok((t, _)) = cx.bodies.get(ball) else { return };
     let at = t.translation;
+    let started = std::time::Instant::now();
     cx.note("grenade went off".into());
     let near: Vec<(String, f32)> = cx.people.iter().map(|(e, p)| (p.label.clone(), cx.centre(e, p).distance(at))).collect();
     cx.weapons.log.push(json!({ "grenade": at.to_array(), "people": near }));
@@ -1406,7 +1431,12 @@ fn explode(cx: &mut Cx, ball: Entity) {
     // torn off and a belly burst (180 g of Composition B is about 0.25 kg of TNT).
     // (dismember.rs's blast: limbs torn off, a belly burst; once this frame's work is done, with the whole world.)
     let people: Vec<(Entity, f32)> = cx.people.iter().map(|(e, p)| (e, at.distance(cx.centre(e, p)).max(0.4))).collect();
-    for (who, d) in people {
+    // (Nothing moves anyone's body until this system is done: their bones are worked out once for the blows and the
+    // fragments' two hundred lines, and let go at the end.)
+    for &(who, _) in &people {
+        cx.npc(who, |n| n.hold());
+    }
+    for &(who, d) in &people {
         cx.commands.queue(move |w: &mut World| {
             crate::dismember::blast(w, who, at, 0.25);
         });
@@ -1447,14 +1477,22 @@ fn explode(cx: &mut Cx, ball: Entity) {
             aims.push((a, b, s.radius, FRAGMENTS * area / (4.0 * std::f32::consts::PI * d * d), (d - 0.3).max(0.0)));
         }
     }
+    // (Every fragment's way drawn first, the dice in the order they always were, a shot throwing none; then where each
+    // first goes worked out for all of them at once, and each followed in turn as before.)
+    let mut ways = Vec::new();
     for (a, b, r, expected, far) in aims {
         let mut n = (expected + cx.rng.next()).floor() as i32;
         while n > 0 {
             n -= 1;
             let (u, x, y, z) = (cx.rng.next(), cx.rng.next(), cx.rng.next(), cx.rng.next());
             let aim = a.lerp(b, u) + (Vec3::new(x, y, z) - 0.5) * r * 1.6;
-            shot(cx, at, (aim - at).normalize(), Missile { energy: frag.energy * (-far / 10.8).exp(), ..frag }, 0.0);
+            ways.push(((aim - at).normalize(), Missile { energy: frag.energy * (-far / 10.8).exp(), ..frag }));
         }
+    }
+    let fragments = ways.len();
+    let firsts = legs(cx, at, &ways);
+    for ((dir, m), first) in ways.into_iter().zip(firsts) {
+        shot_from(cx, at, dir, m, 0.0, Some(first));
     }
     for _ in 0..160 {
         let y = cx.rng.next() * 1.6 - 0.6;
@@ -1465,6 +1503,12 @@ fn explode(cx: &mut Cx, ball: Entity) {
             shot(cx, at, dir, frag, 0.0);
         }
     }
+    for &(who, _) in &people {
+        cx.npc(who, |n| n.let_go());
+    }
+    // (Timed for the log: the grenade's frame was some 80 ms, most of it the fragments.)
+    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    cx.weapons.log.push(json!({ "grenade_ms": (ms * 100.0).round() / 100.0, "fragments": fragments }));
     // The player feels it.
     let eye = cx.eye();
     let d = at.distance(eye.translation);
@@ -1475,6 +1519,59 @@ fn explode(cx: &mut Cx, ball: Entity) {
             p.yaw += (k2 - 0.5) * 0.08 * (3.0 / d).min(1.0);
         }
     }
+}
+
+// The first leg of each of many shots from one point (a grenade's fragments, two hundred of them into the people round
+// it): the wall and the person each meets first, as shot_from would find them, and what each line meets in that person,
+// worked out on the compute threads. A hundred and more lines through the same few bodies: what each meets is a few
+// thousand triangle tests, and none of it changes anything, so it can be asked of all of them at once before any of
+// them does what it does to the body (which is in turn, with the dice, as before). Only while everyone is held
+// (Npc::hold): the lines are traced through their held bones.
+fn legs(cx: &mut Cx, from: Vec3, ways: &[(Vec3, Missile)]) -> Vec<Leg> {
+    let mut legs: Vec<Leg> = ways
+        .iter()
+        .map(|&(dir, m)| {
+            if m.energy <= 15.0 {
+                return Leg { wall: None, person: None, lines: None };
+            }
+            let wall = cx.wall(from, dir);
+            let person = cx.person(from, dir, wall.as_ref().map_or(200.0, |w| w.distance));
+            Leg { wall, person, lines: None }
+        })
+        .collect();
+    // Each person met: skinned now (as their first surface this frame would have), and how a line sees them.
+    let mut met: Vec<Entity> = legs.iter().filter_map(|l| l.person.map(|p| p.0)).collect();
+    met.sort();
+    met.dedup();
+    let seen: Vec<_> = met.into_iter().filter_map(|who| cx.npc(who, |n| n.held().map(|h| (who, n.skinned(), h))).flatten()).collect();
+    let views: Vec<_> = seen
+        .iter()
+        .filter_map(|(who, sk, held)| {
+            let (_, person) = cx.people.get(*who).ok()?;
+            let (_, _, hurt) = cx.hurts.get(*who).ok()?;
+            Some((*who, Look { body: &person.body, weights: hurt.weights.as_deref() }, sk.clone(), hurt.traced.clone(), held.clone()))
+        })
+        .collect();
+    let jobs: Vec<(usize, usize, Vec3, f32, wounds::Missile)> = legs
+        .iter()
+        .enumerate()
+        .filter_map(|(k, l)| {
+            let (who, t) = l.person?;
+            let v = views.iter().position(|v| v.0 == who)?;
+            // (How far into them shot_from has pierce look.)
+            let far = l.wall.as_ref().map_or(200.0, |w| w.distance);
+            Some((k, v, ways[k].0, (3.0f32).min(far - t + 2.0) + t, ways[k].1.wounds()))
+        })
+        .collect();
+    let done = npc::spread(jobs.len(), |j| {
+        let (_, v, dir, far, m) = &jobs[j];
+        let (_, look, sk, traced, held) = &views[*v];
+        wounds::lines(look, sk, traced, held, from, *dir, m, *far)
+    });
+    for (j, lines) in done {
+        legs[jobs[j].0].lines = Some(lines);
+    }
+    legs
 }
 
 // --- every frame ------------------------------------------------------------------------------------------------------

@@ -197,6 +197,36 @@ pub struct Bend {
     pub hi: [f32; 3],
 }
 
+// `f` of each of 0..n, on this thread and on whichever compute threads are free, each taking the next not yet taken, in
+// no order (the index comes back with each). Bevy's own scope has the thread that waits on it run other systems' tasks
+// meanwhile (its global executor): a grenade's frame was held up by a material's specialisation that way. Here the
+// waiting thread does only this work, and the pool's threads join in as they come free.
+pub fn spread<R: Send + 'static>(n: usize, f: impl Fn(usize) -> R + Sync) -> Vec<(usize, R)> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let pool = bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+    let next = AtomicUsize::new(0);
+    let work = || {
+        let mut out = Vec::new();
+        loop {
+            let k = next.fetch_add(1, Ordering::Relaxed);
+            if k >= n {
+                return out;
+            }
+            out.push((k, f(k)));
+        }
+    };
+    let work = &work;
+    pool.scope_with_executor(false, None, |s| {
+        for _ in 0..pool.thread_num().min(n.saturating_sub(1)) {
+            s.spawn(async move { work() });
+        }
+        s.spawn_on_scope(async move { work() });
+    })
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 const RUN: usize = 96; // indices: 32 triangles, which lie together in the mesh (MakeHuman's faces are in order over the body)
 const GROUP: usize = 8; // runs: a short line (sixty round each exit, wounds.ts tear) crosses few of them
 
@@ -233,6 +263,17 @@ pub struct Hurt {
     // The body's corners' bones and weights as this person's own body has them, once a limb is cut off (dismember.rs:
     // what the body keeps is carried by the bone the limb hung from); None, the file's.
     pub weights: Option<Arc<(Vec<[u16; 4]>, Vec<[u8; 4]>)>>,
+    // The body held still for a burst of questions (`Npc::hold`, a grenade's fragments): the bones in the world worked
+    // out once, and what trace asks of them, until `let_go`.
+    held: Option<Arc<Held>>,
+}
+
+// Each bone's matrix from rest to the world now and back, and each vessel's points in the world, as bone_worlds and
+// trace would work them out: the same numbers, worked out once while nothing can move the body.
+pub struct Held {
+    pub worlds: Vec<Affine3A>,
+    pub inverse: Vec<Affine3A>,
+    pub tubes: Vec<Vec<Vec3>>,
 }
 
 // One person's body and medical state, borrowed for one shot, blow or frame.
@@ -244,6 +285,130 @@ pub struct Npc<'a> {
     pub traced: Arc<Traced>,
     pub dice: &'a mut Dice,
     pub frame: u32,
+}
+
+// A person's skin and clothes as a line through them meets them, borrowed only to read: their body and whose corners are
+// carried by which bones now. Npc::surface asks it; so do many lines at once on the compute threads (a grenade's
+// fragments), while nobody's medicine is borrowed.
+pub struct Look<'a> {
+    pub body: &'a Body,
+    pub weights: Option<&'a (Vec<[u16; 4]>, Vec<[u8; 4]>)>,
+}
+
+impl Look<'_> {
+    // The skin and clothes crossed by the line from `origin` along unit `dir`, nearer than `far`, in order. With `eyes`,
+    // the eyeballs too (Kind::Eye): a line through the open lids meets the eye before the socket's skin behind it
+    // (eyes.rs); and the tongue, as a wound in it is drawn on it (throat.rs).
+    pub fn surface(&self, sk: &Skinned, origin: Vec3, dir: Vec3, far: f32, eyes: bool) -> Vec<Crossing> {
+        let body = self.body;
+        let index = &body.index;
+        let mut hits: Vec<(f32, usize, Kind)> = Vec::new();
+        for (pi, p) in body.parts.iter().enumerate() {
+            // (The skin under the clothes is not drawn but is still where the body begins.)
+            let kind = match p.kind.as_str() {
+                "skin" => Kind::Skin,
+                "cloth" => Kind::Cloth,
+                "eyes" if eyes => Kind::Eye,
+                "tongue" if eyes => Kind::Tongue,
+                _ => continue,
+            };
+            if !slab_for(&sk.parts[pi], origin, dir, far) {
+                continue;
+            }
+            let end = p.index_start + p.index_count;
+            let mut start = p.index_start;
+            while start < end {
+                // Only the runs of triangles whose box the line crosses: the same crossings as trying every triangle. A
+                // GROUP of runs at a time first, past the whole group if its box is not crossed.
+                let run = start / RUN;
+                let group = run / GROUP;
+                if (run % GROUP == 0 || start == p.index_start) && !box_crossed(&sk.groups[group], origin, dir, far) {
+                    start = end.min((group + 1) * GROUP * RUN);
+                    continue;
+                }
+                let next = end.min((run + 1) * RUN);
+                if box_crossed(&sk.boxes[run], origin, dir, far) {
+                    for i in (start..next).step_by(3) {
+                        let t = triangle(origin, dir, &sk.at, index, i);
+                        // (The clear cornea over each eye is a shell painted see-through, its corners all on the sheet's
+                        // empty corner: the eye is the white and the iris under it. The picture's v is turned over here.)
+                        let uv = body.uv[index[i] as usize];
+                        if kind == Kind::Eye && uv.x > 0.87 && 1.0 - uv.y < 0.13 {
+                            continue;
+                        }
+                        if t > 0.0 && t < far {
+                            hits.push((t, i, kind));
+                        }
+                    }
+                }
+                start = next;
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Two crossings closer than a millimetre are the same seam met twice.
+        let mut out: Vec<Crossing> = Vec::new();
+        for (t, i, kind) in hits {
+            if out.last().is_some_and(|l| l.kind == kind && t - l.t < 0.001) {
+                continue;
+            }
+            out.push(self.describe(t, i, kind, origin, dir, &sk.at));
+        }
+        out
+    }
+
+    fn describe(&self, t: f32, i: usize, kind: Kind, origin: Vec3, dir: Vec3, skinned: &[Vec3]) -> Crossing {
+        let body = self.body;
+        let [a, b, c] = [0, 1, 2].map(|k| body.index[i + k]);
+        let point = origin + dir * t;
+        let (pa, pb, pc) = (skinned[a as usize], skinned[b as usize], skinned[c as usize]);
+        let mut normal = (pb - pa).cross(pc - pa).normalize();
+        if normal.dot(dir) > 0.0 {
+            normal = -normal;
+        }
+        // Where on the triangle, by area: the same place on the triangle at rest, and in the skin's picture.
+        let w = barycentric(point, pa, pb, pc);
+        let r = [a, b, c].map(|v| body.position[v as usize]);
+        let rest = r[0] * w[0] + r[1] * w[1] + r[2] * w[2];
+        let u = [a, b, c].map(|v| body.uv[v as usize]);
+        let uv = u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
+        // UV units to a metre of skin here, for painting things their real size.
+        let area3 = (r[1] - r[0]).cross(r[2] - r[0]).length();
+        let area_uv = ((u[1].x - u[0].x) * (u[2].y - u[0].y) - (u[2].x - u[0].x) * (u[1].y - u[0].y)).abs();
+        // Which way the skin faces there at rest: the mesh's own normals, which point out (the triangle's winding need
+        // not).
+        let n = [a, b, c].map(|v| body.normal[v as usize]);
+        let owner = self.owner_of(a);
+        let rest_normal = self.outward((n[0] * w[0] + n[1] * w[1] + n[2] * w[2]).normalize(), rest, owner);
+        Crossing {
+            t, kind, point, normal, uv, rest, rest_normal, owner, scale: (area_uv / area3.max(1e-10)).sqrt(), corners: [a, b, c], shares: w,
+            cloth: None, open: false, under: false,
+        }
+    }
+
+    // A normal at a place on the body turned, if it has to be, to point out of the body: away from the bone it hangs on.
+    // (The mesh's own normals are mostly right; the skin kept under the clothes has some that point in, and a wound dug
+    // along one grows out through the shirt.)
+    pub fn outward(&self, n: Vec3, rest: Vec3, owner: usize) -> Vec3 {
+        let bone = &self.body.bones[owner];
+        let ab = bone.tail - bone.head;
+        let t = ((rest - bone.head).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+        if n.dot(rest - (bone.head + ab * t)) < 0.0 { -n } else { n }
+    }
+
+    // The bone that carries most of corner `v`.
+    // (A corner the body kept round a limb cut off goes with the bone the limb hung from: dismember.ts owners.)
+    pub fn owner_of(&self, v: u32) -> usize {
+        let body = self.body;
+        let (joints, weights) = self.weights.map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
+        let (mut best, mut bone) = (0u8, 0u16);
+        for k in 0..4 {
+            if weights[v as usize][k] > best {
+                best = weights[v as usize][k];
+                bone = joints[v as usize][k];
+            }
+        }
+        bone as usize
+    }
 }
 
 impl<'a> Npc<'a> {
@@ -258,6 +423,9 @@ impl<'a> Npc<'a> {
     // Each bone's matrix from the body at rest to the world now: as posed (person.rs `posed`, which the ragdoll's drive()
     // writes from its bodies every frame). Everything medical asks it.
     pub fn bone_worlds(&self) -> Vec<Affine3A> {
+        if let Some(h) = &self.hurt.held {
+            return h.worlds.clone();
+        }
         let p = self.person;
         let pelvis = p.body.bone("root").head;
         let base = self.root.compute_affine()
@@ -271,7 +439,30 @@ impl<'a> Npc<'a> {
     }
 
     pub fn rest_to_world(&self, bone: usize) -> Affine3A {
-        self.bone_worlds()[bone]
+        match &self.hurt.held {
+            Some(h) => h.worlds[bone],
+            None => self.bone_worlds()[bone],
+        }
+    }
+
+    // Hold the body where it is for a burst of questions about it (a grenade's fragments, some two hundred lines through
+    // the same four people in one system's run): every bone's place, its inverse and the vessels' points are worked out
+    // once instead of for each line. Only while nothing can move the body (its pose, root and placed bones are borrowed
+    // unchanged for the length of the system): `let_go` before anything else asks.
+    pub fn hold(&mut self) {
+        self.hurt.held = None;
+        let worlds = self.bone_worlds();
+        let inverse = worlds.iter().map(|m| m.inverse()).collect();
+        let tubes = self.traced.tubes.iter().map(|t| t.points.iter().map(|&(p, _, b)| worlds[b].transform_point3(p)).collect()).collect();
+        self.hurt.held = Some(Arc::new(Held { worlds, inverse, tubes }));
+    }
+
+    pub fn let_go(&mut self) {
+        self.hurt.held = None;
+    }
+
+    pub fn held(&self) -> Option<Arc<Held>> {
+        self.hurt.held.clone()
     }
 
     // Where a point of the body at rest (on bone `owner`) is in the world now, and a direction there.
@@ -357,20 +548,30 @@ impl<'a> Npc<'a> {
         let mats = self.bone_worlds();
         let own = self.hurt.weights.clone();
         let (joints, weights) = own.as_ref().map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
-        let at: Vec<Vec3> = body
-            .position
-            .iter()
-            .zip(joints.iter().zip(weights))
-            .map(|(p, (j, w))| {
-                let mut out = Vec3::ZERO;
-                for k in 0..4 {
-                    if w[k] > 0 {
-                        out += mats[j[k] as usize].transform_point3(*p) * (w[k] as f32 / 255.0);
+        // (Some fifty thousand corners, each on its own: spread over the compute threads, a few milliseconds a person
+        // when a blast first asks for everyone at once.)
+        const CHUNK: usize = 4096;
+        let mut chunks = spread(body.position.len().div_ceil(CHUNK), |c| {
+            let start = c * CHUNK;
+            let end = (start + CHUNK).min(body.position.len());
+            (start..end)
+                .map(|v| {
+                    let (p, j, w) = (body.position[v], joints[v], weights[v]);
+                    let mut out = Vec3::ZERO;
+                    for k in 0..4 {
+                        if w[k] > 0 {
+                            out += mats[j[k] as usize].transform_point3(p) * (w[k] as f32 / 255.0);
+                        }
                     }
-                }
-                out
-            })
-            .collect();
+                    out
+                })
+                .collect::<Vec<Vec3>>()
+        });
+        chunks.sort_by_key(|c| c.0);
+        let mut at = Vec::with_capacity(body.position.len());
+        for (_, c) in chunks {
+            at.extend(c);
+        }
         // The box round each run of RUN / 3 triangles, and round each GROUP of runs.
         let index = &body.index;
         let runs = index.len().div_ceil(RUN);
@@ -412,119 +613,23 @@ impl<'a> Npc<'a> {
         s
     }
 
-    // The skin and clothes crossed by the line from `origin` along unit `dir`, nearer than `far`, in order. With `eyes`,
-    // the eyeballs too (Kind::Eye): a line through the open lids meets the eye before the socket's skin behind it
-    // (eyes.rs); and the tongue, as a wound in it is drawn on it (throat.rs).
+    // The skin and clothes crossed by the line from `origin` along unit `dir`, nearer than `far`, in order (Look's).
     pub fn surface(&mut self, origin: Vec3, dir: Vec3, far: f32, eyes: bool) -> Vec<Crossing> {
         let sk = self.skinned();
-        let body = self.person.body.clone();
-        let index = &body.index;
-        let mut hits: Vec<(f32, usize, Kind)> = Vec::new();
-        for (pi, p) in body.parts.iter().enumerate() {
-            // (The skin under the clothes is not drawn but is still where the body begins.)
-            let kind = match p.kind.as_str() {
-                "skin" => Kind::Skin,
-                "cloth" => Kind::Cloth,
-                "eyes" if eyes => Kind::Eye,
-                "tongue" if eyes => Kind::Tongue,
-                _ => continue,
-            };
-            if !slab_for(&sk.parts[pi], origin, dir, far) {
-                continue;
-            }
-            let end = p.index_start + p.index_count;
-            let mut start = p.index_start;
-            while start < end {
-                // Only the runs of triangles whose box the line crosses: the same crossings as trying every triangle. A
-                // GROUP of runs at a time first, past the whole group if its box is not crossed.
-                let run = start / RUN;
-                let group = run / GROUP;
-                if (run % GROUP == 0 || start == p.index_start) && !box_crossed(&sk.groups[group], origin, dir, far) {
-                    start = end.min((group + 1) * GROUP * RUN);
-                    continue;
-                }
-                let next = end.min((run + 1) * RUN);
-                if box_crossed(&sk.boxes[run], origin, dir, far) {
-                    for i in (start..next).step_by(3) {
-                        let t = triangle(origin, dir, &sk.at, index, i);
-                        // (The clear cornea over each eye is a shell painted see-through, its corners all on the sheet's
-                        // empty corner: the eye is the white and the iris under it. The picture's v is turned over here.)
-                        let uv = body.uv[index[i] as usize];
-                        if kind == Kind::Eye && uv.x > 0.87 && 1.0 - uv.y < 0.13 {
-                            continue;
-                        }
-                        if t > 0.0 && t < far {
-                            hits.push((t, i, kind));
-                        }
-                    }
-                }
-                start = next;
-            }
-        }
-        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-        // Two crossings closer than a millimetre are the same seam met twice.
-        let mut out: Vec<Crossing> = Vec::new();
-        for (t, i, kind) in hits {
-            if out.last().is_some_and(|l| l.kind == kind && t - l.t < 0.001) {
-                continue;
-            }
-            out.push(self.describe(t, i, kind, origin, dir, &sk.at));
-        }
-        out
+        self.look().surface(&sk, origin, dir, far, eyes)
     }
 
-    fn describe(&self, t: f32, i: usize, kind: Kind, origin: Vec3, dir: Vec3, skinned: &[Vec3]) -> Crossing {
-        let body = &self.person.body;
-        let [a, b, c] = [0, 1, 2].map(|k| body.index[i + k]);
-        let point = origin + dir * t;
-        let (pa, pb, pc) = (skinned[a as usize], skinned[b as usize], skinned[c as usize]);
-        let mut normal = (pb - pa).cross(pc - pa).normalize();
-        if normal.dot(dir) > 0.0 {
-            normal = -normal;
-        }
-        // Where on the triangle, by area: the same place on the triangle at rest, and in the skin's picture.
-        let w = barycentric(point, pa, pb, pc);
-        let r = [a, b, c].map(|v| body.position[v as usize]);
-        let rest = r[0] * w[0] + r[1] * w[1] + r[2] * w[2];
-        let u = [a, b, c].map(|v| body.uv[v as usize]);
-        let uv = u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
-        // UV units to a metre of skin here, for painting things their real size.
-        let area3 = (r[1] - r[0]).cross(r[2] - r[0]).length();
-        let area_uv = ((u[1].x - u[0].x) * (u[2].y - u[0].y) - (u[2].x - u[0].x) * (u[1].y - u[0].y)).abs();
-        // Which way the skin faces there at rest: the mesh's own normals, which point out (the triangle's winding need
-        // not).
-        let n = [a, b, c].map(|v| body.normal[v as usize]);
-        let owner = self.owner_of(a);
-        let rest_normal = self.outward((n[0] * w[0] + n[1] * w[1] + n[2] * w[2]).normalize(), rest, owner);
-        Crossing {
-            t, kind, point, normal, uv, rest, rest_normal, owner, scale: (area_uv / area3.max(1e-10)).sqrt(), corners: [a, b, c], shares: w,
-            cloth: None, open: false, under: false,
-        }
+    // The body as a line through it sees it, borrowed only to read.
+    pub fn look(&self) -> Look<'_> {
+        Look { body: &self.person.body, weights: self.hurt.weights.as_deref() }
     }
 
-    // A normal at a place on the body turned, if it has to be, to point out of the body: away from the bone it hangs on.
-    // (The mesh's own normals are mostly right; the skin kept under the clothes has some that point in, and a wound dug
-    // along one grows out through the shirt.)
     pub fn outward(&self, n: Vec3, rest: Vec3, owner: usize) -> Vec3 {
-        let bone = &self.person.body.bones[owner];
-        let ab = bone.tail - bone.head;
-        let t = ((rest - bone.head).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
-        if n.dot(rest - (bone.head + ab * t)) < 0.0 { -n } else { n }
+        self.look().outward(n, rest, owner)
     }
 
-    // The bone that carries most of corner `v`.
-    // (A corner the body kept round a limb cut off goes with the bone the limb hung from: dismember.ts owners.)
     pub fn owner_of(&self, v: u32) -> usize {
-        let body = &self.person.body;
-        let (joints, weights) = self.hurt.weights.as_ref().map_or((&body.joints, &body.weights), |w| (&w.0, &w.1));
-        let (mut best, mut bone) = (0u8, 0u16);
-        for k in 0..4 {
-            if weights[v as usize][k] > best {
-                best = weights[v as usize][k];
-                bone = joints[v as usize][k];
-            }
-        }
-        bone as usize
+        self.look().owner_of(v)
     }
 
     // A place on the body at rest as a crossing like surface()'s: triangle `t` (an offset into the index), `w` how much
@@ -933,6 +1038,7 @@ impl Hurt {
             bends: None,
             skinned: None,
             weights: None,
+            held: None,
         }
     }
 }

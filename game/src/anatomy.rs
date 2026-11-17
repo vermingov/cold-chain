@@ -573,74 +573,12 @@ impl Npc<'_> {
     // Everything the line from `origin` along unit `dir` passes through, nearer than `far`: spans in order, and the
     // vessels it comes within `reach` of. `only` the parts it says, if given.
     pub fn trace(&self, origin: Vec3, dir: Vec3, far: f32, reach: f32, only: Option<&dyn Fn(&TracedPart) -> bool>) -> (Vec<Span>, Vec<VesselHit>) {
-        let tr = self.traced.clone();
-        let mats = self.bone_worlds();
-        let mut spans: Vec<Span> = Vec::new();
-        let mut ts: Vec<f32> = Vec::new();
-        for (k, part) in tr.parts.iter().enumerate() {
-            if only.is_some_and(|f| !f(part)) {
-                continue;
-            }
-            let inv = mats[part.owner].inverse();
-            let o = inv.transform_point3(origin);
-            let d = inv.transform_vector3(dir);
-            if !slab(o, d, part.lo, part.hi, far) {
-                continue;
-            }
-            ts.clear();
-            for c in &part.clusters {
-                if !slab(o, d, c.lo, c.hi, far) {
-                    continue;
-                }
-                for &i in &c.tris {
-                    let t = triangle(o, d, &tr.position, &tr.index, i as usize);
-                    if t > 0.0 && t < far {
-                        ts.push(t);
-                    }
-                }
-            }
-            if ts.is_empty() {
-                continue;
-            }
-            ts.sort_by(f32::total_cmp);
-            // In and out of a closed surface in turns; one left over is a way in that never came out before `far`.
-            for j in (0..ts.len()).step_by(2) {
-                spans.push(Span { part: k, enter: ts[j], leave: if j + 1 < ts.len() { ts[j + 1] } else { far.min(ts[j] + 0.01) } });
-            }
-        }
-        // (Stable, as the TS's: spans that start together keep the parts' order.)
-        spans.sort_by(|a, b| a.enter.total_cmp(&b.enter));
-        // A hollow organ (the heart's chambers, the bowel) is crossed many times: one span from its first wall to its last.
-        let mut k = spans.len();
-        while k > 1 {
-            k -= 1;
-            let name = &tr.parts[spans[k].part].name;
-            if let Some(prev) = (0..k).rev().find(|&j| &tr.parts[spans[j].part].name == name) {
-                if spans[k].enter - spans[prev].leave < 0.08 {
-                    spans[prev].leave = spans[prev].leave.max(spans[k].leave);
-                    spans.remove(k);
-                }
-            }
-        }
-
-        // The vessels it passes, for a trace through everything (a wound's track): one through only some parts (a bone, the
-        // body's wall) is asked only where those are, and every segment of every tube held against the line is wasted on it.
-        let mut vessels = Vec::new();
-        for (ti, tube) in tr.tubes.iter().enumerate().filter(|_| only.is_none()) {
-            let mut best: Option<VesselHit> = None;
-            let world = |i: usize| mats[tube.points[i].2].transform_point3(tube.points[i].0);
-            for i in 0..tube.points.len().saturating_sub(1) {
-                let (a, b) = (world(i), world(i + 1));
-                let (t, distance) = ray_to_segment(origin, dir, a, b);
-                let miss = distance - tube.points[i].1 - reach;
-                if t > 0.0 && t < far && miss < 0.0 && best.as_ref().is_none_or(|x| miss < x.miss) {
-                    best = Some(VesselHit { tube: ti, at: i, t, miss, r#where: a.lerp(b, 0.5) });
-                }
-            }
-            vessels.extend(best);
-        }
-        vessels.sort_by(|a, b| a.t.total_cmp(&b.t));
-        (spans, vessels)
+        let held = self.held();
+        let mats = match &held {
+            Some(_) => Vec::new(),
+            None => self.bone_worlds(),
+        };
+        trace(&self.traced, &mats, held.as_deref(), origin, dir, far, reach, only)
     }
 
     // Where a point of a tube is now, in the world.
@@ -648,6 +586,83 @@ impl Npc<'_> {
         let p = &self.traced.tubes[tube].points[i];
         self.rest_to_world(p.2).transform_point3(p.0)
     }
+}
+
+// Npc::trace through `tr`, each bone's matrix to the world `mats`, or held (crate::npc::Held: the matrices, their
+// inverses and the vessels' points worked out once) and then `mats` is not read. Asked by many lines at once on the
+// compute threads for a grenade's fragments.
+#[allow(clippy::too_many_arguments)]
+pub fn trace(tr: &Traced, mats: &[bevy::math::Affine3A], held: Option<&crate::npc::Held>, origin: Vec3, dir: Vec3, far: f32, reach: f32,
+             only: Option<&dyn Fn(&TracedPart) -> bool>) -> (Vec<Span>, Vec<VesselHit>) {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut ts: Vec<f32> = Vec::new();
+    for (k, part) in tr.parts.iter().enumerate() {
+        if only.is_some_and(|f| !f(part)) {
+            continue;
+        }
+        let inv = held.map_or_else(|| mats[part.owner].inverse(), |h| h.inverse[part.owner]);
+        let o = inv.transform_point3(origin);
+        let d = inv.transform_vector3(dir);
+        if !slab(o, d, part.lo, part.hi, far) {
+            continue;
+        }
+        ts.clear();
+        for c in &part.clusters {
+            if !slab(o, d, c.lo, c.hi, far) {
+                continue;
+            }
+            for &i in &c.tris {
+                let t = triangle(o, d, &tr.position, &tr.index, i as usize);
+                if t > 0.0 && t < far {
+                    ts.push(t);
+                }
+            }
+        }
+        if ts.is_empty() {
+            continue;
+        }
+        ts.sort_by(f32::total_cmp);
+        // In and out of a closed surface in turns; one left over is a way in that never came out before `far`.
+        for j in (0..ts.len()).step_by(2) {
+            spans.push(Span { part: k, enter: ts[j], leave: if j + 1 < ts.len() { ts[j + 1] } else { far.min(ts[j] + 0.01) } });
+        }
+    }
+    // (Stable, as the TS's: spans that start together keep the parts' order.)
+    spans.sort_by(|a, b| a.enter.total_cmp(&b.enter));
+    // A hollow organ (the heart's chambers, the bowel) is crossed many times: one span from its first wall to its last.
+    let mut k = spans.len();
+    while k > 1 {
+        k -= 1;
+        let name = &tr.parts[spans[k].part].name;
+        if let Some(prev) = (0..k).rev().find(|&j| &tr.parts[spans[j].part].name == name) {
+            if spans[k].enter - spans[prev].leave < 0.08 {
+                spans[prev].leave = spans[prev].leave.max(spans[k].leave);
+                spans.remove(k);
+            }
+        }
+    }
+
+    // The vessels it passes, for a trace through everything (a wound's track): one through only some parts (a bone, the
+    // body's wall) is asked only where those are, and every segment of every tube held against the line is wasted on it.
+    let mut vessels = Vec::new();
+    for (ti, tube) in tr.tubes.iter().enumerate().filter(|_| only.is_none()) {
+        let mut best: Option<VesselHit> = None;
+        let world = |i: usize| match held {
+            Some(h) => h.tubes[ti][i],
+            None => mats[tube.points[i].2].transform_point3(tube.points[i].0),
+        };
+        for i in 0..tube.points.len().saturating_sub(1) {
+            let (a, b) = (world(i), world(i + 1));
+            let (t, distance) = ray_to_segment(origin, dir, a, b);
+            let miss = distance - tube.points[i].1 - reach;
+            if t > 0.0 && t < far && miss < 0.0 && best.as_ref().is_none_or(|x| miss < x.miss) {
+                best = Some(VesselHit { tube: ti, at: i, t, miss, r#where: a.lerp(b, 0.5) });
+            }
+        }
+        vessels.extend(best);
+    }
+    vessels.sort_by(|a, b| a.t.total_cmp(&b.t));
+    (spans, vessels)
 }
 
 // The triangles `tris` (offsets into `index`) sorted into boxes of about CLUSTER each, by halving the longest side.
@@ -921,5 +936,28 @@ mod tests {
         let pts: Vec<(f32, f32)> = loops[0].iter().map(|q| (q.x, q.y)).collect();
         assert!((loop_area(pts.iter().copied()).abs() - 1.0).abs() < 1e-5, "{pts:?}");
         assert!(in_loop(&pts, 0.0, 0.0) && !in_loop(&pts, 0.7, 0.0));
+    }
+
+    // A trace through a body held (Npc::hold: its matrices, their inverses and its vessels' points worked out once) finds
+    // what the same trace finds working them out itself: a unit cube on a turned and moved bone, a vessel through it.
+    #[test]
+    fn held_trace_is_the_same() {
+        let position: Vec<Vec3> = (0..8).map(|k| Vec3::new((k & 1) as f32, ((k >> 1) & 1) as f32, ((k >> 2) & 1) as f32) - 0.5).collect();
+        let index: Vec<u32> = vec![0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3];
+        let clusters = cluster(&position, &index, (0..12).map(|t| t * 3).collect());
+        let part = TracedPart { name: "liver".into(), kind: "liver".into(), source: 0, owner: 1, half: None, clusters, lo: Vec3::splat(-0.5), hi: Vec3::splat(0.5) };
+        let tube = TracedTube { name: "vena".into(), kind: "vein".into(), points: vec![(Vec3::new(0.0, -1.0, 0.0), 0.01, 1), (Vec3::new(0.0, 1.0, 0.0), 0.01, 1)] };
+        let tr = Traced { parts: vec![part], tubes: vec![tube], position, index, source: Vec::new() };
+        let mats = vec![bevy::math::Affine3A::IDENTITY, bevy::math::Affine3A::from_rotation_translation(Quat::from_rotation_y(0.7), Vec3::new(3.0, 0.2, 0.0))];
+        let held = crate::npc::Held {
+            inverse: mats.iter().map(|m| m.inverse()).collect(),
+            tubes: tr.tubes.iter().map(|t| t.points.iter().map(|&(p, _, b)| mats[b].transform_point3(p)).collect()).collect(),
+            worlds: mats.clone(),
+        };
+        let (a, va) = trace(&tr, &mats, None, Vec3::ZERO, Vec3::X, 10.0, 0.02, None);
+        let (b, vb) = trace(&tr, &[], Some(&held), Vec3::ZERO, Vec3::X, 10.0, 0.02, None);
+        assert_eq!(a.len(), 1);
+        assert_eq!(va.len(), 1);
+        assert_eq!(format!("{a:?}{va:?}"), format!("{b:?}{vb:?}"));
     }
 }

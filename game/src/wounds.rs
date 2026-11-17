@@ -17,7 +17,8 @@
 
 use bevy::prelude::*;
 
-use crate::npc::{Crossing, Happened, Kind, Npc, Way};
+use crate::anatomy::{Span, Traced, VesselHit};
+use crate::npc::{Crossing, Happened, Held, Kind, Look, Npc, Skinned, Way};
 use crate::vitals::{Bleed, Into, Rhythm, Side};
 
 #[derive(Clone, Debug, Default)]
@@ -123,7 +124,32 @@ pub struct Pierced {
 
 // A line from `origin` along unit `dir` through the person, carrying `m`, as far as `far` (the TS's default 3).
 pub fn pierce(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> Pierced {
-    let surface = npc.surface(origin, dir, far, true);
+    pierce_with(npc, origin, dir, m, far, None)
+}
+
+// What a line meets in someone, worked out beforehand (a grenade's fragments, many lines at once on the compute threads:
+// weapons.rs): their skin and clothes as pierce's Npc::surface finds them, and their insides as its Npc::trace does, if
+// the line met skin. Neither changes anything, so pierce given them does what it would have done asking for them.
+pub struct Lines {
+    pub surface: Vec<Crossing>,
+    pub trace: Option<(Vec<Span>, Vec<VesselHit>)>,
+}
+
+// The Lines pierce(origin, dir, m, far) would ask for, of someone looked at as `look` (skinned `sk`) with their insides
+// `traced` held at `held`.
+#[allow(clippy::too_many_arguments)]
+pub fn lines(look: &Look, sk: &Skinned, traced: &Traced, held: &Held, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> Lines {
+    let surface = look.surface(sk, origin, dir, far, true);
+    let trace = surface.iter().any(|h| h.kind == Kind::Skin).then(|| crate::anatomy::trace(traced, &[], Some(held), origin, dir, far, m.channel, None));
+    Lines { surface, trace }
+}
+
+// pierce, with what the line meets already worked out (`lines`), or not.
+pub fn pierce_with(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32, pre: Option<Lines>) -> Pierced {
+    let (surface, mut traced) = match pre {
+        Some(l) => (l.surface, l.trace),
+        None => (npc.surface(origin, dir, far, true), None),
+    };
     let mut skins: Vec<Crossing> = surface.iter().filter(|h| h.kind == Kind::Skin).cloned().collect();
     // The eyes in its way, the first crossing of each (eyes.rs). One met from in front, through the open lids or just
     // behind a shut lid, is the way in: the skin of the socket behind it (and a shut lid's, in front) is the one crossing
@@ -148,7 +174,7 @@ pub fn pierce(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32) -> 
         }
         return Pierced { stopped: false, at: None, energy: m.energy, hit: !surface.is_empty(), enter: None };
     }
-    let (spans, vessels) = npc.trace(origin, dir, far, m.channel, None);
+    let (spans, vessels) = traced.take().unwrap_or_else(|| npc.trace(origin, dir, far, m.channel, None));
     let first = npc.vitals.bleeds.len();
     let mut energy = m.energy;
     let mut stop_at = f32::INFINITY;
