@@ -33,6 +33,15 @@
 // Without a sound device (the cloud machine) the mixer is not made: everything is still decided and recorded
 // (`heard`), and nothing sounds. A scenario mixes into memory instead (`Tap`) so that what would be heard can be
 // measured.
+//
+// The device is opened here (`Device`), not by kira's own cpal backend, for how soon a sound is heard. kira's asks cpal
+// for its default buffer, which on Linux is whatever ALSA's "default" device chooses when nothing is asked of it: the
+// longest buffer it allows, in the shortest periods that fill it (alsa-lib's snd_pcm_hw_params_choose), which cpal then
+// cuts to two of those periods. What that comes to is the device's to say (PipeWire's and PulseAudio's ALSA plugins, a
+// dmix, a card), and a play-tester heard the sound "extremely laggy" with it. Here a small buffer is asked for (BUFFER
+// frames a period, two periods: about 11 ms at 48 kHz), a larger one if the device will not take it, the default if
+// it takes neither; what the device gave and how far behind it plays is logged once it is running, and a device that
+// keeps running dry is reopened with twice the buffer (`device`). `--audio-buffer <frames>` asks for another size.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -40,6 +49,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::prelude::*;
+use kira::backend::cpal::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use kira::backend::cpal::cpal::{self, BufferSize, ErrorKind, OutputCallbackInfo, StreamConfig};
 use kira::backend::{Backend, Renderer};
 use kira::effect::compressor::CompressorBuilder;
 use kira::effect::filter::{FilterBuilder, FilterHandle, FilterMode};
@@ -49,12 +60,14 @@ use kira::info::Info;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::{PlaybackState, Sound as KiraSound, SoundData};
 use kira::track::{MainTrackBuilder, TrackBuilder, TrackHandle};
-use kira::{AudioManager, AudioManagerSettings, Capacities, Decibels, DefaultBackend, Frame, Mix, Panning, StartTime, Tween};
+use kira::{AudioManager, AudioManagerSettings, Capacities, Decibels, Frame, Mix, Panning, StartTime, Tween};
 
 use crate::map::Map;
 use crate::player::Player;
 use crate::rng::Rng;
 
+// How many people's groans, sobs and gasps are voiced at once at most (`hurts`).
+const AT_ONCE: usize = 2;
 const LEVEL: f32 = 0.7; // how loud everything is: recordings are set near full scale, and several sound at once
 const QUIET: f32 = 0.07; // a recording is sounding where it is louder than this much of its loudest
 const HOP: f64 = 0.01; // seconds: how finely that is looked for
@@ -201,11 +214,13 @@ pub struct Play {
     // head that falls or is dragged, not from where it was when it began. Neither: heard as if from inside the head.
     pub at: Option<Vec3>,
     pub follow: Option<Entity>,
+    // A person's own voice (a cry, a cough, a retch): under the voices' volume, not the effects'.
+    pub voice: bool,
 }
 
 impl Default for Play {
     fn default() -> Self {
-        Play { gain: 1.0, rate: 1.0, most: 0.0, at: None, follow: None }
+        Play { gain: 1.0, rate: 1.0, most: 0.0, at: None, follow: None, voice: false }
     }
 }
 
@@ -298,15 +313,20 @@ enum From {
     Stream(Arc<Driven>),
 }
 
-// The mixer, when there is one: the main track's limiter, the dry track (sounds with no place), the room's ring and
-// the two ways into it, and the track the places hang under.
+// The mixer, when there is one: the track everything is under (the master volume; paused with the game), the dry track
+// (sounds with no place), the room's ring and the three ways into it, and the tracks the places hang under, people's
+// voices apart from everything else so that each has a volume of its own (the menu's).
 struct Mixer {
+    all: TrackHandle,
+    paused: bool,
     dry: TrackHandle,
     ring: TrackHandle,
     reverb: kira::effect::reverb::ReverbHandle,
     ring_dry: TrackHandle,
     ring_far: TrackHandle,
+    ring_voice: TrackHandle,
     direct: TrackHandle,
+    voice: TrackHandle,
 }
 
 struct Place {
@@ -331,6 +351,9 @@ struct Asked {
     place: Option<From>,
     voice: Playing,
     merged: u32,
+    person: bool,
+    // When it was asked for, for how long it waited to be handed to the mixer (`Heard::waited`).
+    when: std::time::Instant,
 }
 
 // What was heard and how, for the scenarios' logs (drained by whoever reads it).
@@ -351,6 +374,8 @@ pub struct Heard {
     pub cutoff: f64,
     pub pan: f32,
     pub time: f64,
+    // Milliseconds from being asked for to being handed to the mixer (the rest of the frame: `listen` runs at its end).
+    pub waited: f32,
 }
 
 #[derive(Resource)]
@@ -372,6 +397,12 @@ pub struct Sound {
     pub mute_ring: bool,
     // The sandbox's room tone (sandbox.ts `world.tone`), driven always.
     pub tone: Option<Stream>,
+    // How loud everything, the effects and people's voices are (the menu's settings, 0 to 1), and whether the game is
+    // paused (everything held where it is, silent, until it goes on).
+    pub volume: [f32; 3],
+    pub paused: bool,
+    // Since the last report (`device`): how many sounds were handed to the mixer, the milliseconds they waited, the worst.
+    waits: (u32, f32, f32),
 }
 
 // The mixer with no sound device: the scenarios render it here, a frame at a time, and keep how loud each frame was.
@@ -416,6 +447,9 @@ impl Sound {
             mute_direct: false,
             mute_ring: false,
             tone: None,
+            volume: [1.0; 3],
+            paused: false,
+            waits: (0, 0.0, 0.0),
         }
     }
 
@@ -484,7 +518,10 @@ impl Sound {
         if matches!(place, Some(From::At(_))) && how.most == 0.0 {
             self.together.entry(name.into()).or_default().push(self.asked.len());
         }
-        self.asked.push(Asked { take, from, length, fade_in: 0.004, fade_out, gain: how.gain, rate, place, voice: voice.clone(), merged: 1 });
+        self.asked.push(Asked {
+            take, from, length, fade_in: 0.004, fade_out, gain: how.gain, rate, place, voice: voice.clone(), merged: 1, person: how.voice,
+            when: std::time::Instant::now(),
+        });
         Some(voice)
     }
 
@@ -499,7 +536,7 @@ impl Sound {
             let grains = || Grains { takes: takes.clone(), driven: driven.clone(), seed, level: 0.0, lengths: Vec::with_capacity(4), next: 0.0, take: None };
             match &mut place {
                 Some(p) => {
-                    let t = Self::track(&mut m.direct);
+                    let t = Self::track(&mut m.direct, 0.0, OPEN, 0.0);
                     p.track = Some(t);
                     let _ = p.track.as_mut().unwrap().0.play(grains());
                     let _ = m.ring_far.play(grains());
@@ -516,12 +553,14 @@ impl Sound {
         Some(Stream(driven))
     }
 
-    // A place's own track: its lowpass (the wall), its pan, and its volume (the distance and the wall).
-    fn track(direct: &mut TrackHandle) -> (TrackHandle, FilterHandle, PanningControlHandle) {
-        let mut b = TrackBuilder::new().volume(Decibels::SILENCE);
-        let filter = b.add_effect(FilterBuilder::new().mode(FilterMode::LowPass).cutoff(OPEN).resonance(RESONANCE));
-        let pan = b.add_effect(PanningControlBuilder(Panning::CENTER.into()));
-        let track = direct.add_sub_track(b).expect("sound: too many places at once");
+    // A place's own track: its lowpass (the wall), its pan, and its volume (the distance and the wall), made as they are
+    // where it is now. (Set afterwards, a sound that began between the two would be heard for a period of the device's
+    // buffer at whatever the track was made with.)
+    fn track(under: &mut TrackHandle, gain: f32, cutoff: f64, pan: f32) -> (TrackHandle, FilterHandle, PanningControlHandle) {
+        let mut b = TrackBuilder::new().volume(db(gain));
+        let filter = b.add_effect(FilterBuilder::new().mode(FilterMode::LowPass).cutoff(cutoff).resonance(RESONANCE));
+        let pan = b.add_effect(PanningControlBuilder(Panning(pan).into()));
+        let track = under.add_sub_track(b).expect("sound: too many places at once");
         (track, filter, pan)
     }
 
@@ -647,7 +686,8 @@ fn load(mut sound: ResMut<Sound>) {
 
 // The mixer: on the sound device, or for a scenario into memory (Tap); with neither, none.
 fn mix(world: &mut World) {
-    let scenario = std::env::args().any(|a| a == "--scenario");
+    let args: Vec<String> = std::env::args().collect();
+    let scenario = args.iter().any(|a| a == "--scenario");
     let main = MainTrackBuilder::new().with_effect(
         CompressorBuilder::new().threshold(-3.0).ratio(20.0).attack_duration(Duration::from_millis(2)).release_duration(Duration::from_millis(200)),
     );
@@ -660,7 +700,11 @@ fn mix(world: &mut World) {
             .ok()
             .map(|mut m| (tracks(|b| m.add_sub_track(b).unwrap()), Box::new(m) as Box<dyn std::any::Any>))
     } else {
-        match AudioManager::<DefaultBackend>::new(AudioManagerSettings { capacities, main_track_builder: main, ..default() }) {
+        let asked = args.iter().position(|a| a == "--audio-buffer").and_then(|i| args.get(i + 1)).map(|v| v.parse::<u32>().expect("--audio-buffer takes a number of frames"));
+        let frames = asked.unwrap_or(BUFFER).clamp(16, 16384);
+        // (kira's mixer works in lengths of `internal_buffer_size` within each of the device's periods: no longer than one.)
+        let settings = AudioManagerSettings { capacities, main_track_builder: main, backend_settings: (frames, asked.is_some()), internal_buffer_size: frames.min(128) as usize };
+        match AudioManager::<Device>::new(settings) {
             Ok(mut m) => Some((tracks(|b| m.add_sub_track(b).unwrap()), Box::new(m) as Box<dyn std::any::Any>)),
             Err(e) => {
                 warn!("sound: no sound device ({e}); nothing will be heard");
@@ -681,22 +725,179 @@ fn mix(world: &mut World) {
     }
 }
 
-// (Kept so the mixer lives as long as the game: everything after it is done through the tracks' handles.)
-struct Manager(#[allow(dead_code)] Box<dyn std::any::Any>);
+// (Kept so the mixer lives as long as the game: everything after it is done through the tracks' handles, but for the
+// device's own report and reopening.)
+struct Manager(Box<dyn std::any::Any>);
 
 fn tracks(mut add: impl FnMut(TrackBuilder) -> TrackHandle) -> Mixer {
+    let mut all = add(TrackBuilder::new().sub_track_capacity(5));
     let mut ring = TrackBuilder::new().sub_track_capacity(4);
     let reverb = ring.add_effect(ReverbBuilder::new().feedback(0.8).damping(DAMPING).mix(Mix::WET));
-    let mut ring = add(ring);
+    let mut ring = all.add_sub_track(ring).unwrap();
     let ring_dry = ring.add_sub_track(TrackBuilder::new().volume(db(LEVEL))).unwrap();
     let ring_far = ring.add_sub_track(TrackBuilder::new().volume(db(FAR))).unwrap();
+    let ring_voice = ring.add_sub_track(TrackBuilder::new().volume(db(FAR))).unwrap();
     Mixer {
-        dry: add(TrackBuilder::new().volume(db(LEVEL))),
+        dry: all.add_sub_track(TrackBuilder::new().volume(db(LEVEL))).unwrap(),
+        direct: all.add_sub_track(TrackBuilder::new().sub_track_capacity(400)).unwrap(),
+        voice: all.add_sub_track(TrackBuilder::new().sub_track_capacity(80)).unwrap(),
+        all,
+        paused: false,
         ring,
         reverb,
         ring_dry,
         ring_far,
-        direct: add(TrackBuilder::new().sub_track_capacity(480)),
+        ring_voice,
+    }
+}
+
+// Frames a period of the device's buffer asked for, two periods to the buffer: 5.3 ms a period at 48 kHz, so that a
+// sound is heard about 11 ms after the mixer starts it, plus whatever the sound server adds.
+const BUFFER: u32 = 256;
+
+// The sound device, through cpal: kira's mixer (its Renderer) run on cpal's thread, a period at a time.
+pub struct Device {
+    device: cpal::Device,
+    config: StreamConfig,
+    asked: u32,
+    // Whether the size was the player's (`--audio-buffer`): then it is kept, whatever happens.
+    theirs: bool,
+    renderer: Arc<Mutex<Option<Renderer>>>,
+    stream: Option<cpal::Stream>,
+    out: Arc<Output>,
+}
+
+// What the device is doing, written on its own thread: the frames it asks for at a time, how far ahead of each period
+// it is already playing (cpal's playback time less the period's, in microseconds: what is queued in the device and the
+// sound server), and how often it has run dry (an underrun, heard as a crackle).
+#[derive(Default)]
+struct Output {
+    frames: AtomicU32,
+    ahead: AtomicU32,
+    dry: AtomicU32,
+}
+
+impl Device {
+    // The stream, with `frames` a period if the device will take it; otherwise a larger buffer, then the device's own
+    // choice, so that a device that refuses a small buffer is still heard.
+    fn open(&mut self, frames: u32) -> Result<(), String> {
+        // (The old one closed first: a card opened without a mixer of its own can be opened once.)
+        self.stream = None;
+        let mut sizes = vec![BufferSize::Fixed(frames)];
+        if frames < 1024 {
+            sizes.push(BufferSize::Fixed(1024));
+        }
+        sizes.push(BufferSize::Default);
+        let mut why = String::new();
+        for size in sizes {
+            let config = StreamConfig { buffer_size: size, ..self.config };
+            let (renderer, out, dry, channels) = (self.renderer.clone(), self.out.clone(), self.out.clone(), config.channels);
+            let made = self.device.build_output_stream(
+                config,
+                move |data: &mut [f32], info: &OutputCallbackInfo| {
+                    let t = info.timestamp();
+                    out.ahead.store(t.playback.duration_since(t.callback).as_micros() as u32, Ordering::Relaxed);
+                    out.frames.store((data.len() / channels as usize) as u32, Ordering::Relaxed);
+                    // (Never waited for: one stream runs at a time, the old one closed before the next is made, and `start`
+                    // holds it only before the first.)
+                    match renderer.try_lock().as_deref_mut() {
+                        Ok(Some(r)) => {
+                            r.on_start_processing();
+                            r.process(data, channels);
+                        }
+                        _ => data.fill(0.0),
+                    }
+                },
+                move |e| {
+                    if e.kind() == ErrorKind::Xrun {
+                        dry.dry.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        warn!("sound: {e}");
+                    }
+                },
+                None,
+            );
+            match made.and_then(|s| s.play().map(|_| s)) {
+                Ok(s) => {
+                    if !matches!(size, BufferSize::Fixed(f) if f == frames) {
+                        warn!("sound: the device would not take {frames} frames a period; opened with {size:?}");
+                    }
+                    self.stream = Some(s);
+                    self.asked = frames;
+                    return Ok(());
+                }
+                Err(e) => why = format!("{size:?}: {e}"),
+            }
+        }
+        Err(why)
+    }
+}
+
+impl Backend for Device {
+    type Settings = (u32, bool);
+    type Error = String;
+
+    fn setup((frames, theirs): (u32, bool), _: usize) -> Result<(Self, u32), String> {
+        let device = cpal::default_host().default_output_device().ok_or("no default output device")?;
+        let config = device.default_output_config().map_err(|e| e.to_string())?.config();
+        let rate = config.sample_rate;
+        Ok((Device { device, config, asked: frames, theirs, renderer: default(), stream: None, out: default() }, rate))
+    }
+
+    fn start(&mut self, renderer: Renderer) -> Result<(), String> {
+        *self.renderer.lock().unwrap() = Some(renderer);
+        self.open(self.asked)
+    }
+}
+
+// The device's report in the log, for whoever is listening to it: once it has been running a second and a half, what it
+// was opened with and how late a sound is heard; then once a minute how long sounds waited to be handed to the mixer
+// and how often it ran dry. Running dry three times in ten seconds of play, it is reopened with twice the buffer (up to
+// 2048 frames), unless the size was the player's.
+fn device(manager: Option<NonSendMut<Manager>>, mut sound: ResMut<Sound>, time: Res<Time<Real>>, warm: Option<Res<crate::warm::Warm>>,
+          mut next: Local<(f32, f32, u32)>) {
+    let Some(mut manager) = manager else { return };
+    let Some(manager) = manager.0.downcast_mut::<AudioManager<Device>>() else { return };
+    let now = time.elapsed_secs();
+    let d = manager.backend_mut();
+    if next.0 == 0.0 {
+        next.0 = now + 1.5;
+    }
+    let frames = d.out.frames.load(Ordering::Relaxed);
+    if next.0 > 0.0 && now >= next.0 && frames > 0 {
+        next.0 = -1.0;
+        let ahead = d.out.ahead.load(Ordering::Relaxed) as f32 / 1000.0;
+        let period = frames as f32 * 1000.0 / d.config.sample_rate as f32;
+        let name = d.device.description().map_or_else(|_| "the default device".into(), |x| x.name().to_string());
+        info!(
+            "sound: {name}, {} Hz, {} channels: {frames} frames a period ({period:.1} ms; {} asked for); the device plays {ahead:.1} ms \
+             ahead of each period, so a sound is heard about {:.0} ms after it is started (start with --audio-buffer <frames> to change it)",
+            d.config.sample_rate, d.config.channels, d.asked, ahead + period
+        );
+    }
+    // (Counted from the start of play, ten seconds at a time: the warm-up's shader compiles keep every core busy.)
+    if warm.is_some_and(|w| w.on && !w.done) || now < next.1 {
+        return;
+    }
+    let dry = d.out.dry.swap(0, Ordering::Relaxed);
+    if next.1 > 0.0 && dry > 0 {
+        warn!("sound: the device ran dry {dry} times in ten seconds (heard as crackles)");
+        if dry >= 3 && !d.theirs && d.asked < 2048 {
+            let more = d.asked * 2;
+            match d.open(more) {
+                // (Reported again once it has run a moment.)
+                Ok(()) => next.0 = now + 1.5,
+                Err(e) => warn!("sound: could not reopen the device ({e})"),
+            }
+        }
+    }
+    next.1 = now + 10.0;
+    next.2 += 1;
+    if next.2 % 6 == 0 {
+        let (n, sum, worst) = std::mem::take(&mut sound.waits);
+        if n > 0 {
+            info!("sound: {n} sounds in the last minute, handed to the mixer {:.1} ms after they were asked for (the worst {worst:.1} ms)", sum / n as f32);
+        }
     }
 }
 
@@ -719,9 +920,24 @@ fn listen(
     }
     let room = sound.room;
     let wet = ROOMS.iter().find(|r| r.0 == room).map_or(0.0, |r| r.1.wet);
+    // (The volumes are slider positions, 0 to 1, taken as their squares: a slider's middle a quarter of the power, about
+    // as much quieter as it looks, where its gain would be only 6 dB down.)
+    let [master, effects, voices] = sound.volume.map(|v| v * v);
+    let direct = if sound.mute_direct { 0.0 } else { 1.0 };
     if let Some(m) = &mut sound.mixer {
-        m.ring.set_volume(db(if sound.mute_ring { 0.0 } else { wet * RING }), tween(0.02));
-        m.dry.set_volume(db(if sound.mute_direct { 0.0 } else { LEVEL }), tween(0.02));
+        let t = tween(0.02);
+        m.all.set_volume(db(master), t);
+        m.ring.set_volume(db(if sound.mute_ring { 0.0 } else { wet * RING }), t);
+        m.dry.set_volume(db(direct * LEVEL * effects), t);
+        m.ring_dry.set_volume(db(LEVEL * effects), t);
+        m.ring_far.set_volume(db(FAR * effects), t);
+        m.ring_voice.set_volume(db(FAR * voices), t);
+        m.direct.set_volume(db(effects), t);
+        m.voice.set_volume(db(voices), t);
+        if m.paused != sound.paused {
+            m.paused = sound.paused;
+            if m.paused { m.all.pause(tween(0.05)) } else { m.all.resume(tween(0.05)) }
+        }
     }
 
     // What was asked for this moment, made.
@@ -742,6 +958,9 @@ fn listen(
         };
         let mut v = a.voice.voice();
         v.start = sound.now;
+        let waited = a.when.elapsed().as_secs_f32() * 1000.0;
+        let w = &mut sound.waits;
+        *w = (w.0 + 1, w.1 + waited, w.2.max(waited));
         sound.heard.push(Heard {
             name: v.name.clone(),
             take: sound.takes[&v.name].iter().position(|t| Arc::ptr_eq(t, &a.take)).unwrap_or(0),
@@ -757,6 +976,7 @@ fn listen(
             cutoff,
             pan,
             time: sound.now,
+            waited,
         });
         let Some(m) = &mut sound.mixer else { continue };
         if v.cut {
@@ -771,9 +991,10 @@ fn listen(
         let mut handles = Vec::new();
         match &mut place {
             Some(p) => {
-                let mut t = Sound::track(&mut m.direct);
+                let gain = if sound.mute_direct { 0.0 } else { falls * hush };
+                let mut t = Sound::track(if a.person { &mut m.voice } else { &mut m.direct }, gain, cutoff, pan);
                 handles.extend(t.0.play(data.clone()).ok());
-                handles.extend(m.ring_far.play(data).ok());
+                handles.extend(if a.person { &mut m.ring_voice } else { &mut m.ring_far }.play(data).ok());
                 p.track = Some(t);
             }
             None => {
@@ -854,11 +1075,18 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
         for x in &h.happened {
             match x {
                 Happened::Say { kind, gain } => {
+                    // A groan, a sob or a gasp is not voiced over two others already sounding in the room: one or two people
+                    // moaning are heard as that; four at once is a chorus nobody hears in a room of the hurt (each keeps on
+                    // in their own time, and is heard when there is room). A cry at a new hurt always is.
+                    let now = sound.now();
+                    if matches!(*kind, "groan" | "cry" | "gasp") && saying.0.iter().filter(|(o, (p, _))| **o != e && p.sounding(now)).count() >= AT_ONCE {
+                        continue;
+                    }
                     // (One mouth: a new cry cuts in on the one before. Left playing, it was not cut when they went out.)
                     if let Some((playing, _)) = saying.0.remove(&e) {
                         playing.cut();
                     }
-                    if let Some(playing) = sound.play(&format!("{kind}-{}", p.body.name), Play { gain: *gain, follow: head, ..default() }) {
+                    if let Some(playing) = sound.play(&format!("{kind}-{}", p.body.name), Play { gain: *gain, follow: head, voice: true, ..default() }) {
                         saying.0.insert(e, (playing, kind));
                     }
                 }
@@ -881,7 +1109,7 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
                             playing.cut();
                         }
                     }
-                    let playing = sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, ..default() });
+                    let playing = sound.play(name, Play { gain: *gain, at: *at, follow: if at.is_some() { None } else { head }, voice: kind.is_some(), ..default() });
                     if let (Some(playing), Some(kind)) = (playing, kind) {
                         saying.0.insert(e, (playing, kind));
                     }
@@ -926,7 +1154,7 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(Sound::new())
         .init_resource::<Voices>()
         .add_systems(Startup, (load, mix).chain())
-        .add_systems(Update, steps)
+        .add_systems(Update, (steps, device))
         .add_systems(PostUpdate, (hurts, bodies, crate::profiler::timed("sound", listen), render).chain().after(bevy::transform::TransformSystems::Propagate));
 }
 

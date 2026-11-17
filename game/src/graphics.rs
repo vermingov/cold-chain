@@ -4,7 +4,8 @@
 //
 // The resolution follows the frame rate on its own: most frames slower than about 36 fps for a second, the frame is
 // drawn at fewer pixels (down to 40% a side, sharpened back by the FXAA already in the picture); faster than about 55
-// fps for three seconds, it climbs back to full. F3 picks a preset as well, kept between runs:
+// fps for three seconds, it climbs back to full, unless the menu's settings fix it. F3 picks a preset as well, kept
+// between runs with the menu's settings (menu.rs):
 //   High    as made: bloom, grain, 2048 soft shadow maps.
 //   Medium  bloom at half its blur, no grain, 1024 shadow maps, cheaper filtering.
 //   Low     no bloom, no grain, the lamps' shadows off.
@@ -22,7 +23,7 @@ use bevy::window::PrimaryWindow;
 use crate::map::ShadowLamp;
 use crate::picture::{bloom_setting, Picture};
 
-const PRESETS: [&str; 3] = ["High", "Medium", "Low"];
+pub const PRESETS: [&str; 3] = ["High", "Medium", "Low"];
 const SLOW: f32 = 1.0 / 36.0;
 const FAST: f32 = 1.0 / 55.0; // s a frame
 const COARSEST: f32 = 2.5; // 40% of the pixels a side
@@ -34,6 +35,8 @@ pub struct Graphics {
     pub level: f32,
     // Off in a scenario: its frames are the software renderer's, and its pictures are compared at full size.
     pub adaptive: bool,
+    // The scale a side the menu's settings fix it at, or 0 to follow the frame rate.
+    pub scale: f32,
     sum: f32,
     frames: u32,
     slow: u32,
@@ -43,24 +46,20 @@ pub struct Graphics {
     pub target: Handle<Image>,
 }
 
-// Where the preset is kept between runs (the TS kept it in the browser's localStorage): ~/.config, or %APPDATA% on
-// Windows, which has no HOME.
-fn kept() -> Option<std::path::PathBuf> {
+// The folder the settings are kept in between runs (the TS kept the preset in the browser's localStorage): ~/.config,
+// or %APPDATA% on Windows, which has no HOME. (The preset alone was kept in its file `quality` here before the menu.)
+pub fn kept() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(Into::into)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
         .or_else(|| std::env::var_os("APPDATA").map(Into::into))?;
-    Some(base.join("cold-chain").join("quality"))
+    Some(base.join("cold-chain"))
 }
 
 impl Graphics {
-    pub fn new(adaptive: bool) -> Self {
-        let preset = if adaptive {
-            kept().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| PRESETS.iter().position(|&n| n == s.trim())).unwrap_or(0)
-        } else {
-            0
-        };
-        Graphics { preset, level: 1.0, adaptive, sum: 0.0, frames: 0, slow: 0, slower: 0, fast: 0, quick: 0, target: Handle::default() }
+    pub fn new(adaptive: bool, preset: &str) -> Self {
+        let preset = PRESETS.iter().position(|&n| n == preset).unwrap_or(0);
+        Graphics { preset, level: 1.0, adaptive, scale: 0.0, sum: 0.0, frames: 0, slow: 0, slower: 0, fast: 0, quick: 0, target: Handle::default() }
     }
 
     pub fn name(&self) -> &'static str {
@@ -109,20 +108,28 @@ fn apply(graphics: Res<Graphics>, mut commands: Commands, cameras: Query<Entity,
     }
 }
 
-fn keys(keys: Res<ButtonInput<KeyCode>>, mut graphics: ResMut<Graphics>, mut note: ResMut<crate::hud::Note>, time: Res<Time<Real>>) {
+// (The preset is the settings', which put it here: menu.rs `apply`.)
+fn keys(keys: Res<ButtonInput<KeyCode>>, graphics: Res<Graphics>, mut settings: ResMut<crate::menu::Settings>, mut note: ResMut<crate::hud::Note>,
+        time: Res<Time<Real>>) {
     if !keys.just_pressed(KeyCode::F3) {
         return;
     }
-    graphics.preset = (graphics.preset + 1) % PRESETS.len();
-    if let Some(path) = kept() {
-        let _ = std::fs::create_dir_all(path.parent().unwrap()).and_then(|_| std::fs::write(&path, graphics.name()));
-    }
-    note.say(format!("Quality: {} (F3)", graphics.name()), time.elapsed_secs());
+    settings.quality = PRESETS[(graphics.preset + 1) % PRESETS.len()].into();
+    settings.save();
+    note.say(format!("Quality: {} (F3)", settings.quality), time.elapsed_secs());
 }
 
 // Once a frame, with the frame's real length.
 fn adapt(time: Res<Time<Real>>, mut graphics: ResMut<Graphics>) {
     if !graphics.adaptive {
+        return;
+    }
+    if graphics.scale > 0.0 {
+        let level = 1.0 / graphics.scale;
+        if graphics.level != level {
+            graphics.bypass_change_detection().level = level;
+            info!("render scale {:.0}%", 100.0 / level);
+        }
         return;
     }
     let dt = time.delta_secs();

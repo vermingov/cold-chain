@@ -27,6 +27,10 @@ use crate::vitals::{Dice, Vitals};
 
 const BACK: f32 = 45.0; // mmHg: what the tissue round an open artery holds back of the pressure behind it
 const RHO: f32 = 1060.0; // kg/m3, blood (fluid.ts)
+// The voice (`speak`): seconds within which a new hurt is part of the cry the last one started, and seconds since the last
+// new hurt at which the chance of a groan or a sob at each of the TS's moments has fallen to half.
+const OUTBURST: f32 = 1.4;
+const HABIT: f32 = 20.0;
 
 // What a crossing of the body is of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -133,13 +137,17 @@ pub enum Happened {
     Slit { a: Crossing, b: Crossing, deep: f32, gapes: f32 },
 }
 
-// When a person last cried out and how much it hurt then (npc.ts `_said`).
-#[derive(Clone, Debug)]
+// When a person last cried out and how much it hurt then (npc.ts `_said`); since when it has hurt as it does (the clock
+// of the last new hurt), when the last cry at a new hurt began and how big that hurt was; and the voice's own dice.
 pub struct Said {
     pub until: f32,
     pub pain: f32,
     pub next: f32,
     pub awake: bool,
+    pub hurt_at: f32,
+    pub cried: f32,
+    pub peak: f32,
+    pub dice: crate::rng::Rng,
 }
 
 // Per body: what the TS read off the body's file once (its age; the skin and clothes filed for finding the one nearest
@@ -667,6 +675,18 @@ impl<'a> Npc<'a> {
 
     // What they say about what is happening to them: a cry the moment it hurts, as bad as it hurts; then groans, or
     // weeping once a lot of blood has gone; gasping when they cannot get air.
+    //
+    // The TS cried out at every new hurt, cutting in on the last cry, and groaned or wept every 3.5 to 8.5 s for as long
+    // as it hurt: a magazine emptied into someone was a scream a shot, and four people hurt were never quiet (the user:
+    // "a bit too excessive with the screaming"). People in severe pain cry out in bursts, then go quiet, moan or breathe
+    // hard, and fall quieter as shock comes on. So, on top of the TS's choices:
+    // - A new hurt within OUTBURST of the cry the last one started is part of that cry (nobody draws breath to scream
+    //   again a fifth of a second later), unless it is much the worse.
+    // - Between, a sound is made at each of the TS's moments only by chance, the chance falling the longer since the last
+    //   new hurt (HABIT seconds to half) and as consciousness goes; quieter the same way. The first just after a cry is
+    //   a gasp, a breath caught.
+    // (Medicine's dice are thrown exactly as the TS threw them, so its numbers still follow the TS's draw for draw; what
+    // the TS did not do throws the voice's own.)
     fn speak(&mut self, dt: f32) {
         let awake = self.awake();
         let was = self.hurt.said.awake;
@@ -685,9 +705,17 @@ impl<'a> Npc<'a> {
         if !awake {
             return;
         }
+        let now = self.hurt.clock;
         if hurt > 0.12 && v.breathing {
-            self.say(if hurt > 0.35 { "scream" } else { "yell" }, (0.6 + hurt).min(1.0), true);
             self.hurt.said.next = 2.0 + self.dice.next() * 3.0;
+            let said = &mut self.hurt.said;
+            said.hurt_at = now;
+            if now - said.cried < OUTBURST && hurt < said.peak * 2.0 {
+                said.peak = said.peak.max(hurt);
+                return;
+            }
+            (said.cried, said.peak) = (now, hurt);
+            self.say(if hurt > 0.35 { "scream" } else { "yell" }, (0.6 + hurt).min(1.0), true);
             return;
         }
         self.hurt.said.next -= dt;
@@ -698,12 +726,28 @@ impl<'a> Npc<'a> {
         let v = &*self.vitals;
         let short = !v.breathing || v.spo2 < 88.0 || (v.lungs.l + v.lungs.r) / 2.0 < 0.6 || v.airway < 0.6 || v.flooded.0 + v.flooded.1 > 0.6 || v.choked > 0.3;
         let (lost, pain) = (v.lost(), v.pain);
-        if short {
-            self.say("gasp", 0.8, false);
+        let (kind, gain) = if short {
+            ("gasp", 0.8)
         } else if lost > 0.18 && self.dice.next() < 0.6 {
-            self.say("cry", 0.75, false);
+            ("cry", 0.75)
         } else if pain > 0.25 {
-            self.say("groan", 0.6 + pain * 0.3, false);
+            ("groan", 0.6 + pain * 0.3)
+        } else {
+            return;
+        };
+        let since = now - self.hurt.said.hurt_at;
+        // 1 awake and clear, 0 about to go out.
+        let alert = ((v.conscious() - 0.35) / 0.65).clamp(0.0, 1.0);
+        // (Short of air they gasp whatever: it is the breathing itself.)
+        let chance = if short { 0.8 } else { HABIT / (HABIT + since) } * (0.3 + 0.7 * alert);
+        if self.hurt.said.dice.next() >= chance {
+            return;
+        }
+        let quiet = (0.55 + 0.45 * alert) * (1.0 - 0.4 * (since / 60.0).min(1.0));
+        if !short && since < 6.0 && pain > 0.4 {
+            self.say("gasp", 0.55 * quiet, false);
+        } else {
+            self.say(kind, gain * quiet, false);
         }
     }
 
@@ -920,7 +964,8 @@ impl Hurt {
             dressings: Vec::new(),
             traced,
             facts,
-            said: Said { until: 0.0, pain: 0.0, next, awake: true },
+            // (The voice's dice seeded off the draw already made for it: it throws none of medicine's own beyond the TS's.)
+            said: Said { until: 0.0, pain: 0.0, next, awake: true, hurt_at: -1e9, cried: -1e9, peak: 0.0, dice: crate::rng::Rng::new(next.to_bits()) },
             crying: false,
             leg_gone: false,
             down: false,
