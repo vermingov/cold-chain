@@ -1,14 +1,15 @@
-// The TS game's side of the Bevy port's `drag` scenario (game/src/scenario.rs): the old man (the line-up's west end, the
-// scenario's fourth person) taken by the right hand from 1.4 m off and swept about for eight seconds as jitter.mjs did
+// The TS game's side of the Bevy port's `drag` scenario (game/src/scenario.rs): the groundskeeper (jitter.mjs's npc 3)
+// taken by the right hand from 1.4 m off and swept about for eight seconds as jitter.mjs did
 // (the eye's yaw 0.6 rad either way at 0.4 Hz, its pitch at 0.27 Hz), then let go. Each second: where the hand held is
 // against where it is drawn to (the scenario's `held`) and where the chest is; over the drag, each segment's
 // high-frequency spin per physics step (the jitter measure). Stepped by hand at 1/60 s, the render loop stopped, the dice
 // seeded.
-//   CHROMIUM=... node tools/port-drag.mjs <out.json> [url]   (with the dev server on 8703: npx vite --port 8703)
+//   CHROMIUM=... node tools/port-drag.mjs <out.json> [url] [body]   (the dev server on 8703: npx vite --port 8703; body sexton)
 import { open } from './rig.mjs';
 import { writeFileSync } from 'node:fs';
 const out = process.argv[2] || 'ts-drag.json';
 const url = process.argv[3] || 'http://127.0.0.1:8703/play.html?nowarm';
+const body = process.argv[4] || 'sexton';
 const rig = await open('about:blank', { width: 640, height: 360 });
 await rig.send('Page.addScriptToEvaluateOnNewDocument', { source: `{ let s = 12345; Math.random = () => ((s = (s * 1103515245 + 12345) >>> 0) / 4294967296); }` });
 await rig.send('Page.navigate', { url });
@@ -18,7 +19,7 @@ try {
         document.getElementById('start')?.remove();
         const S = window.__sandbox, scene = S.scene, world = S.world, W = S.weapons, V3 = BABYLON.Vector3;
         scene.getEngine().stopRenderLoop();
-        const npc = world.npcs.find((n) => n.person.bodyName.split('+')[0] === 'oldman'), rd = npc.ragdoll;
+        const npc = world.npcs.find((n) => n.person.bodyName.split('+')[0] === '${body}'), rd = npc.ragdoll;
         // Each segment's spin after every physics step: the sum of its squared second difference.
         const plugin = scene.getPhysicsEngine().getPhysicsPlugin(), orig = plugin.executeStep.bind(plugin);
         const hf = {}, last = {};

@@ -581,12 +581,13 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Wait(60 * 10));
             s.push(situation("crawl", |_, _, _, m| m == Mode::Crawl));
         }
-        // The fourth person taken by the right hand from 1.4 m off and swept about for eight seconds (the eye's yaw 0.6
-        // rad either way at 0.4 Hz, its pitch at 0.27 Hz), as jitter.mjs did, then let go.
+        // The groundskeeper (the TS's npc 3, whom jitter.mjs dragged; tools/port-drag.mjs does the same in the TS game)
+        // taken by the right hand from 1.4 m off and swept about for eight seconds (the eye's yaw 0.6 rad either way at
+        // 0.4 Hz, its pitch at 0.27 Hz), as jitter.mjs did, then let go.
         "drag" => {
             s.push(Step::Wait(60));
             s.push(Step::Do(Box::new(|w: &mut World| {
-                let e = everyone(w)[3];
+                let e = person_at(w, 1);
                 let (at, centre) = {
                     let rd = w.entity(e).get::<Ragdoll>().unwrap();
                     let hand = rd.by_name("handR");
@@ -661,7 +662,8 @@ fn body(name: &str) -> Option<Vec<Step>> {
                 }
             })));
             s.push(Step::Wait(120));
-            s.push(situation("dragged by the hand", |i, t, _, _| i == 3 && (2..=8).contains(&t)));
+            // (`everyone` sorts by entity, which puts the line-up the other way round: the groundskeeper is its third.)
+            s.push(situation("dragged by the hand", |i, t, _, _| i == 2 && (2..=8).contains(&t)));
         }
         // Dead (the heart stopped) and down: lying dead and still.
         "dead" => {
