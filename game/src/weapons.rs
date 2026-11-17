@@ -299,8 +299,11 @@ pub fn held(key: &str) -> Option<Held> {
         "knife" => h([0.17, -0.17, 0.42], Some([-0.75, -0.2, -0.1]), Some(HANDLE), None, [0.0; 2]),
         "sword" => h([0.16, -0.21, 0.45], Some([-0.95, -0.3, 0.15]), Some(HANDLE), Some(handle_at(-0.1)), [0.0; 2]),
         "bat" => h([0.19, -0.22, 0.42], Some([-1.15, -0.35, 0.3]), Some(handle_at(0.085)), Some(HANDLE), [0.0; 2]),
+        // A handgun in two hands: the firing hand high on the grip, the web of its thumb up under the slide; the other hand
+        // round the front of it, its palm on the grip's left side and its fingers over the first hand's, the hand running
+        // forward along the frame (turned across it, toward the right, the palm faced back at the eye).
         "pistol" => h([0.07, -0.115, 0.5], None, Some(g("grip", [0.0, 0.013, -0.005], [0.0, -0.95, -0.31], [0.0, -0.31, 0.95])),
-            Some(g("support", [-0.022, -0.002, 0.008], [0.1, -0.95, -0.3], [0.45, -0.25, 0.85])), [0.035, 0.2]),
+            Some(g("support", [-0.008, -0.002, 0.012], [0.1, -0.95, -0.3], [0.12, -0.3, 0.95])), [0.035, 0.2]),
         "rifle" => h(LONG, None, Some(RIFLE_GRIP), Some(forend([0.0, 0.01, 0.36])), [0.06, 0.12]),
         "shotgun" => h([LONG[0], LONG[1] - 0.005, LONG[2] + 0.01], None, Some(RIFLE_GRIP), Some(forend([0.0, 0.04, 0.32])), [0.06, 0.15]),
         "ak" => h([LONG[0], LONG[1] - 0.01, LONG[2] + 0.05], None, Some(PISTOL_GRIP), Some(forend([0.0, 0.075, 0.29])), [0.03, 0.06]),
@@ -312,14 +315,16 @@ pub fn held(key: &str) -> Option<Held> {
         // 6): it drives back and flips up far more, held out the same way in two hands. (Its grip is raked back further
         // than the 9 mm's, about 37 degrees: the hands lie along it.)
         "deagle" => h([0.06, -0.11, 0.52], None, Some(g("grip", [0.0; 3], [0.0, -0.8, -0.6], [0.0, -0.6, 0.8])),
-            Some(g("support", [-0.026, -0.018, 0.01], [0.1, -0.8, -0.59], [0.45, -0.35, 0.82])), [0.06, 0.45]),
+            Some(g("support", [-0.01, -0.004, 0.014], [0.1, -0.8, -0.59], [0.12, -0.6, 0.8])), [0.06, 0.45]),
         // A 10/22: a straight wrist (no pistol grip), the other hand under the forend. Its .22 LR recoils by a fraction of
         // a joule in a 2.3 kg rifle: hardly a nudge.
         "r22" => h(LONG, None, Some(RIFLE_GRIP), Some(forend([0.0, 0.015, 0.32])), [0.006, 0.012]),
-        // The tools in both hands (the hammer in one), carried up as the bat is; the shovel across the body, its blade up
-        // by the left shoulder and the left hand up its shaft.
-        "shovel" => h([0.2, -0.25, 0.38], Some([-0.75, -0.6, 0.5]), Some(HANDLE), Some(handle_at(0.2)), [0.0; 2]),
-        "sledge" => h([0.2, -0.26, 0.4], Some([-1.0, -0.35, 0.3]), Some(handle_at(0.12)), Some(HANDLE), [0.0; 2]),
+        // The tools in both hands (the hammer in one), carried up as the bat is; the long ones stood up past upright and
+        // leaning out to the right, their heads back over the right shoulder, out of the way of the eye. (The shovel was carried across the
+        // body to the left shoulder and the sledge's long handle stood up before the eye: both across the middle of the
+        // view, the shovel's blade over the crosshair.)
+        "shovel" => h([0.21, -0.26, 0.36], Some([-1.8, -0.9, 0.5]), Some(HANDLE), Some(handle_at(0.2)), [0.0; 2]),
+        "sledge" => h([0.21, -0.27, 0.37], Some([-1.8, -0.9, 0.3]), Some(handle_at(0.12)), Some(HANDLE), [0.0; 2]),
         "hammer" => h([0.17, -0.19, 0.42], Some([-1.05, -0.2, -0.1]), Some(HANDLE), None, [0.0; 2]),
         "medkit" => h([0.0, -0.2, 0.5], Some([0.35, 0.1, 0.0]), Some(g("wrap", [0.12, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0])),
             Some(g("wrap", [-0.12, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0])), [0.0; 2]),
@@ -3023,25 +3028,6 @@ pub fn viewmodel() -> Vec<crate::scenario::Step> {
     use crate::scenario::Step;
     let mut s = Vec::new();
     let only: Option<Vec<String>> = std::env::var("VIEWMODEL").ok().map(|v| v.split(',').map(String::from).collect());
-    // What the arms cost a frame, all of it (the game's code, the render thread, lavapipe drawing them): the empty hands
-    // (no arms drawn) against the fists up (both arms in the guard, nothing else), looking at the line-up, twice over.
-    if only.as_ref().is_none_or(|o| o.iter().any(|k| k == "cost")) {
-        s.push(stand(0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
-        for key in ["hands", "fists", "hands", "fists"] {
-            s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::take(w, key))));
-            s.push(Step::Wait(20));
-            s.push(Step::Do(Box::new(|w: &mut World| {
-                let now = w.resource::<Time<bevy::time::Real>>().elapsed_secs_f64();
-                w.resource_mut::<Weapons>().log.push(json!({ "from": now }));
-            })));
-            s.push(Step::Wait(120));
-            s.push(Step::Do(Box::new(move |w: &mut World| {
-                let now = w.resource::<Time<bevy::time::Real>>().elapsed_secs_f64();
-                let from = std::mem::take(&mut w.resource_mut::<Weapons>().log).iter().find_map(|v| v["from"].as_f64()).unwrap_or(now);
-                crate::scenario::log(w, json!({ "event": "cost", "what": key, "ms_a_frame": (now - from) * 1000.0 / 120.0 }));
-            })));
-        }
-    }
     s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = 4.0)));
     for a in ARMS.iter().filter(|a| only.as_ref().is_none_or(|o| o.iter().any(|k| k == a.key))) {
         let key = a.key;
@@ -3151,11 +3137,51 @@ pub fn viewmodel() -> Vec<crate::scenario::Step> {
                 })));
                 s.push(Step::Wait(12));
                 picture(&mut s, "vm_grenade_lob".into());
-                s.push(Step::Wait(60));
+                // (Its fuse burnt down before the next is taken up.)
+                s.push(Step::Wait(340));
             }
             _ => {}
         }
         s.push(report(format!("{key}: in use")));
+    }
+    // Last, as it takes the sleeves off: what the arms cost a frame, all of it (the game's code, the render thread, the
+    // drawing), by the wall clock: the empty hands (no arms drawn) against the fists up (both arms in the guard, nothing
+    // else), looking at the line-up, twice over. (On a machine shared with other work it is lost in the noise.)
+    if only.as_ref().is_none_or(|o| o.iter().any(|k| k == "cost")) {
+        s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = 1.0)));
+        s.push(stand(0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
+        // Then the fists with what each part of the arms adds taken away in turn: their shadows, then the sleeves.
+        for (k, key) in ["hands", "fists", "hands", "fists", "fists", "fists"].into_iter().enumerate() {
+            // (The wall clock: the scenario's own clock goes a sixtieth of a second a frame whatever the frame took.)
+            let from = std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+            let to = from.clone();
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                crate::warm::take(w, key);
+                let Some(roots) = w.get_resource::<crate::hands::Arms>().map(|a| [a.r.root, a.l.root]) else { return };
+                let mut stack = roots.to_vec();
+                let mut parts = Vec::new();
+                while let Some(e) = stack.pop() {
+                    stack.extend(w.get::<Children>(e).into_iter().flat_map(|c| c.iter()));
+                    parts.push((e, w.get::<Name>(e).map_or(String::new(), |n| n.to_string())));
+                }
+                for (e, name) in parts {
+                    if k >= 4 {
+                        w.entity_mut(e).insert(bevy::light::NotShadowCaster);
+                    }
+                    if k >= 5 && name == "sleeve" {
+                        w.entity_mut(e).insert(Visibility::Hidden);
+                    }
+                }
+            })));
+            s.push(Step::Wait(20));
+            s.push(Step::Do(Box::new(move |_: &mut World| *from.lock().unwrap() = std::time::Instant::now())));
+            s.push(Step::Wait(120));
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                let ms = to.lock().unwrap().elapsed().as_secs_f64() * 1000.0 / 120.0;
+                let what = ["the empty hands", "the fists", "the empty hands", "the fists", "the fists, casting no shadow", "the fists, no shadow, no sleeves"][k];
+                crate::scenario::log(w, json!({ "event": "cost", "what": what, "ms_a_frame": ms }));
+            })));
+        }
     }
     s.push(Step::Do(Box::new(|w: &mut World| {
         let dir = w.resource::<crate::scenario::Out>().0.clone();
