@@ -746,8 +746,9 @@ resolution (following the frame rate, or fixed at 100, 85, 70, 55 or 40% a side:
 the mouse's speed (`Player::look_speed`). Kept in ~/.config/cold-chain/settings.json (%APPDATA%\cold-chain on Windows;
 `graphics::kept`), read at start for the game only (a scenario has the defaults and writes nothing); a file from before
 reads the preset from the old `quality` file; anything out of range is put right. Drawn as the HUD is (IM Fell, plain
-nodes and text), so it makes no new pipeline: the `menu` scenario counts none made by opening it, photographs both pages
-and the settings after a slider is dragged and a choice clicked, and writes them to its folder and reads them back.
+nodes and text), so it makes no new pipeline: the `menu` scenario counts none made by opening it, photographs both pages,
+clicks two choices and drags a slider with the mouse (the pointer put on them, the button's presses sent as the window
+sends them), writes the settings to its folder and reads them back, then clicks Back and Resume.
 
 ## The look against the TS (phase 4, branch port/parity-look)
 

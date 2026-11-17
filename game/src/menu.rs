@@ -427,9 +427,25 @@ fn settings_round_trip() {
     assert_eq!((old.master, old.effects, old.quality.as_str(), old.fov, old.scale), (0.3, 1.0, "High", FOV.1, 0.0));
 }
 
+// The pointer put on control `c`, `x` of the way across it, and the left button pressed or let go, as the mouse would.
+fn mouse(w: &mut World, c: Control, x: f32, press: Option<bool>) {
+    use bevy::input::mouse::MouseButtonInput;
+    use bevy::input::ButtonState;
+    let mut q = w.query::<(&Control, &bevy::ui::UiGlobalTransform, &ComputedNode)>();
+    let Some((_, t, n)) = q.iter(w).find(|(d, _, _)| **d == c) else { return };
+    let at = t.translation + Vec2::new((x - 0.5) * n.size().x, 0.0);
+    let mut q = w.query_filtered::<(Entity, &mut Window), With<PrimaryWindow>>();
+    let Ok((window, mut win)) = q.single_mut(w) else { return };
+    win.set_physical_cursor_position(Some(at.as_dvec2()));
+    if let Some(down) = press {
+        w.write_message(MouseButtonInput { button: MouseButton::Left, state: if down { ButtonState::Pressed } else { ButtonState::Released }, window });
+    }
+}
+
 // The `menu` scenario: the menu opened over the hall, its main page and its settings photographed, the pipelines made by
-// opening it counted (there should be none), a slider dragged and a choice clicked as the mouse would, and the settings
-// written to the scenario's folder and read back.
+// opening it counted (there should be none); two choices clicked and a slider dragged with the mouse (the pointer put on
+// them and the button's presses sent as the window sends them), the settings written to the scenario's folder and read
+// back; Back and Resume clicked.
 pub fn scenario() -> Vec<crate::scenario::Step> {
     use crate::scenario::{log, Step};
     use serde_json::json;
@@ -456,11 +472,21 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
         let new = w.resource::<crate::warm::Pipelines>().new.lock().unwrap().clone();
         let n = made(w) - w.resource::<Before>().0;
         log(w, json!({ "event": "opened", "time_paused": paused, "sound_paused": sound, "pipelines_made": n, "new": new }));
-        // As the mouse would: the effects slider dragged to a third, the quality clicked on to the next.
-        let mut settings = w.resource_mut::<Settings>();
-        Control::Effects.set(&mut settings, 1.0 / 3.0);
-        Control::Quality.next(&mut settings);
     })));
+    // The mouse: the quality and vertical sync clicked on to their next, the effects slider dragged from 90% to a third.
+    let click = |s: &mut Vec<Step>, c: Control| {
+        s.push(Step::Do(Box::new(move |w: &mut World| mouse(w, c, 0.5, Some(true)))));
+        s.push(Step::Wait(2));
+        s.push(Step::Do(Box::new(move |w: &mut World| mouse(w, c, 0.5, Some(false)))));
+        s.push(Step::Wait(2));
+    };
+    click(&mut s, Control::Quality);
+    click(&mut s, Control::Vsync);
+    s.push(Step::Do(Box::new(|w: &mut World| mouse(w, Control::Effects, 0.9, Some(true)))));
+    s.push(Step::Wait(2));
+    s.push(Step::Do(Box::new(|w: &mut World| mouse(w, Control::Effects, 1.0 / 3.0, None))));
+    s.push(Step::Wait(2));
+    s.push(Step::Do(Box::new(|w: &mut World| mouse(w, Control::Effects, 1.0 / 3.0, Some(false)))));
     s.push(Step::Wait(4));
     s.push(Step::Shot("menu_changed".into()));
     s.push(Step::Do(Box::new(move |w: &mut World| {
@@ -473,9 +499,14 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
         let preset = w.resource::<Graphics>().preset;
         let volume = w.resource::<Sound>().volume;
         log(w, json!({ "event": "settings", "saved": back, "read_back_the_same": same, "graphics_preset": preset, "sound_volume": volume }));
-        w.resource_mut::<Menu>().open = false;
     })));
-    s.push(Step::Wait(4));
+    // Back to the main page, and Resume, by the mouse.
+    click(&mut s, Control::Back);
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        let settings = w.resource::<Menu>().settings;
+        log(w, json!({ "event": "back", "on_the_settings_page": settings }));
+    })));
+    click(&mut s, Control::Resume);
     s.push(Step::Do(Box::new(|w: &mut World| {
         let paused = w.resource::<Time<Virtual>>().is_paused();
         log(w, json!({ "event": "resumed", "time_paused": paused, "sound_paused": w.resource::<Sound>().paused }));
