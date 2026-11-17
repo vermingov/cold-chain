@@ -18,6 +18,7 @@
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
+use bevy_rapier3d::prelude::{GenericJoint, GenericJointBuilder, ImpulseJoint, JointAxesMask, JointAxis, MotorModel, RigidBody};
 
 use crate::map::Map;
 use crate::motor::{self, Muscles, Part, Strength};
@@ -2190,21 +2191,60 @@ impl Grabbed {
     }
 }
 
-// A stiff spring on the point that was taken hold of, damped, as strong as two arms: given every physics step, from
-// where the point is by then (weapons.ts step). (Given once a frame for the whole frame, it all came in the first of the
-// frame's steps and none in the next: someone dragged by the hand had the arm yanked out and let spring back every step,
-// the whole arm turning one way and the other at 25 rad/s, and the leg the same by the foot.)
-fn pull(rd: &mut Ragdoll, g: &Grabbed, dt: f32) {
-    let Some(target) = g.target else { return };
-    let at = rd.world_point(g.seg, g.local);
-    let mass = rd.segs[g.seg].def.mass.min(12.0);
-    let v = rd.velocity_at(g.seg, at);
-    let mut force = (target - at) * (320.0 * mass) - v * (28.0 * mass);
-    let most = 900.0;
-    if force.length() > most {
-        force *= most / force.length();
+// A stiff spring on the point that was taken hold of, damped, as strong as two arms (weapons.ts step): 320 N/m and 28 N s/m
+// a kilogram of the part held, at most 900 N. It is a joint from a fixed body to the point, its three linear motors the
+// spring, its anchor on the fixed body moved each physics step to where the hold is drawn to: Rapier solves it with the
+// arm's joints and the floor, instead of it being a push given a half-kilogram hand on its own. A part lighter than
+// HOLD_LEAST is pulled as if it weighed that: what pulls on a hand pulls on the body behind it. (At a hand's own half
+// kilogram the pull was 150 N a metre off, and a body lying on the floor never moved in Rapier, its friction what a 0.78
+// coefficient asks, while Havok let the TS's slide: tools/port-drag.mjs, the groundskeeper's chest 0.1 to 0.5 m a second
+// with the hand 0.7 to 1.3 m from where it was drawn to. As stiff as 12 kg, the port's was swept about at up to 2 m a
+// second; at 2 kg it goes 0.1 to 0.4.)
+const HOLD: [f32; 2] = [320.0, 28.0];
+const HOLD_MOST: f32 = 900.0;
+const HOLD_LEAST: f32 = 2.0;
+
+// The anchor of a hold and its joint (on an entity of its own, under the segment held).
+#[derive(Component)]
+struct Hold {
+    person: Entity,
+    seg: usize,
+    joint: Entity,
+}
+
+fn hold(mut commands: Commands, people: Query<(Entity, &Grabbed, &Ragdoll)>, anchors: Query<(Entity, &Hold)>,
+        mut joints: Query<&mut ImpulseJoint>) {
+    for (e, h) in &anchors {
+        if people.get(h.person).is_ok_and(|(_, g, _)| g.seg == h.seg) {
+            continue;
+        }
+        // (The joint is under the segment held, and goes with it when the person does.)
+        if let Ok(mut j) = commands.get_entity(h.joint) {
+            j.despawn();
+        }
+        commands.entity(e).despawn();
     }
-    rd.push(g.seg, force * dt, at);
+    for (who, g, rd) in &people {
+        let Some(target) = g.target else { continue };
+        if let Some((_, h)) = anchors.iter().find(|(_, h)| h.person == who && h.seg == g.seg) {
+            if joints.get(h.joint).is_ok_and(|j| AsRef::<GenericJoint>::as_ref(&j.data).local_anchor1().distance(target) > 1e-4) {
+                if let Ok(mut j) = joints.get_mut(h.joint) {
+                    let g: &mut GenericJoint = j.data.as_mut();
+                    g.set_local_anchor1(target);
+                }
+            }
+            continue;
+        }
+        let mass = rd.segs[g.seg].def.mass.clamp(HOLD_LEAST, 12.0);
+        let mut joint = GenericJointBuilder::new(JointAxesMask::empty()).local_anchor1(target).local_anchor2(g.local).contacts_enabled(false);
+        for axis in [JointAxis::LinX, JointAxis::LinY, JointAxis::LinZ] {
+            joint = joint.motor_model(axis, MotorModel::ForceBased).motor_position(axis, 0.0, HOLD[0] * mass, HOLD[1] * mass)
+                .motor_max_force(axis, HOLD_MOST / 3f32.sqrt());
+        }
+        let anchor = commands.spawn((RigidBody::Fixed, Transform::IDENTITY)).id();
+        let joint = commands.spawn((ImpulseJoint::new(anchor, joint.build()), ChildOf(rd.segs[g.seg].entity))).id();
+        commands.entity(anchor).insert(Hold { person: who, seg: g.seg, joint });
+    }
 }
 
 // --- systems ---------------------------------------------------------------------------------------------------------
@@ -2258,13 +2298,10 @@ fn think(
     sounds.write_batch(heard);
 }
 
-fn step(time: Res<Time>, mut people: Query<(&mut Ragdoll, &Behaviour, Option<&Grabbed>)>) {
+fn step(time: Res<Time>, mut people: Query<(&mut Ragdoll, &Behaviour)>) {
     let dt = time.delta_secs();
-    for (mut rd, b, grabbed) in &mut people {
+    for (mut rd, b) in &mut people {
         b.before_step(&mut rd, dt);
-        if let Some(g) = grabbed {
-            pull(&mut rd, g, dt);
-        }
     }
 }
 
@@ -2360,7 +2397,7 @@ fn hurts(world: &mut World) {
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, make)
-        .add_systems(FixedUpdate, (step.in_set(Steps::Push), landings.after(Steps::Read)))
+        .add_systems(FixedUpdate, (step.in_set(Steps::Push), hold.in_set(Steps::Push), landings.after(Steps::Read)))
         .add_systems(Update, (think, ragdoll::send).chain().after(npc::update))
         .add_systems(PostUpdate, hurts);
 }

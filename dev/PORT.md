@@ -188,6 +188,26 @@ and recorded; a scenario mixes into memory (`Tap`, `Meter`) so what would be hea
   scenario may drain into its log.
 - Takes are the manifests' (assets/sounds, assets/cries); the room is 'cold' and the room tone 'room-sandbox' is driven
   at 0.35 from the start, as sandbox.ts did. Footsteps (player.ts onStep) are sound.rs's `steps`.
+- The device (port/sound-menu, after a play-tester heard the sound "extremely laggy" with the frame rate fine): sound.rs
+  opens it itself (`Device`, a kira Backend on cpal 0.18) instead of kira's DefaultBackend. kira's asked cpal for its
+  default buffer; on Linux that is what ALSA's "default" device picks unasked, the longest buffer with the shortest
+  periods that fill it (alsa-lib's snd_pcm_hw_params_choose), which cpal 0.18.2 then cuts to two of those periods: 512
+  frames a period through PipeWire's ALSA plugin (two periods, 21 ms), three through PulseAudio's (its least, 32 ms), a
+  dmix's own (often 1024), a card's own; plus what the sound server keeps. kira also opened the "default" device again
+  every half second to look for a new one. Now 256 frames a period are asked for (two periods: about 11 ms at 48 kHz),
+  1024 if refused, the device's default if that is refused too; `--audio-buffer <frames>` asks for another. Once it has
+  run 1.5 s the log says what it got: `sound: <device>, 48000 Hz, 2 channels: 256 frames a period (5.3 ms; 256 asked
+  for); the device plays N ms ahead of each period, so a sound is heard about M ms after it is started` (N is cpal's
+  playback time less the callback's: what the device and server hold). Three underruns in ten seconds of play reopen it
+  with twice the buffer (to 2048, not if the size was the player's); once a minute the log has how long sounds waited
+  to reach the mixer (asked for during the frame, handed over at its end in `listen`: under a frame). Not measured on a
+  sound device: the cloud machine has none. Bevy's own audio (rodio) is off: it held a second, silent stream open on
+  the same device.
+- Volumes: everything is under one track (`all`: the master volume, paused with the Escape menu); people's voices
+  (`Play::voice`: the cries, coughs and retches from the head) hang under `voice` and go into the room through
+  `ring_voice`, everything else under `direct`, `dry`, `ring_far` and `ring_dry`: `Sound::volume` (master, effects,
+  voices; the menu's sliders, squared as gains). A place's track is made with its gain, cutoff and pan as they are.
+- At most two people's groans, sobs or gasps are voiced at once (`hurts`, AT_ONCE); a cry at a new hurt always is.
 
 ## The hands (weapons.rs, muzzle.rs, arm.rs, hands.rs, fist.rs, profiler.rs), for the jobs that plug into them
 - Everything a weapon does to a person goes through two functions in weapons.rs, `pierce(cx, who, origin, dir, &Missile,
@@ -319,8 +339,9 @@ Every person made (`person::spawn`) is given, before the next physics step (beha
 ### Holding and dragging (for the hands)
 `behaviour::Grabbed` on the person is weapons.ts's grab of a body: `Grabbed::at(&ragdoll, point, eye)` takes hold of the
 segment nearest the point (insert it; they go down and writhe, `why` "grabbed"), `grabbed.aim(eye, ahead)` each frame is
-`_hold` (drawn to in front of the eye, as far as it was taken from, at most 2.2 m), and the pull is weapons.ts `step`,
-given every physics step (behaviour.rs `pull`). Let go: remove the component.
+`_hold` (drawn to in front of the eye, as far as it was taken from, at most 2.2 m), and the pull is weapons.ts `step`'s
+spring as a joint (behaviour.rs `hold`: a fixed body, linear ForceBased motors, its anchor moved every physics step; a
+part under 2 kg pulled as if it weighed 2 kg). Let go: remove the component; the joint goes the next step.
 
 ### Sounds and slams (thuds.rs)
 `thuds::Heard { name, at, gain }` (a message): the takes a body makes (thuds, `body-fall` from behaviour) for sound.rs to
@@ -335,6 +356,12 @@ bends. It reads the vitals, `Hurt::leg_gone`, the throat's `retch` and the break
 ### Physics
 120 Hz, one step a tick, as phase 1 set it. Rapier's solver is given sixteen passes and warm-started joints (ragdoll.rs
 `solver`): at its defaults a standing body's knees sagged and its feet crept along the floor.
+Rapier's joint motors read a turn about each axis as twice the arcsine of the quaternion's part along it, its limits as
+twice the arctangent of that part over the real part: the same for a turn about one axis, far apart for a turn about two.
+The ranges are in the motors' measure, and `Ragdoll::ranges` puts them into the limits' every physics step for the joint
+as it is turned (only a change is sent, so a body at rest sleeps). A limit row pushes along its own axis in the parent's
+frame, and on a joint bent far from its zero a twist and a side limit move each other tan(bend / 2) as much as
+themselves: hinges (elbows, knees, wrists) are zeroed at the middle of their bend (`join`).
 
 ### Scenarios
 `stand`, `fall`, `getup`, `crawl`, `drag`, `dead` (each logs a `timeline` of state and mode second by second, the
@@ -714,6 +741,22 @@ Worktrees sharing one CARGO_TARGET_DIR share the crate's fingerprint (the packag
 you run is yours (`strings` for a name only your branch has), and force your own link with
 `cargo rustc --bin cold-chain -- --cfg <your branch>` (a flag of its own: only this crate is built again).
 
+## The Escape menu (menu.rs, branch port/sound-menu)
+Escape in play opens it (not over the warm-up's loading screen): the game paused (Time<Virtual>; Rapier's fixed steps
+come out of it, so the bodies stand still, and Update runs with dt 0, which every system that divides by it already
+guards), the sound held (`Sound::paused`: the `all` track paused), the pointer given back. Resume or Escape goes on and
+takes the pointer; on the settings page Escape goes back; a click on the room takes the pointer as before (player.rs
+`grab`, not while the menu is open). N and K wait while it is open. Quit is AppExit (the profiler's log is saved).
+Settings (`menu::Settings`, serde JSON): master, effects and voices volume; the F3 preset (F3 writes it too); the
+resolution (following the frame rate, or fixed at 100, 85, 70, 55 or 40% a side: graphics.rs `scale`); vertical sync
+(Fifo, or AutoNoVsync); windowed or borderless fullscreen; the field of view across (60 to 110 degrees, 86 the TS's);
+the mouse's speed (`Player::look_speed`). Kept in ~/.config/cold-chain/settings.json (%APPDATA%\cold-chain on Windows;
+`graphics::kept`), read at start for the game only (a scenario has the defaults and writes nothing); a file from before
+reads the preset from the old `quality` file; anything out of range is put right. Drawn as the HUD is (IM Fell, plain
+nodes and text), so it makes no new pipeline: the `menu` scenario counts none made by opening it, photographs both pages,
+clicks two choices and drags a slider with the mouse (the pointer put on them, the button's presses sent as the window
+sends them), writes the settings to its folder and reads them back, then clicks Back and Resume.
+
 ## The look against the TS (phase 4, branch port/parity-look)
 
 ### Comparing under the same light
@@ -836,6 +879,17 @@ went out); going out cuts whatever is playing; out cold or dead nothing new is v
 still clear and empty them, silently), and the TS's last breath ('dying') is no longer said, at the user's word that people
 "can still make noises when they die".
 
+The user then found the people "a bit too excessive with the screaming" (port/sound-menu). Counted with the `screams`
+scenario and tools/port-screams.mjs (four people each shot once with the pistol where it hurts but does not kill, the old
+man again at 30 s, four shots into the groundskeeper a quarter second apart at 45 s, a minute with the physics running):
+the port voiced what the TS did (without the burst 3, 1, 10, 10 a person a minute against the TS's 2, 1, 12, 11; with it
+the TS's 2, 4, 10, 11): no bug, the TS's own rule, a cry at every new hurt and a groan or a sob every 3.5 to 8.5 s for as
+long as it hurts. npc.rs `speak` now: a new hurt within 1.4 s of the cry the last one started is part of it unless twice
+as bad; between, a sound at each of the TS's moments only by chance, falling with the time since the last new hurt (half
+at 20 s) and with consciousness, and quieter the same way; just after a cry, a gasp. Medicine's dice are thrown as the
+TS's were (the voice has its own for the rest), so the `wounds` comparison is not moved by it. After: 2, 4, 4, 4 a
+person a minute (14 against the TS's 27), on average 0.28 voices sounding at once against 0.52.
+
 ### The checks (scenario.rs; on lavapipe the body scenarios draw only the frames they photograph)
 - `voices`: shot, knocked out mid-cry, killed, coughing and retching then knocked out; every voice started and anything
   still sounding while out or dead. Nothing is heard after the frame they go out.
@@ -854,11 +908,12 @@ still clear and empty them, silently), and the TS's last breath ('dying') is no 
   logs' end positions were read against the wrong people (the scenario's person 0 stands at +x, the TS's npc 0 at -x).
 
 ### What still differs
-- Jitter (rad/s, the TS's measure): crawl 1.32 (0.75 before the legs went flaccid: their feet stick and slip on the
-  floor) against the TS's 2.40; drag 0.27 against 1.60; dead 0.31 against 0.10. Dead was 0.058 in phase 2 and is 0.56 on
-  this branch's base (the phase-3 merges): an arm lying across its own body keeps a dead person's forearm turning about
-  1 rad/s, buzzing against its contact. Not found.
-- The drag: the TS's dragged person is pulled about the floor (the chest 0.1 to 0.3 m a second); in the port the held hand
-  stays about half a metre from where it is drawn to and the body hardly moves (the `drag` log's `held`). The pull is the
-  TS's (320 N/m a kilogram of the part held, a hand's half kilogram), and the writhing arm's muscles hold against it
-  here; why Havok's did not is not known.
+- Jitter (rad/s, the TS's measure; port/body-fix, after the bevy-port merge at c8fdfab): dead 0.001 (seeds 2 and 3:
+  0.16, 0.03) against the TS's 0.10; fall 0.021; crawl 0.97 against 2.40; drag 0.76 against 1.60 (0.96 by
+  tools/port-drag.mjs on the same body); stand 0.024. The dead buzz (0.31 before; 0.56 at 20a6c1a) was no phase-3
+  change: the body merge's own tree measures 0.39 here (0.06 was measured elsewhere), and which joint buzzes depends on
+  how the bodies land. Its causes were the limits' measure and the hinges' zero ("Physics" above).
+- The drag: the TS's hand was as far from where it was drawn to as the port's (0.7 to 1.4 m, the same 150 N pull); Havok
+  let that slide the groundskeeper about at 0.1 to 0.5 m a second, Rapier's floor friction did not. With the hold a joint
+  as stiff as 2 kg at the least, the port's chest goes 0.06 to 0.7 m a second over the sweep, the hand 0.55 to 0.65 m
+  off. The arm left free still shakes most (forearm2L 1.67 rad/s), as the TS's does (forearmL 2.65).

@@ -175,8 +175,9 @@ impl Player {
 }
 
 // The view is fixed across rather than top to bottom, so a wider screen sees more above and below, not a wider and
-// wider fisheye: 1.5 radians across, Bevy's (top to bottom) worked out from the window's shape.
-const FOV_ACROSS: f32 = 1.5;
+// wider fisheye: 1.5 radians across (the menu's settings change it), Bevy's (top to bottom) worked out from the window's
+// shape.
+pub const FOV_ACROSS: f32 = 1.5;
 
 fn spawn(mut commands: Commands, map: Res<Map>) {
     let mut player = Player {
@@ -195,16 +196,13 @@ fn spawn(mut commands: Commands, map: Res<Map>) {
     ));
 }
 
-// A click takes the pointer, as the browser's pointer lock did; Escape gives it back.
-fn grab(mouse: Res<ButtonInput<MouseButton>>, keys: Res<ButtonInput<KeyCode>>, mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+// A click takes the pointer, as the browser's pointer lock did; Escape gives it back with the menu (menu.rs), and a
+// click on the room takes it again.
+fn grab(mouse: Res<ButtonInput<MouseButton>>, menu: Res<crate::menu::Menu>, mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>) {
     let Ok(mut c) = cursor.single_mut() else { return };
-    if mouse.just_pressed(MouseButton::Left) {
+    if mouse.just_pressed(MouseButton::Left) && !menu.open {
         c.grab_mode = CursorGrabMode::Locked;
         c.visible = false;
-    }
-    if keys.just_pressed(KeyCode::Escape) {
-        c.grab_mode = CursorGrabMode::None;
-        c.visible = true;
     }
 }
 
@@ -220,12 +218,13 @@ fn look(motion: Res<AccumulatedMouseMotion>, cursor: Query<&CursorOptions, With<
     }
 }
 
-pub fn walk(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, map: Res<Map>, mut players: Query<(&mut Player, &mut Transform, &mut Projection, &Camera)>) {
+pub fn walk(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, map: Res<Map>, settings: Res<crate::menu::Settings>,
+            mut players: Query<(&mut Player, &mut Transform, &mut Projection, &Camera)>) {
     for (mut p, mut t, mut projection, camera) in &mut players {
         p.update(&map, &keys, time.delta_secs());
         *t = p.eye();
         if let (Projection::Perspective(pp), Some(size)) = (projection.as_mut(), camera.logical_viewport_size()) {
-            pp.fov = 2.0 * ((FOV_ACROSS / 2.0).tan() * size.y / size.x).atan();
+            pp.fov = 2.0 * ((settings.fov.to_radians() / 2.0).tan() * size.y / size.x).atan();
         }
     }
 }

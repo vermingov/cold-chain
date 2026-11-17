@@ -520,16 +520,25 @@ const SPREAD: [&str; 3] = ["belly", "chest", "head"];
 const ANGULAR: [JointAxis; 3] = [JointAxis::AngX, JointAxis::AngY, JointAxis::AngZ];
 
 // A turn `q` (in a joint's parent's frame) as the joint's three angles, `frame` the joint's axes (the hinge it bends
-// about, the limb's own length, and across both) as a turn of the parent's. Rapier's generic joint reads a turn on each
-// axis as twice the arcsine of the quaternion's part along it (joint_constraint_helper.rs motor_angular; its limits the
-// same angle, measured from the middle of the range), not as Havok's three turns one after another that ragdoll.ts
-// worked out: for a turn about one axis they are the angle itself, and a target is put in the measure the motor reads.
+// about, the limb's own length, and across both) as a turn of the parent's. Rapier's generic joint's motors read a turn
+// on each axis as twice the arcsine of the quaternion's part along it (joint_constraint_helper.rs motor_angular), not as
+// Havok's three turns one after another that ragdoll.ts worked out: for a turn about one axis they are the angle itself,
+// and a target is put in the measure the motor reads. Its limits read another measure (`ranges`).
 pub fn joint_angles(q: Quat, frame: Quat) -> [f32; 3] {
     let mut l = frame.inverse() * q * frame;
     if l.w < 0.0 {
         l = -l;
     }
     [l.x, l.y, l.z].map(|c| 2.0 * c.clamp(-1.0, 1.0).asin())
+}
+
+// A bound `b` of a joint's angle about one axis (twice the arcsine of the quaternion's part along it) as Rapier's limits
+// read it (twice the arctangent of that part over the real part), the squares of the other two parts being `others`
+// (`ranges`). Out of reach (the others leave no room for that part) it is open: half a turn.
+fn rapier_bound(b: f32, others: f32) -> f32 {
+    let c = (b / 2.0).sin();
+    let w2 = 1.0 - c * c - others;
+    if w2 <= 0.0 { std::f32::consts::PI.copysign(b) } else { 2.0 * c.atan2(w2.sqrt()) }
 }
 
 // What a muscle is sending its joint's motors now, so that nothing is sent that has not changed.
@@ -802,7 +811,17 @@ impl Ragdoll {
         // not measured independently of where the bend's zero is, and a shoulder zeroed at the middle of its range, 58
         // degrees up, held a hurt arm across the belly 40 degrees less turned than it was asked and shook it at 5 Hz.)
         // `zero` is in the joint's own angles (angles(), hold(), range()).
-        s.zero = (s.hi[0] - 145.0 * crate::person::RAD).max((s.lo[0] + 145.0 * crate::person::RAD).min(0.0));
+        // A hinge (an elbow, a knee: nothing swings it sideways, and its twist and side have a few degrees between them)
+        // is zeroed at the middle of its bend. Rapier pushes a limit along its own axis in the parent's frame, and a turn
+        // about the twist's axis there moves the side angle tan(bend / 2) as much (and the side's the twist's): a dead
+        // man's knee bent 116 degrees from straight, against its twist and side limits at once, was pushed off one by the
+        // other 1.6 times as far each pass, never settled, and shook the shin and foot at 0.5 to 1 rad/s. From the middle
+        // the bend is at most 75 degrees, and the two limits move each other less than they move themselves.
+        s.zero = if j.side.0.is_none() {
+            (s.lo[0] + s.hi[0]) / 2.0
+        } else {
+            (s.hi[0] - 145.0 * crate::person::RAD).max((s.lo[0] + 145.0 * crate::person::RAD).min(0.0))
+        };
         let mut joint = GenericJointBuilder::new(if j.lock { JointAxesMask::all() } else { JointAxesMask::LIN_AXES })
             .local_anchor1(pivot - parent.head)
             .local_basis1(frame * Quat::from_rotation_x(s.zero))
@@ -957,6 +976,47 @@ impl Ragdoll {
             for i in 0..3 {
                 let z = if i == 0 { s.zero } else { 0.0 };
                 g.set_limits(ANGULAR[i], [lo[i] - z, hi[i] - z]);
+            }
+        }
+    }
+
+    // Every joint's range put where its own angles put it, in the measure Rapier's limits read, as the joint is turned
+    // now: given every physics step. Rapier's limit rows read a turn about each axis as twice the arctangent of the
+    // quaternion's part along it over its real part (joint_constraint_helper.rs `recentered_angle`), not twice the
+    // arcsine its motors read and the ranges here are in. For a turn about one axis the two are the same; for a turn
+    // about two they are far apart: a dead arm thrown up and out, bent 1.79 of a 3.05 range and twisted -0.34 of 1.48,
+    // read 2.54 bent against Rapier's 2.53 and -1.49 twisted against -1.48. It was held at two limits it was nowhere near
+    // by rows whose push (the plain axis) is right only for a turn about one, and the arm and the forearm on it shook at 1
+    // to 2 rad/s and never came to rest (the dead scenario's 0.3 to 0.6 rad/s against the TS's 0.10). Each bound is the
+    // turn with that axis's part at the bound and the others as they are, so a limit row comes on when the joint's own
+    // angle reaches it; one the others leave no room to reach is open. Only a change is sent: a body at rest keeps its
+    // limits, and Rapier lets it sleep.
+    pub fn ranges(&self, joints: &mut Query<&mut ImpulseJoint>) {
+        for (k, s) in self.segs.iter().enumerate() {
+            if s.def.parent.is_none() || s.locked {
+                continue;
+            }
+            let mut l = Quat::from_rotation_x(-s.zero) * s.frame.inverse() * self.relative(k) * s.unneutral * s.frame;
+            if l.w < 0.0 {
+                l = -l;
+            }
+            let part = [l.x, l.y, l.z];
+            let want: [[f32; 2]; 3] = std::array::from_fn(|i| {
+                let others: f32 = (0..3).filter(|&j| j != i).map(|j| part[j] * part[j]).sum();
+                let z = if i == 0 { s.zero } else { 0.0 };
+                [s.lo[i] - z, s.hi[i] - z].map(|b| rapier_bound(b, others))
+            });
+            let Ok(j) = joints.get(s.entity) else { continue };
+            let g: &GenericJoint = j.data.as_ref();
+            let near = (0..3).all(|i| g.raw.limits(ANGULAR[i]).is_some_and(|m| (m.min - want[i][0]).abs() < 0.005 && (m.max - want[i][1]).abs() < 0.005));
+            if near {
+                continue;
+            }
+            if let Ok(mut j) = joints.get_mut(s.entity) {
+                let g: &mut GenericJoint = j.data.as_mut();
+                for i in 0..3 {
+                    g.set_limits(ANGULAR[i], want[i]);
+                }
             }
         }
     }
@@ -1336,7 +1396,7 @@ impl Ragdoll {
 
 // The physics steps' order for the body: after each step every ragdoll reads where it is (`Read`); before the next,
 // the people push on what they push on and the player pulls on what they hold (`Push`, behaviour.rs), the shoulders'
-// capsules pull, and all of it goes to Rapier (`Give`).
+// capsules pull, and all of it goes to Rapier with the joints' ranges as they are turned now (`Give`).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Steps {
     Read,
@@ -1353,6 +1413,12 @@ fn read(time: Res<Time>, mut ragdolls: Query<&mut Ragdoll>, bodies: Query<(&Tran
 fn give(mut ragdolls: Query<&mut Ragdoll>, mut bodies: Query<(&Transform, &Velocity, &mut ExternalImpulse)>) {
     for mut rd in &mut ragdolls {
         rd.give(&mut bodies);
+    }
+}
+
+fn ranges(ragdolls: Query<&Ragdoll>, mut joints: Query<&mut ImpulseJoint>) {
+    for rd in &ragdolls {
+        rd.ranges(&mut joints);
     }
 }
 
@@ -1388,5 +1454,25 @@ const SOLVER_PASSES: usize = 16;
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, solver).configure_sets(FixedUpdate, (Steps::Push, Steps::Give).chain().before(PhysicsSet::SyncBackend))
         .configure_sets(FixedUpdate, Steps::Read.after(PhysicsSet::Writeback))
-        .add_systems(FixedUpdate, (read.in_set(Steps::Read), shoulders.in_set(Steps::Push), give.in_set(Steps::Give)));
+        .add_systems(FixedUpdate, (read.in_set(Steps::Read), shoulders.in_set(Steps::Push), (give, ranges).in_set(Steps::Give)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A joint turned about two axes at once: each axis's own angle, as a bound, is where Rapier's measure puts the joint
+    // now; about one axis the two measures are the same.
+    #[test]
+    fn bounds_in_rapiers_measure() {
+        let l = (Quat::from_rotation_x(1.2) * Quat::from_rotation_z(1.1) * Quat::from_rotation_y(-0.3)).normalize();
+        let part = [l.x, l.y, l.z];
+        for i in 0..3 {
+            let others: f32 = (0..3).filter(|&j| j != i).map(|j| part[j] * part[j]).sum();
+            let own = 2.0 * part[i].asin();
+            assert!((rapier_bound(own, others) - 2.0 * part[i].atan2(l.w)).abs() < 1e-4);
+        }
+        assert!((rapier_bound(0.7, 0.0) - 0.7).abs() < 1e-5);
+        assert_eq!(rapier_bound(2.5, 0.9), std::f32::consts::PI);
+    }
 }
