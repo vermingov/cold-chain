@@ -1075,6 +1075,43 @@ figure (1480 N; bent across at speed 732-1159 N: now 1100), the kneecap's 6000 N
 8500). Not used anywhere: `twist` (nothing loads a bone in torsion).
 
 ### The K reset
-`khang` (scenario.rs) hurts four people, then presses K: the reset took one frame of 982 ms (dev build, software
-renderer, a loaded machine), the frames either side nothing, no hang. `sandbox::reset` despawns some entities twice
-(Bevy warns, harmlessly). Not looked into further.
+`khang` (scenario.rs) hurts four people, then presses K. The reset took one frame of 982 ms. Almost all of it was
+`sandbox::clear` despawning each ragdoll's joints after their segments: every joint entity (a friction joint, a piece
+held apart) is a child of a segment and had already gone with it, so each of some 90 despawns failed, and Bevy's warning
+for a failed command takes a backtrace, about 10 ms apiece in a dev build (and a screenful in the log, in every scenario
+that resets). `Ragdoll::entities` now gives the segments only. The reset is 26.8 ms: `ragdoll::segments` 22 of it (4-7
+ms a person), the queued commands about 4, the clear nothing; the K frame's CPU about 140 ms against 115 either side
+(dev build, loaded machine), and the frames after it no dearer than before. Under the 50 ms the brief set, so the work
+is not spread over frames.
+
+### The chest wall
+Measured offline from the bodies' own meshes (assets/people skin, assets/anatomy bones; rest pose), rays straight back
+every 1 cm across and 5 mm down from the top of the breastbone, skin to the first bone. Front of each rib, mm, median at
+8-10 cm from the midline (about the mid-clavicular line), the four bodies' range:
+
+| | mm under the skin |
+|---|---|
+| sternum (anywhere on it) | 7-9 (3-24) |
+| clavicle | 14-16 |
+| 1st rib (5-7 cm out) | 31-35 |
+| 2nd rib | 40-46 |
+| 3rd rib | 37-41 |
+| 4th rib | 32-38 |
+| 5th rib | 24-30 |
+| 6th rib | 17-22 |
+| 7th rib (12 cm out) | 16-24 |
+
+The real wall is 41-45 mm to the pleura at the 2nd space (dev/research/body-wall.md 1.2: skin 2, fat 5-15, pectoralis
+10-20, then the rib), so the rib's front about 30-40: the 2nd to 4th ribs are right or a few mm deep, the 5th and 6th
+thin but within reason for the lower chest, the sternum right (skin and 2-5 mm of fat). Nothing comes through the skin.
+What is wrong: there is no costal cartilage. The ribs are bone to the costochondral junction and stop; the only cartilage
+parts are the thyroid and cricoid. 3-7 cm either side of the midline, over the top 14 cm, 230-236 rays of 290 meet
+nothing within 90 mm (in a real chest the cartilages of ribs 1-7 fill that band but for the spaces between them), so a
+blade or bullet there goes into the chest without touching anything, and the x-ray shows the ribs ending short of the
+breastbone. The fix is in the asset pipeline (tools/anatomy.py's part list, beside the thyroid and cricoid rows, from
+BodyParts3D's costal cartilages), and the BP3D cache was not on the machine this was measured on.
+
+### Shins standing
+`stand`'s per-segment spin (the TS's jitter.mjs measure): shins 0.012-0.018 rad/s, the feet 0.024-0.031, the thighs
+0.011-0.012, in three builds; the notes' "feet still buzz about 1 rad/s" is gone. The head is the most, 0.196, ten times
+anything else.
