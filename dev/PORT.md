@@ -1045,23 +1045,44 @@ in the joints' own measure, `Ragdoll::past`), `past_cone_deg` (the shoulders pas
 across a standing man's forearm and to the side of another's head, a kick (25 N s) across the knee of a man knocked out,
 a dead man thrown up and back at 5 m/s (each part pushed at its bone's head, as the grenade pushes).
 
-Rapier's angular limit row pushes along the plain axis of the parent's joint frame (joint_constraint_helper.rs
-`limit_angular`, `basis.column`), which moves the angle it limits only for a turn about that axis alone; its lock row
-uses the turn's true derivative (`ang_basis`). On a joint turned about two axes at once the limits leaked, with the row's
-impulse at nothing: an elbow (3 degrees of side limit) went 50-107 degrees sideways dragged by the hand (three seeds),
-72 in the crawl, the wrists 50-68, a standing knee 3.5-4.6 past its side limit at rest. In a two-body test (a pinned
-arm, motors, a 100 N m pull) the limits held; in the game neither more solver passes (48) nor PGS iterations helped.
-Tried and dropped: pre-step stops along the true gradient (no better: the solver undoes them within the step), turning
-the hinge's child frame with its bend so the twist and side rows lie along the turn (no better), a soft lock (15 and 60
-Hz: as bad as the limit).
+The limits leak on a joint turned about two axes at once: an elbow (3 degrees of side limit) went 50-107 degrees
+sideways dragged by the hand (three seeds), 72 in the crawl, the wrists 50-68, a standing knee 3.5-4.6 past its side
+limit at rest. In a two-body test (a pinned arm, motors, a 100 N m pull) the limits held; in the game neither more solver
+passes (48) nor PGS iterations helped. Tried and dropped: pre-step stops along the true gradient (no better: the solver
+undoes them within the step), turning the hinge's child frame with its bend so the twist and side rows lie along the
+turn (no better), a soft lock (15 and 60 Hz: as bad as the limit).
 
 Tried and not kept: the elbow's side held by a lock instead of a 3-degree limit (an axis with no range locked; commit
 7b60ed6 on this branch). Dragged, the elbow then stayed within 1.8 degrees, and in the crawl its side leak went from 72
 to none; but the leak moved to the next limit along the arm (the elbow's twist, 42-67 in the crawl; with the twist
 locked too, the wrist, 111, and the shoulder, 32 and once 88 at rest), and getting up broke: one man of four failed his
 push-up and lay down for good in two seeds of three, with the side locked or both, against none of three as now. The
-knee locked as well crept 11-13 cm standing ten seconds, against 4-9. The leak is Rapier's limit row; a fix belongs
-there (a limit along `ang_basis`, as the lock does), not in the table.
+knee locked as well crept 11-13 cm standing ten seconds, against 4-9.
+
+### The limit leak: not the limit row's direction
+Rapier's angular limit row (joint_constraint_helper.rs `limit_angular`) limits 2 atan2(x, w) of the relative rotation
+(x its part along the axis, recentred on the range's middle) and pushes along the plain joint axis, `basis.column(i)`.
+That looked like the leak's cause, but it is not. With dq/dt = (0, W) q / 2 the measure's true gradient is
+(w^2 e_i + w (v x e_i) + x v) / (w^2 + x^2), and its dot with e_i is exactly 1: the plain axis moves the limited angle
+at unit rate in any pose, so the row is only not the shortest push, never a push on nothing. Tried all the same, the
+true gradient in a vendored rapier3d 0.36.1 ([patch.crates-io], checked against finite differences to 1.5e-5), against
+the build without it:
+
+| | true-gradient row | as now |
+|---|---|---|
+| drag, elbow sideways (seeds 1, 3) | 40, 81 | 50, 70 |
+| drag, wrist (seeds 1, 3) | 0.1, 6.3 | 5.3, 18 |
+| crawl, elbows | 91, 88 | 72, 56 |
+| crawl, wrists | 43, 14 | 68, 51 |
+| getup, all four standing (seeds 1-3) | yes, yes, one down | yes, yes, yes |
+| limits, thrown: worst | shoulder 100 | hand 24.5 |
+| dead lying still, spin | 0.037 rad/s | 0.019 |
+| fall, stand, creep (10 s standing) | alike; 7-8 cm | alike; 4-9 cm |
+
+Backed out. What lets the elbow go remains open: neither the row's direction, the solver's passes, nor a lock that moves
+the leak along the arm. Next to look at: the row's bias, capped at `max_corrective_velocity` (a deep violation is let
+back only so fast), and the muscle motors on the same axes (finalised in a block of their own, so nothing keeps them off
+the limit row's direction).
 
 ### The shoulder's cone
 The port has the TS's capsule (ragdoll.rs `shoulders`: the posterior bound of the arm's direction as a function of its
