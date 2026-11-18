@@ -346,7 +346,8 @@ pub fn steps(name: &str) -> Vec<Step> {
             s.push(Step::Wait(10));
             s.push(keys(&[SPACE], &[]));
             for k in 0..50 {
-                s.push(Step::Wait(1));
+                // (Wait(2) is the next frame: Wait(1) is done in the frame it is begun.)
+                s.push(Step::Wait(2));
                 s.push(note("jump", 0));
                 if k == 18 {
                     s.push(Step::Shot("jump_top".into()));

@@ -204,8 +204,10 @@ impl Player {
     fn fall(&mut self, map: &Map, dt: f32) {
         let ground = map.ground(self.pos.x, self.pos.y, self.height + BODY.climb);
         if self.falling != 0.0 || self.height - ground > BODY.climb {
+            // (By the speed halfway through the frame: a jump rises its full height at any frame rate.)
+            let was = self.falling;
             self.falling += 9.81 * dt;
-            self.height = ground.max(self.height - self.falling * dt);
+            self.height = ground.max(self.height - (was + self.falling) / 2.0 * dt);
             if self.height == ground && self.falling > 0.0 {
                 // Landed: the knees take it (the eye sinks with them, more the harder it came down), and both feet are
                 // heard on the floor.
