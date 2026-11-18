@@ -341,7 +341,7 @@ pub fn steps(part: &str) -> Vec<Step> {
             n.slash_through(&points, 0.02, across);
         }));
         s.push(bleeds("knife across the throat", "buyer"));
-        s.push(neck("hood", Vec3::NEG_Z, |n, at, d| crate::wounds::blow(n, at, d, 0.79, 15.0, None)));
+        s.push(neck("hood", Vec3::NEG_Z, |n, at, d| { crate::wounds::blow(n, at, d, 0.79, 15.0, None); }));
         s.push(bleeds("bat into the throat", "hood"));
         s.push(Step::Wait(90));
         s.extend(face("neck_knife", "buyer", 0.0, 0.45));
