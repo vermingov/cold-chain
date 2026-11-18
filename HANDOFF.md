@@ -1,4 +1,4 @@
-# Cold Chain: handoff (2026-11-17)
+# Cold Chain: handoff (2026-11-18)
 
 Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
@@ -16,7 +16,17 @@ hinges zeroed mid-bend; behaviour.rs `hold` a joint), the grenade's frame 38 -> 
 Not verified on real hardware: the sound latency (ask for the `sound:` line the game prints at start), fullscreen and
 vsync switches. Open: a 140-280 ms PostUpdate frame after some blasts (PORT.md "What is left").
 
-Next: BACKLOG item 7 (what the TS left unfinished). Items 1-6 wait for the user.
+Item 7 (what the TS left unfinished), merged 2026-11-18 (PORT.md has each job's numbers):
+- Head (head_scenario.rs): the mouth's lining and pool, neck wounds bleed as the neck, the skull opens to the brain,
+  bloodshot and drying eyes.
+- Arms (fist.rs, npc.rs `Npc::struck`): punches land where the eye is; a blow hurts the part whose skin it hit. Knife
+  and bat over a head miss by design (the models never come down that far).
+- Joints (ragdoll.rs, bones.rs, behaviour.rs): K reset 982 -> 27 ms, Rapier's NaN rollback (a zero wound direction),
+  clavicle/patella strengths, costal cartilage in the anatomy bins (BodyParts3D, tools/anatomy.py).
+Still open from item 7: elbows past their range under load (drag 63-85, crawl 94 deg; bias cap, motors and solver
+passes measured, none fixes it), sword blows spin a forearm at 800-1000 rad/s, the brain looks like shards, faint
+bloodshot, zigzag vomit, drops drawn as dark balls, costal cartilage breaks at the rib's 2500 N (no own figure).
+Items 1-6 of BACKLOG wait for the user.
 
 ## Run it
 
