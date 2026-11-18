@@ -343,6 +343,8 @@ pub struct Behaviour {
     vel: Vec3,
     step: Option<Stepping>,
     steps: u32,
+    // Every step taken, for the scenarios.
+    pub stepped: u32,
     stand: Heights,
     all4: Heights,
     kneel: Heights,
@@ -417,6 +419,7 @@ impl Behaviour {
             vel: Vec3::ZERO,
             step: None,
             steps: 0,
+            stepped: 0,
             stand: Heights::default(),
             all4: Heights::default(),
             kneel: Heights::default(),
@@ -862,7 +865,8 @@ impl Behaviour {
                 // forth.)
                 // (The soles' grip turns the feet back: the floor holds them.)
                 let twist = motor::toward(rd, pelvis, face, 40.0, 1.5, f32::INFINITY, Some(spin)).y.clamp(-40.0 * legs, 40.0 * legs);
-                motor::turn(rd, pelvis, Vec3::new(0.0, twist, 0.0), &down, dt);
+                if std::env::var("PROBE_TWISTOLD").is_ok() { rd.turn(pelvis, Vec3::new(0.0, twist * dt, 0.0)); } else {
+                motor::turn(rd, pelvis, Vec3::new(0.0, twist, 0.0), &down, dt); }
                 // The trunk kept upright over the legs, the hip strategy, as far as the muscles round the hips (about 300
                 // N m both together) and the back hold it, pushing on the floor through the legs: without it a stride
                 // pitched the pelvis forty degrees over the front leg and took the body down, and at a third of that a
@@ -872,9 +876,16 @@ impl Behaviour {
                 // would, a shove of 80 N s made them stagger and step as a person does, but a body just up off the floor
                 // stepped on and went down again, five of fifteen in getup against none: port/b-ragdoll, PORT.md.)
                 let t = motor::toward(rd, pelvis, face, 25.0, 12.0, 300.0 * legs, Some(spin));
+                if std::env::var("PROBE_HIPS").is_ok() {
+                    let thighs: Vec<usize> = down.iter().map(|&f| rd.by_name(&format!("thigh{}", rd.segs[f].def.name.chars().last().unwrap()))).collect();
+                    motor::turn(rd, pelvis, Vec3::new(t.x, 0.0, t.z), &thighs, dt);
+                    let t = motor::toward(rd, chest, bent, 25.0, 12.0, 150.0 * legs, Some(spin));
+                    let belly = rd.by_name("belly");
+                    motor::turn(rd, chest, Vec3::new(t.x, 0.0, t.z), &[belly], dt);
+                } else {
                 rd.turn(pelvis, Vec3::new(t.x, 0.0, t.z) * dt);
                 let t = motor::toward(rd, chest, bent, 25.0, 12.0, 150.0 * legs, Some(spin));
-                rd.turn(chest, Vec3::new(t.x, 0.0, t.z) * dt);
+                rd.turn(chest, Vec3::new(t.x, 0.0, t.z) * dt); }
             });
         }
 
@@ -941,6 +952,7 @@ impl Behaviour {
             closing: false,
         });
         self.steps += 1;
+        self.stepped += 1;
     }
 
     // Where a step should land to catch the weight going to `xi`: past it, on its own side of the planted foot (a step to
@@ -1698,7 +1710,8 @@ impl Behaviour {
                 let mut o = back.lerp(front, 0.7) + facing(self.heading) * self.foot.2;
                 o.y = 0.0;
                 over_at = Some(o);
-                done = self.t > 1.0 && pp.y - self.floor > stand.pelvis * 0.93 && feet.iter().all(|&f| rd.lowest(f) < self.floor + TOUCH)
+                let upright = rd.segs[pelvis].now.rotation.mul_vec3(Vec3::Y).y > 0.97 || std::env::var("PROBE_RISE").is_err();
+                done = self.t > if std::env::var("PROBE_RISE").is_ok() { 1.3 } else { 1.0 } && upright && pp.y - self.floor > stand.pelvis * 0.93 && feet.iter().all(|&f| rd.lowest(f) < self.floor + TOUCH)
                     && outside(&footprint(rd, &feet).0, self.com.x, self.com.z) < -0.03 && self.vel.x.hypot(self.vel.z) < 0.15;
                 time = 3.5;
             }

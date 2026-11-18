@@ -358,6 +358,7 @@ use crate::ragdoll::Ragdoll;
 struct Acc {
     // Why they last went over (behaviour.rs `why`).
     why: &'static str,
+    stepped: u32,
     state: Option<Doing>,
     mode: Option<Mode>,
     // Where the chest was as the second began (the TS's jitter.mjs `at`: how far and fast they went).
@@ -451,6 +452,7 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
         let acc = j.bins.entry((e, second)).or_default();
         acc.state = Some(b.state);
         acc.why = b.why;
+        acc.stepped = b.stepped;
         acc.mode = Some(b.mode);
         acc.at.get_or_insert(rd.segs[rd.by_name("chest")].now.translation);
         acc.segs.resize(rd.segs.len(), (0, 0.0, 0.0));
@@ -460,6 +462,13 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
             acc.spun[k] = acc.spun[k].max(s.spin.length());
             if s.def.parent.is_some() && !s.def.joint.as_ref().unwrap().lock && !rd.cut_off(k) {
                 let p = rd.past(k);
+                if std::env::var("PROBE_PAST").is_ok() && p.iter().any(|&x| x > 0.5) {
+                    let a = rd.angles(k);
+                    let c = rd.segs[rd.by_name("chest")].now;
+                    let h = c.rotation.inverse() * (rd.middle(k) - c.translation);
+                    eprintln!("PROBE past {:?} {:?} {} ang {:?} past {:?} in-chest {:?}", e, b.mode, rd.segs[k].def.name,
+                        a.map(|x| x.to_degrees().round()), p.map(|x| x.to_degrees().round()), (h * 100.0).round());
+                }
                 for i in 0..3 {
                     acc.past[k][i] = acc.past[k][i].max(p[i]);
                 }
@@ -610,7 +619,7 @@ fn timeline(w: &mut World) {
         let hf: Vec<f64> = acc.segs.iter().filter(|s| s.0 > 0).map(|s| (s.1 / s.0 as f64).sqrt()).collect();
         let mean = hf.iter().sum::<f64>() / hf.len().max(1) as f64;
         let at = acc.at.map(|a| [a.x, a.y, a.z].map(|c| (c * 1000.0).round() / 1000.0));
-        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "why": acc.why, "hf": (mean * 100.0).round() / 100.0, "at": at }))
+        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "why": acc.why, "stepped": acc.stepped, "hf": (mean * 100.0).round() / 100.0, "at": at }))
     }).collect();
     let at: Vec<Value> = people.iter().map(|e| json!(chests.get(e).map(|c| c.to_array()))).collect();
     let ms = j.step_ms / j.steps.max(1) as f64;
@@ -753,6 +762,35 @@ fn body(name: &str) -> Option<Vec<Step>> {
             }
             s.push(situation("shoved, standing", |_, _, st, _| st == Doing::Stand));
             s.push(situation("shoved, falling or down", |_, _, st, _| st != Doing::Stand));
+        }
+        // One shove at the chest of each of the five, of 40, 80 or 120 N s (shove-40, shove-80, shove-120), from the
+        // front, the right, behind or the left by turns, the turn moved on by the seed: what they did is in the
+        // timeline (state, why they went over, steps taken).
+        "shove-40" | "shove-80" | "shove-120" => {
+            let n: f32 = name[6..].parse().unwrap();
+            s.push(Step::Do(Box::new(timeline_start)));
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                let seed = w.resource::<Runner>().seed as usize;
+                let mut shoves = Vec::new();
+                for (i, e) in everyone(w).into_iter().enumerate() {
+                    let mut rd = w.get_mut::<Ragdoll>(e).unwrap();
+                    let chest = rd.by_name("chest");
+                    let at = rd.middle(chest);
+                    let ahead = rd.segs[rd.by_name("pelvis")].now.rotation * Vec3::NEG_Z;
+                    let ahead = Vec3::new(ahead.x, 0.0, ahead.z).normalize_or(Vec3::NEG_Z);
+                    let right = Vec3::new(-ahead.z, 0.0, ahead.x);
+                    let k = (i + seed) % 4;
+                    let way = [-ahead, -right, ahead, right][k];
+                    rd.push(chest, way * n, at);
+                    let from = ["front", "right", "behind", "left"][k];
+                    shoves.push(json!({ "person": i, "from": from }));
+                }
+                log(w, json!({ "event": "shove", "n_s": n, "shoves": shoves }));
+            })));
+            film(&mut s, "shove", 1, 6, 15, -2.6, 1.8, 1.5);
+            s.push(Step::Wait(60 * 5));
+            s.push(situation("shoved", |_, _, _, _| true));
         }
         // Legs paralysed: down, rolled onto the front, and dragging themselves away on the elbows.
         "crawl" => {
