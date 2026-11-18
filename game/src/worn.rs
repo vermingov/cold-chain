@@ -44,6 +44,7 @@ pub fn wear(key: &str) -> (f32, Tool) {
 struct Build {
     pos: Vec<Vec3>,
     nor: Vec<Vec3>,
+    uv: Vec<Vec2>,
     index: Vec<u32>,
 }
 
@@ -56,6 +57,10 @@ impl Build {
         let Some(VertexAttributeValues::Float32x3(q)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { return };
         self.pos.extend(p.iter().map(|&v| m.transform_point3(Vec3::from(v))));
         self.nor.extend(q.iter().map(|&v| n.transform_vector3(Vec3::from(v)).normalize_or_zero()));
+        match mesh.attribute(Mesh::ATTRIBUTE_UV_0) {
+            Some(VertexAttributeValues::Float32x2(t)) => self.uv.extend(t.iter().map(|&t| Vec2::from(t))),
+            _ => self.uv.extend(std::iter::repeat_n(Vec2::ZERO, p.len())),
+        }
         match mesh.indices() {
             Some(i) => self.index.extend(i.iter().map(|k| base + k as u32)),
             None => self.index.extend((0..p.len() as u32).map(|k| base + k)),
@@ -69,7 +74,7 @@ impl Build {
         self.add(Capsule3d::new(r, d.length()).mesh().rings(4).latitudes(12).longitudes(20).build(), t);
     }
 
-    // As seen in a mirror across x (the other hand's).
+    // As seen in a mirror across x (the other hand's), with tangents for a picture's relief.
     fn mesh(&self, mirror: bool) -> Mesh {
         let s = if mirror { Vec3::new(-1.0, 1.0, 1.0) } else { Vec3::ONE };
         let mut index = self.index.clone();
@@ -78,89 +83,263 @@ impl Build {
                 t.swap(1, 2);
             }
         }
-        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos.iter().map(|p| (*p * s).to_array()).collect::<Vec<_>>())
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.nor.iter().map(|n| (*n * s).to_array()).collect::<Vec<_>>())
-            .with_inserted_indices(Indices::U32(index))
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv.iter().map(|t| t.to_array()).collect::<Vec<_>>())
+            .with_inserted_indices(Indices::U32(index));
+        mesh.generate_tangents().ok();
+        mesh
     }
 }
 
-// A rounded box (a superellipsoid: `round` 2 an ellipsoid, higher squarer) round `c` with half sizes `r`, the front
-// (+z) half `front` as long as the back's.
-fn pillow(c: Vec3, r: Vec3, round: f32, front: f32) -> Mesh {
-    const ACROSS: usize = 40;
-    const ROUND: usize = 64;
-    let e = 2.0 / round;
-    let f = |x: f32| x.signum() * x.abs().powf(e);
+// A surface lofted through cross-sections, each a rounded box round (x, y) at z: half wide `w`, `top` above and `bottom`
+// below, `round` 2 an ellipse and higher squarer; `ring` corners round. Its picture's u runs round it from the middle of
+// its top (u 0) and v along it from the first section (v 0, by length). Normals from its own triangles.
+#[derive(Clone, Copy)]
+struct Section {
+    at: Vec3,
+    w: f32,
+    top: f32,
+    bottom: f32,
+    round: f32,
+}
+
+fn loft(sections: &[Section], ring: usize, length: f32) -> Mesh {
     let mut pos = Vec::new();
-    for i in 0..=ACROSS {
-        let u = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / ACROSS as f32;
-        for j in 0..=ROUND {
-            let v = -std::f32::consts::PI + std::f32::consts::TAU * j as f32 / ROUND as f32;
-            let z = f(u.cos()) * f(v.sin());
-            pos.push(c + Vec3::new(r.x * f(u.cos()) * f(v.cos()), r.y * f(u.sin()), r.z * z * if z > 0.0 { front } else { 1.0 }));
+    let mut uv = Vec::new();
+    let mut along = 0.0;
+    for (i, c) in sections.iter().enumerate() {
+        if i > 0 {
+            along += c.at.distance(sections[i - 1].at);
+        }
+        let e = 2.0 / c.round;
+        let f = |x: f32| x.signum() * x.abs().powf(e);
+        for j in 0..=ring {
+            let a = std::f32::consts::TAU * j as f32 / ring as f32;
+            let (sx, cy) = (a.sin(), a.cos());
+            let y = if cy >= 0.0 { c.top } else { c.bottom } * f(cy);
+            pos.push(c.at + Vec3::new(c.w * f(sx), y, 0.0));
+            uv.push([j as f32 / ring as f32, along / length]);
         }
     }
+    let w = (ring + 1) as u32;
     let mut index = Vec::new();
-    let w = (ROUND + 1) as u32;
-    for i in 0..ACROSS as u32 {
-        for j in 0..ROUND as u32 {
+    for i in 0..sections.len() as u32 - 1 {
+        for j in 0..ring as u32 {
             let (a, b) = (i * w + j, (i + 1) * w + j);
             index.extend([a, b, a + 1, a + 1, b, b + 1]);
         }
     }
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos.iter().map(|p| p.to_array()).collect::<Vec<_>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos.iter().map(|p: &Vec3| p.to_array()).collect::<Vec<_>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
         .with_inserted_indices(Indices::U32(index));
     crate::flesh::normals(&mut mesh);
     mesh
 }
 
-// An open tube along z from `z0` to `z1` round (0, y, ·), its half sizes across `r` (x, y), the lip at each end rolled
-// over `lip` m.
-fn tube(y: f32, z0: f32, z1: f32, r: Vec2, lip: f32) -> Mesh {
-    const ROUND: usize = 48;
+fn smooth(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// The mitt of a 14 oz glove round the closed fist (the fist's frame), from the cuff to the front of the striking pad:
+// 12.8 cm across at the knuckles, narrowing to 10 at the wrist; the back of the hand a long low dome rising to the
+// knuckles; underneath, the palm flat to the wrist and then the curled fingers' pocket hanging lower, a crease where the
+// two meet; the front a full round pad 4 to 5 cm thick over the knuckles.
+fn mitt() -> Mesh {
+    let (z0, z1) = (-0.128, 0.058);
+    const ALONG: usize = 56;
+    let sections: Vec<Section> = (0..=ALONG)
+        .map(|i| {
+            let s = i as f32 / ALONG as f32;
+            // (The front end closes as a quarter of an ellipse over its last 30 percent.)
+            let end = if s > 0.68 { (1.0 - ((s - 0.68) / 0.32).powi(2)).max(0.0).sqrt() } else { 1.0 };
+            let w = 0.05 + 0.014 * smooth(0.0, 0.62, s);
+            let top = 0.035 + 0.016 * smooth(0.05, 0.7, s);
+            let crease = 0.005 * (-((s - 0.43) / 0.05).powi(2)).exp();
+            let bottom = 0.034 + 0.03 * smooth(0.32, 0.62, s) - crease;
+            Section { at: Vec3::new(0.0, -0.014, z0 + (z1 - z0) * s), w: w * end, top: top * end.powf(0.8), bottom: bottom * end.powf(0.8), round: 2.5 - 0.3 * s }
+        })
+        .collect();
+    loft(&sections, 72, 0.22)
+}
+
+// The thumb: a padded tube along the inside of the mitt from by the wrist to near the front, its inner half sunk in the
+// mitt's side, where it is sewn on along its length; its tip rounded.
+fn thumb() -> Mesh {
+    let (p0, p1, p2) = (Vec3::new(-0.048, -0.03, -0.1), Vec3::new(-0.074, -0.042, -0.058), Vec3::new(-0.06, -0.046, -0.01));
+    const ALONG: usize = 24;
+    let sections: Vec<(Vec3, f32)> = (0..=ALONG)
+        .map(|i| {
+            let t = i as f32 / ALONG as f32;
+            let at = p0 * (1.0 - t).powi(2) + p1 * 2.0 * t * (1.0 - t) + p2 * t * t;
+            let end = if t > 0.75 { (1.0 - ((t - 0.75) / 0.25).powi(2)).max(0.0).sqrt() } else { 1.0 };
+            (at, (0.021 - 0.004 * t) * end)
+        })
+        .collect();
+    // A loft along a bent line: each ring square to the way the line goes there.
     let mut pos = Vec::new();
-    let mut index = Vec::new();
-    // Rings: rolled in at the back end, out along the tube, rolled in at the front.
-    let rings: [(f32, f32); 6] = [(z0 + lip, -lip), (z0, -lip * 0.3), (z0 + lip, 0.0), (z1 - lip, 0.0), (z1, -lip * 0.3), (z1 - lip, -lip)];
-    for &(z, out) in &rings {
-        for j in 0..ROUND {
-            let a = std::f32::consts::TAU * j as f32 / ROUND as f32;
-            pos.push(Vec3::new((r.x + out) * a.cos(), y + (r.y + out) * a.sin(), z));
+    let mut uv = Vec::new();
+    let mut along = 0.0;
+    const RING: usize = 28;
+    for (i, &(at, r)) in sections.iter().enumerate() {
+        let ahead = if i + 1 < sections.len() { sections[i + 1].0 - at } else { at - sections[i - 1].0 }.normalize();
+        if i > 0 {
+            along += at.distance(sections[i - 1].0);
+        }
+        let side = ahead.cross(Vec3::Y).normalize();
+        let up = side.cross(ahead);
+        for j in 0..=RING {
+            let a = std::f32::consts::TAU * j as f32 / RING as f32;
+            pos.push(at + (up * a.cos() + side * a.sin()) * r);
+            uv.push([j as f32 / RING as f32, along / 0.22]);
         }
     }
-    for k in 0..rings.len() as u32 - 1 {
-        for j in 0..ROUND as u32 {
-            let (a, b) = (k * ROUND as u32 + j, k * ROUND as u32 + (j + 1) % ROUND as u32);
-            let (c, d) = (a + ROUND as u32, b + ROUND as u32);
-            index.extend([a, b, c, b, d, c]);
+    let w = (RING + 1) as u32;
+    let mut index = Vec::new();
+    for i in 0..ALONG as u32 {
+        for j in 0..RING as u32 {
+            let (a, b) = (i * w + j, (i + 1) * w + j);
+            index.extend([a, a + 1, b, a + 1, b + 1, b]);
         }
     }
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos.iter().map(|p| p.to_array()).collect::<Vec<_>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos.iter().map(|p: &Vec3| p.to_array()).collect::<Vec<_>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
         .with_inserted_indices(Indices::U32(index));
     crate::flesh::normals(&mut mesh);
     mesh
 }
 
-// What each is made of: each part's shape (the right hand's), and its look.
-fn parts(key: &str) -> Vec<(Build, StandardMaterial)> {
+// The cuff up the forearm, a little wider at its open end, its edge rolled; and the strap round it, with the end of the
+// strap laid over itself on the back of the wrist.
+fn cuff(z0: f32, z1: f32, w: f32, h: f32, flare: f32, roll: f32) -> Mesh {
+    let mut sections = Vec::new();
+    let n = 14;
+    for i in 0..=n {
+        let s = i as f32 / n as f32;
+        let grow = 1.0 + flare * (1.0 - s);
+        // (The last millimetres at each end turned in, a rolled edge.)
+        let lip = roll * (smooth(0.0, 0.06, s).min(smooth(1.0, 0.94, s)) - 1.0);
+        sections.push(Section { at: Vec3::new(0.0, -0.01, z0 + (z1 - z0) * s), w: w * grow + lip, top: h * grow + lip, bottom: h * grow + lip, round: 2.2 });
+    }
+    loft(&sections, 64, 0.22)
+}
+
+// Smooth noise over the plane (0 to 1), the same at the same place every time.
+fn noise(x: f32, y: f32) -> f32 {
+    let hash = |i: f32, j: f32| ((i * 127.1 + j * 311.7).sin() * 43758.547).fract().abs();
+    let (i, j) = (x.floor(), y.floor());
+    let (fx, fy) = (x - i, y - j);
+    let (u, v) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+    let a = hash(i, j) + (hash(i + 1.0, j) - hash(i, j)) * u;
+    let b = hash(i, j + 1.0) + (hash(i + 1.0, j + 1.0) - hash(i, j + 1.0)) * u;
+    a + (b - a) * v
+}
+
+// The glove's leather, painted once (its colour, relief and roughness), laid on by u round each part from the middle of
+// its top and v along it (`loft`; 37 cm round, 22 cm along: the mitt's own size). The panels are sewn together along
+// either side of the back of the hand (the top panel), across the palm where the curled fingers' pocket begins, and round
+// the cuff's hem: each seam a groove pulled in between two rows of stitches 2.4 mm either side of it, 4 mm stitches of
+// off-white thread. Over all of it a pebbled grain, a little uneven in colour; and worn where it lands, the striking pad
+// and the knuckles, the colour paler and the sheen gone matte.
+fn leather(images: &mut Assets<Image>, colour: [u8; 3]) -> (Handle<Image>, Handle<Image>, Handle<Image>) {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    const N: usize = 1024;
+    const ROUND: f32 = 370.0; // mm round
+    const LONG: f32 = 220.0; // mm along
+    let lin = |c: u8| (c as f32 / 255.0).powf(2.2);
+    let base = colour.map(lin);
+    let thread = [214u8, 204, 192].map(lin);
+    let worn = [base[0] * 1.25 + 0.03, base[1] * 1.6 + 0.02, base[2] * 1.5 + 0.02];
+    // Height (mm), colour and roughness at a point (mm round from the top's middle, mm along).
+    let at = |x: f32, y: f32| -> (f32, [f32; 3], f32) {
+        let grain = 0.07 * noise(x / 0.7, y / 0.7) + 0.04 * noise(x / 1.6 + 7.0, y / 1.6) + 0.02 * noise(x / 0.3, y / 0.3 + 3.0);
+        let mut h = grain;
+        let tone = 0.92 + 0.12 * noise(x / 9.0, y / 9.0) + 0.05 * (noise(x / 0.7, y / 0.7) - 0.5);
+        let mut c = base.map(|k| k * tone);
+        let mut rough = 0.5 + 0.08 * noise(x / 4.0 + 2.0, y / 4.0);
+        // Worn over the knuckles and the striking pad (the front fifth, and the top toward it).
+        let top = 1.0 - smooth(0.0, 90.0, x.min(ROUND - x));
+        let wear = smooth(150.0, 190.0, y) * (0.5 + 0.5 * top) * (0.6 + 0.4 * noise(x / 6.0, y / 6.0));
+        for k in 0..3 {
+            c[k] += (worn[k] - c[k]) * wear * 0.7;
+        }
+        rough += 0.18 * wear;
+        // The seams: each a line of `x` (along the part) or of `y` (round it), with its two rows of stitches.
+        let mut seam = |off: f32, run: f32, from: f32, to: f32| {
+            if run < from || run > to {
+                return;
+            }
+            h -= 0.55 * (-(off / 0.55).powi(2)).exp();
+            rough += 0.15 * (-(off / 0.8).powi(2)).exp();
+            for side in [-2.4f32, 2.4] {
+                let d = off - side;
+                let dash = (run / 4.0).fract();
+                if d.abs() < 0.42 && dash > 0.12 && dash < 0.88 {
+                    let s = (1.0 - (d / 0.42).powi(2)).sqrt();
+                    h += 0.22 * s;
+                    c = thread.map(|t| t * (0.8 + 0.2 * s));
+                    rough = 0.7;
+                } else if d.abs() < 0.6 && (dash <= 0.12 || dash >= 0.88) {
+                    // (where the thread goes into the leather: a small dark hole)
+                    h -= 0.12;
+                    c = c.map(|k| k * 0.5);
+                }
+            }
+        };
+        for sx in [0.21 * ROUND, 0.79 * ROUND] {
+            seam(x - sx, y, 0.0, LONG * 0.97);
+        }
+        seam(y - 0.36 * LONG, x, 0.33 * ROUND, 0.67 * ROUND);
+        seam(y - 4.0, x, 0.0, ROUND);
+        (h, c, rough.min(0.95))
+    };
+    let mut height = vec![0.0f32; N * N];
+    let mut colour_data = Vec::with_capacity(N * N * 4);
+    let mut rough_data = Vec::with_capacity(N * N * 4);
+    for j in 0..N {
+        for i in 0..N {
+            let (x, y) = ((i as f32 + 0.5) / N as f32 * ROUND, (j as f32 + 0.5) / N as f32 * LONG);
+            let (h, c, r) = at(x, y);
+            height[j * N + i] = h;
+            colour_data.extend(c.map(|k| (k.max(0.0).powf(1.0 / 2.2) * 255.0).round().min(255.0) as u8));
+            colour_data.push(255);
+            rough_data.extend([0, (r * 255.0) as u8, 0, 255]);
+        }
+    }
+    let (dx, dy) = (ROUND / N as f32, LONG / N as f32);
+    let mut normal_data = Vec::with_capacity(N * N * 4);
+    for j in 0..N {
+        for i in 0..N {
+            let h = |i: usize, j: usize| height[j.min(N - 1) * N + i % N];
+            let gx = (h(i + 1, j) - h((i + N - 1) % N, j)) / (2.0 * dx);
+            let gy = (h(i, j + 1) - h(i, j.saturating_sub(1))) / (2.0 * dy);
+            let n = Vec3::new(-gx, -gy, 1.0).normalize();
+            normal_data.extend([((n.x * 0.5 + 0.5) * 255.0) as u8, ((n.y * 0.5 + 0.5) * 255.0) as u8, ((n.z * 0.5 + 0.5) * 255.0) as u8, 255]);
+        }
+    }
+    let make = |data: Vec<u8>, format| Image::new(Extent3d { width: N as u32, height: N as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data, format, RenderAssetUsages::default());
+    (images.add(make(colour_data, TextureFormat::Rgba8UnormSrgb)), images.add(make(normal_data, TextureFormat::Rgba8Unorm)),
+     images.add(make(rough_data, TextureFormat::Rgba8Unorm)))
+}
+
+// What each is made of: each part's shape (the right hand's).
+fn shapes(key: &str) -> Vec<Build> {
     match key {
         "gloves" => {
-            // A 14 oz glove: its padded mitt some 13 cm across, 11 deep and 21 long, 3 to 4 cm of foam in front of the
-            // knuckles, the thumb sewn to its side, a cuff 11 cm up the forearm closed by a strap. Red leather.
+            // A 14 oz glove: the mitt, the thumb sewn to its side, the cuff 11 cm up the forearm; then the strap round
+            // the cuff, its end laid over itself on the back of the wrist.
             let mut leather = Build::default();
-            leather.add(pillow(Vec3::new(0.0, -0.016, -0.05), Vec3::new(0.064, 0.054, 0.098), 2.6, 1.05), Transform::IDENTITY);
-            leather.capsule(Vec3::new(-0.058, -0.03, -0.088), Vec3::new(-0.066, -0.035, -0.012), 0.022);
-            leather.add(tube(-0.01, -0.235, -0.12, Vec2::new(0.047, 0.041), 0.004), Transform::IDENTITY);
+            leather.add(mitt(), Transform::IDENTITY);
+            leather.add(thumb(), Transform::IDENTITY);
+            leather.add(cuff(-0.235, -0.11, 0.047, 0.041, 0.04, 0.004), Transform::IDENTITY);
             let mut strap = Build::default();
-            strap.add(tube(-0.01, -0.2, -0.155, Vec2::new(0.0505, 0.0445), 0.002), Transform::IDENTITY);
-            vec![
-                (leather, StandardMaterial { base_color: Color::srgb_u8(132, 14, 18), perceptual_roughness: 0.42, reflectance: 0.45, clearcoat: 0.35,
-                                             clearcoat_perceptual_roughness: 0.3, ..default() }),
-                (strap, StandardMaterial { base_color: Color::srgb_u8(22, 22, 24), perceptual_roughness: 0.8, ..default() }),
-            ]
+            strap.add(cuff(-0.205, -0.15, 0.0505, 0.0445, 0.0, 0.0015), Transform::IDENTITY);
+            strap.add(cuff(-0.203, -0.152, 0.0535, 0.0475, 0.0, 0.0015), Transform::from_xyz(0.0, 0.0015, 0.0).with_scale(Vec3::new(0.62, 1.0, 1.0)));
+            vec![leather, strap]
         }
         "dusters" => {
             // Brass knuckles: four rings a finger's width apart round the fingers' first bones, just past the knuckles,
@@ -178,8 +357,26 @@ fn parts(key: &str) -> Vec<(Build, StandardMaterial)> {
             for s in [-1.0f32, 1.0] {
                 brass.capsule(Vec3::new(0.041 * s, -0.024, 0.004), Vec3::new(0.035 * s, -0.019, -0.013), 0.0045);
             }
-            vec![(brass, StandardMaterial { base_color: Color::linear_rgb(0.8, 0.56, 0.2), metallic: 0.9, perceptual_roughness: 0.32, ..default() })]
+            vec![brass]
         }
+        _ => Vec::new(),
+    }
+}
+
+// And each part's look.
+fn looks(key: &str, images: &mut Assets<Image>) -> Vec<StandardMaterial> {
+    match key {
+        "gloves" => {
+            // Red leather, a soft sheen (no lacquer): the picture's grain and seams in its relief. The strap black.
+            let textured = |images: &mut Assets<Image>, colour| {
+                let (albedo, normal, rough) = leather(images, colour);
+                StandardMaterial { base_color_texture: Some(albedo), normal_map_texture: Some(normal), metallic_roughness_texture: Some(rough), metallic: 0.0,
+                                   perceptual_roughness: 1.0, reflectance: 0.4, ..default() }
+            };
+            vec![textured(images, [146, 16, 22]), textured(images, [26, 25, 26])]
+        }
+        // Polished brass: a metal's own colour in what it reflects (brass reflects some 90% of red light, 45% of blue).
+        "dusters" => vec![StandardMaterial { base_color: Color::linear_rgb(0.91, 0.74, 0.4), metallic: 1.0, perceptual_roughness: 0.24, ..default() }],
         _ => Vec::new(),
     }
 }
@@ -189,17 +386,25 @@ fn parts(key: &str) -> Vec<(Build, StandardMaterial)> {
 pub struct Made(HashMap<(&'static str, bool), Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>);
 
 impl Made {
-    fn get(&mut self, key: &'static str, left: bool, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
-        self.0
-            .entry((key, left))
-            .or_insert_with(|| parts(key).into_iter().map(|(b, m)| (meshes.add(b.mesh(left)), materials.add(m))).collect())
-            .clone()
+    fn get(&mut self, key: &'static str, left: bool, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>)
+           -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
+        if !self.0.contains_key(&(key, left)) {
+            // (The looks shared by both hands: made with the first.)
+            let looks = match self.0.get(&(key, !left)) {
+                Some(made) => made.iter().map(|(_, m)| m.clone()).collect(),
+                None => looks(key, images).into_iter().map(|m| materials.add(m)).collect::<Vec<_>>(),
+            };
+            let made = shapes(key).into_iter().zip(looks).map(|(b, m)| (meshes.add(b.mesh(left)), m)).collect();
+            self.0.insert((key, left), made);
+        }
+        self.0[&(key, left)].clone()
     }
 }
 
 // On the board: a pair, gloves hanging by their cuffs and dusters flat, their fronts to the room (the board's frame: x
 // out of the wall into the room, y up, the wall along -z).
-pub fn board(key: &'static str, made: &mut Made, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Option<Vec<Piece>> {
+pub fn board(key: &'static str, made: &mut Made, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>)
+             -> Option<Vec<Piece>> {
     let (turn, apart) = match key {
         // The back of the hand to the room, the knuckles down.
         "gloves" => (Mat3::from_cols(Vec3::NEG_Z, Vec3::X, Vec3::NEG_Y), 0.075),
@@ -210,7 +415,7 @@ pub fn board(key: &'static str, made: &mut Made, meshes: &mut Assets<Mesh>, mate
     let rotation = Quat::from_mat3(&turn);
     let mut out = Vec::new();
     for (left, z) in [(false, -apart), (true, apart)] {
-        for (mesh, material) in made.get(key, left, meshes, materials) {
+        for (mesh, material) in made.get(key, left, meshes, materials, images) {
             out.push(Piece { mesh, material, at: Transform::from_xyz(0.0, 0.0, z).with_rotation(rotation) });
         }
     }
@@ -259,10 +464,11 @@ fn put_on(
     mut made: ResMut<Made>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let Some(arms) = arms else { return };
     let a = weapons.arm();
-    let want = if a.kind == crate::weapons::Kind::Fists && fists.is_up() && !parts(a.key).is_empty() { a.key } else { "" };
+    let want = if a.kind == crate::weapons::Kind::Fists && fists.is_up() && !shapes(a.key).is_empty() { a.key } else { "" };
     if want == on.key {
         return;
     }
@@ -279,7 +485,7 @@ fn put_on(
     }
     for arm in [&arms.r, &arms.l] {
         let (t, mirror) = on_fist(arm);
-        for (mesh, material) in made.get(want, mirror, &mut meshes, &mut materials) {
+        for (mesh, material) in made.get(want, mirror, &mut meshes, &mut materials, &mut images) {
             on.entities.push(commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), t, ChildOf(arm.joints[arm.wrist]), Name::new(want))).id());
         }
     }
@@ -293,14 +499,21 @@ pub fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    // The glove's mitt reaches 4 to 5 cm past the knuckle joints in front, and its mirror image is the same shape turned.
+    // The glove's mitt reaches 4 to 6 cm past the knuckle joints in front; every part of it faces out (its corners' normals
+    // away from its middle); and its mirror image is the same shape turned.
     #[test]
     fn glove_in_front() {
-        let made = parts("gloves");
-        let front = made[0].0.pos.iter().map(|p| p.z).fold(f32::MIN, f32::max);
-        assert!((0.04..0.06).contains(&front), "{front}");
-        let m = made[0].0.mesh(true);
+        let made = shapes("gloves");
+        let front = made[0].pos.iter().map(|p| p.z).fold(f32::MIN, f32::max);
+        assert!((0.04..0.065).contains(&front), "{front}");
+        for (part, mid) in [(mitt(), Vec3::new(0.0, -0.014, -0.035)), (cuff(-0.235, -0.11, 0.047, 0.041, 0.04, 0.004), Vec3::new(0.0, -0.01, -0.17))] {
+            let Some(VertexAttributeValues::Float32x3(p)) = part.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+            let Some(VertexAttributeValues::Float32x3(n)) = part.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
+            let out = p.iter().zip(n).filter(|(p, n)| (Vec3::from(**p) - mid).normalize_or_zero().dot(Vec3::from(**n)) > 0.0).count();
+            assert!(out as f32 > 0.9 * p.len() as f32, "{out} of {}", p.len());
+        }
+        let m = made[0].mesh(true);
         let Some(VertexAttributeValues::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
-        assert!(p.iter().map(|v| v[0]).fold(f32::MIN, f32::max) > 0.08);
+        assert!(p.iter().map(|v| v[0]).fold(f32::MIN, f32::max) > 0.07);
     }
 }
