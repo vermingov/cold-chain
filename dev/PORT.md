@@ -1177,6 +1177,16 @@ blade or bullet there goes into the chest without touching anything, and the x-r
 breastbone. The fix is in the asset pipeline (tools/anatomy.py's part list, beside the thyroid and cricoid rows, from
 BodyParts3D's costal cartilages), and the BP3D cache was not on the machine this was measured on.
 
+Since: the source fetched into ~/.cache/cold-chain/bodyparts3d (dbarchive.biosciencedbc.jp, `isa_BP3D_4.0_obj_99.zip`
+of 2013; anatomy.py rebuilds the committed bins byte for byte from it), and tools/anatomy.py has the cartilages of the
+first seven ribs a side (all the source has), kind `cartilage`, kept a bone's cover under the skin (not an organ's 20
+mm), and part of the cage the lungs fill (only the left lung moves, its front 14 mm forward to them). Measured as above,
+the band 3-7 cm out over the top 14 cm: nothing within 90 mm on 123-128 rays of 290 (was 230-236), the rest the spaces
+between the cartilages; a cartilage 6-34 mm under the skin, median 18-20. In the game (`chest`, 4.5 cm out, 2-14 cm
+down): nothing on 4-6 of 14 lines a person (was 14), the cartilage 10-28 mm deep. In the game a costal cartilage breaks
+as a rib (`bones::key_of`; it was the voice box's key, every part named `...cartilage`), and a blow to the chest reaches
+it (`struck` took any cartilage for the head's).
+
 ### Shins standing
 `stand`'s per-segment spin (the TS's jitter.mjs measure): shins 0.012-0.018 rad/s, the feet 0.024-0.031, the thighs
 0.011-0.012, in three builds; the notes' "feet still buzz about 1 rad/s" is gone. The head is the most, 0.196, ten times

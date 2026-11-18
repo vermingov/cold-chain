@@ -51,6 +51,8 @@ TRUNK = [(n, k, p, c) for n, k, p, c in ORGANS if n not in ('spine', 'pelvis', '
     ('sternum', 'bone', [r'^Manubrium$', r'^Body of sternum$', r'^Xiphoid process$'], 4.0),
 ] + [(f'{s.lower()} {n} rib', 'bone', [rf'^{s} {n} rib$'], 6.0) for s, _ in (('Right', 'R'), ('Left', 'L')) for n in ORDINALS] + [
     (f'{n} thoracic vertebra', 'bone', [rf'^{n.capitalize()} thoracic vertebra$'], 5.5) for n in ORDINALS] + [
+    # The first seven ribs reach the breastbone by their cartilages (the source has those seven a side, no more).
+    (f'{s.lower()} {n} costal cartilage', 'cartilage', [rf'^{s} {n} costal cartilage$'], 4.0) for s, _ in SIDES for n in ORDINALS[:7]] + [
     (f'{n} lumbar vertebra', 'bone', [rf'^{n.capitalize()} lumbar vertebra$'], 6.0) for n in ORDINALS[:5]] + [
     ('sacrum', 'bone', [r'^Sacrum$'], 6.0),
     ('right hip bone', 'bone', [r'^Right hip bone$'], 4.5),
@@ -431,9 +433,9 @@ def main():
     for name, kind, patterns, cell in TRUNK:
         corners, faces = thin(*read_named(source, names, patterns), cell)
         corners = carry_mm(corners)
-        press(corners, COVER if kind == 'bone' else WALL)
+        press(corners, COVER if kind in ('bone', 'cartilage') else WALL)
         add(name, kind, trunk_bone(corners[:, 1].mean()), corners, faces)
-        if name.endswith(' rib') or name == 'sternum':
+        if name.endswith(' rib') or name.endswith('costal cartilage') or name == 'sternum':
             cage.append((corners, faces))
     # The rib cage's outside, front and back and either side, for the lungs to fill.
     cage = np.concatenate([c for c, _ in cage])

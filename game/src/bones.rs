@@ -425,7 +425,8 @@ pub struct Bones {
 pub fn key_of(name: &str) -> String {
     let ends_any = |l: &[&str]| l.iter().any(|e| name.ends_with(e));
     let phalanx = name.contains("phalanx of ");
-    let k = if name.ends_with(" rib") {
+    // (A rib's cartilage breaks as the rib does, and hurts the same breathing: not the voice box's.)
+    let k = if name.ends_with(" rib") || name.ends_with("costal cartilage") {
         "rib"
     } else if name.ends_with("cervical vertebra") || name == "atlas" || name == "axis" {
         "cervical vertebra"
@@ -983,7 +984,7 @@ impl BonesOf<'_, '_> {
         let reach = |p: &crate::anatomy::TracedPart| {
             let bony = p.kind == "bone" || p.kind == "skull" || p.kind == "cartilage";
             let of_head = p.kind == "skull"
-                || ["maxilla", "zygomatic", "nasal", "lacrimal", "palatine", "vomer", "mandible", "hyoid", "cartilage"].iter().any(|w| p.name.contains(w));
+                || ["maxilla", "zygomatic", "nasal", "lacrimal", "palatine", "vomer", "mandible", "hyoid", "thyroid cartilage", "cricoid cartilage"].iter().any(|w| p.name.contains(w));
             let spine = p.name.contains("vertebra") || p.name == "atlas" || p.name == "axis" || p.name.contains("sacrum");
             bony && !spine && (if head { of_head } else { !of_head })
         };
@@ -1740,6 +1741,7 @@ mod tests {
         assert_eq!(key_of("left temporal bone"), "skull");
         assert_eq!(key_of("vomer"), "nasal");
         assert_eq!(key_of("cricoid cartilage"), "larynx");
+        assert_eq!(key_of("left fourth costal cartilage"), "rib");
         assert_eq!(key_of("navicular bone of left foot"), "tarsal");
         assert_eq!(key_of("proximal phalanx of right big toe"), "toe");
         assert_eq!(key_of("middle phalanx of left index finger"), "finger");
