@@ -22,11 +22,43 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
+
 use crate::dressing::Piece;
 use crate::wounds::Tool;
 
-// The four knuckle joints' spread (index to little, bone to bone) the shapes are made for: a man's hand.
+// Polished metal that shows the hall in it (polished.wesl).
+#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
+pub struct Polished {
+    #[texture(100)]
+    #[sampler(106)]
+    hall0: Handle<Image>,
+    #[texture(101)]
+    hall1: Handle<Image>,
+    #[texture(102)]
+    hall2: Handle<Image>,
+    #[texture(103)]
+    hall3: Handle<Image>,
+    #[texture(104)]
+    hall4: Handle<Image>,
+    #[texture(105)]
+    hall5: Handle<Image>,
+}
+
+impl MaterialExtension for Polished {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://cold_chain/polished.wesl".into()
+    }
+}
+
+pub type Metal = ExtendedMaterial<StandardMaterial, Polished>;
+
+// The four knuckle joints' spread (index to little, bone to bone) the shapes are made for: a man's hand; and how far
+// behind them its wrist joint is.
 const SPREAD: f32 = 0.054;
+const WRIST: f32 = 0.084;
 
 // What a fist wears changes: the kg it adds to each fist, and what lands (bones.rs `tool`).
 pub fn wear(key: &str) -> (f32, Tool) {
@@ -149,7 +181,7 @@ fn smooth(a: f32, b: f32, x: f32) -> f32 {
 // knuckles; underneath, the palm flat to the wrist and then the curled fingers' pocket hanging lower, a crease where the
 // two meet; the front a full round pad 4 to 5 cm thick over the knuckles.
 fn mitt() -> Mesh {
-    let (z0, z1) = (-0.128, 0.058);
+    let (z0, z1) = (-0.15, 0.058);
     const ALONG: usize = 56;
     let sections: Vec<Section> = (0..=ALONG)
         .map(|i| {
@@ -157,14 +189,16 @@ fn mitt() -> Mesh {
             // (The front end closes as a quarter of an ellipse over its last 30 percent.)
             let end = if s > 0.68 { (1.0 - ((s - 0.68) / 0.32).powi(2)).max(0.0).sqrt() } else { 1.0 };
             let w = 0.05 + 0.014 * smooth(0.0, 0.62, s);
-            let top = 0.035 + 0.016 * smooth(0.05, 0.7, s);
+            // (The back of the hand nearly level, the padding over the knuckles standing up from it.)
+            let top = 0.033 + 0.008 * smooth(0.05, 0.45, s) + 0.01 * smooth(0.5, 0.72, s);
             let crease = 0.005 * (-((s - 0.43) / 0.05).powi(2)).exp();
             let bottom = 0.034 + 0.03 * smooth(0.32, 0.62, s) - crease;
             Section { at: Vec3::new(0.0, -0.014, z0 + (z1 - z0) * s), w: w * end, top: top * end.powf(0.8), bottom: bottom * end.powf(0.8), round: 2.5 - 0.3 * s }
         })
         .collect();
-    loft(&sections, 72, 0.22)
+    loft(&sections, MITT_RING, 0.22)
 }
+const MITT_RING: usize = 72;
 
 // The thumb: a padded tube along the inside of the mitt from by the wrist to near the front, its inner half sunk in the
 // mitt's side, where it is sewn on along its length; its tip rounded.
@@ -213,14 +247,63 @@ fn thumb() -> Mesh {
     mesh
 }
 
+// A cord along a line of points: piping, a round bead of leather sewn into a seam to stand out of it.
+fn cord(path: &[Vec3], r: f32) -> Mesh {
+    const RING: usize = 10;
+    let mut pos = Vec::new();
+    let mut uv = Vec::new();
+    for (i, &at) in path.iter().enumerate() {
+        let ahead = if i + 1 < path.len() { path[i + 1] - at } else { at - path[i - 1] }.normalize_or(Vec3::Z);
+        let side = ahead.cross(if ahead.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
+        let up = side.cross(ahead);
+        for j in 0..=RING {
+            let a = std::f32::consts::TAU * j as f32 / RING as f32;
+            pos.push(at + (up * a.cos() + side * a.sin()) * r);
+            uv.push([j as f32 / RING as f32, i as f32 / path.len() as f32]);
+        }
+    }
+    let w = (RING + 1) as u32;
+    let mut index = Vec::new();
+    for i in 0..path.len() as u32 - 1 {
+        for j in 0..RING as u32 {
+            let (a, b) = (i * w + j, (i + 1) * w + j);
+            index.extend([a, a + 1, b, a + 1, b + 1, b]);
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos.iter().map(|p: &Vec3| p.to_array()).collect::<Vec<_>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_indices(Indices::U32(index));
+    crate::flesh::normals(&mut mesh);
+    mesh
+}
+
+// The piping round the mitt, where its top panel meets its palm: along its outer side from the cuff, round the front of
+// the striking pad and back along its inner side (the mitt's points at its sides, a millimetre out).
+fn piping() -> Mesh {
+    let m = mitt();
+    let Some(VertexAttributeValues::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { unreachable!() };
+    let Some(VertexAttributeValues::Float32x3(n)) = m.attribute(Mesh::ATTRIBUTE_NORMAL) else { unreachable!() };
+    let ring = MITT_RING + 1;
+    let at = |i: usize, j: usize| Vec3::from(p[i * ring + j]) + Vec3::from(n[i * ring + j]) * 0.001;
+    let rows = p.len() / ring;
+    // (From where the mitt comes out of the cuff.)
+    let from = rows / 6;
+    let mut path: Vec<Vec3> = (from..rows - 1).map(|i| at(i, MITT_RING / 4)).collect();
+    path.extend((from..rows - 1).rev().map(|i| at(i, 3 * MITT_RING / 4)));
+    cord(&path, 0.0028)
+}
+
 // The cuff up the forearm, a little wider at its open end, its edge rolled; and the strap round it, with the end of the
 // strap laid over itself on the back of the wrist.
-fn cuff(z0: f32, z1: f32, w: f32, h: f32, flare: f32, roll: f32) -> Mesh {
+fn cuff(z0: f32, z1: f32, w: f32, h: f32, flare: f32, narrow: f32, roll: f32) -> Mesh {
     let mut sections = Vec::new();
     let n = 14;
     for i in 0..=n {
         let s = i as f32 / n as f32;
-        let grow = 1.0 + flare * (1.0 - s);
+        // (Wider at its open end; narrowed at the other, which goes inside the mitt's back, so that as the wrist bends the
+        // mitt's back passes over it rather than its edge standing out.)
+        let grow = (1.0 + flare * (1.0 - s)) * (1.0 - narrow * smooth(0.6, 1.0, s));
         // (The last millimetres at each end turned in, a rolled edge.)
         let lip = roll * (smooth(0.0, 0.06, s).min(smooth(1.0, 0.94, s)) - 1.0);
         sections.push(Section { at: Vec3::new(0.0, -0.01, z0 + (z1 - z0) * s), w: w * grow + lip, top: h * grow + lip, bottom: h * grow + lip, round: 2.2 });
@@ -326,20 +409,36 @@ fn leather(images: &mut Assets<Image>, colour: [u8; 3]) -> (Handle<Image>, Handl
      images.add(make(rough_data, TextureFormat::Rgba8Unorm)))
 }
 
-// What each is made of: each part's shape (the right hand's).
-fn shapes(key: &str) -> Vec<Build> {
+// What each is made of: each part's shape (the right hand's), which of its looks it wears, and whether it is carried by
+// the forearm (in the forearm's frame: its axis z toward the hand, the wrist joint the origin) rather than the fist.
+fn shapes(key: &str) -> Vec<(Build, usize, bool)> {
+    let one = |mesh: Mesh| {
+        let mut b = Build::default();
+        b.add(mesh, Transform::IDENTITY);
+        b
+    };
+    // (The cuff's pieces made round the fist's frame's line through the wrist, moved onto the forearm's.)
+    let on_arm = |mesh: Mesh| {
+        let mut b = Build::default();
+        b.add(mesh, Transform::from_xyz(0.0, 0.01, WRIST));
+        b
+    };
     match key {
         "gloves" => {
-            // A 14 oz glove: the mitt, the thumb sewn to its side, the cuff 11 cm up the forearm; then the strap round
-            // the cuff, its end laid over itself on the back of the wrist.
-            let mut leather = Build::default();
-            leather.add(mitt(), Transform::IDENTITY);
+            // A 14 oz glove: the mitt and the thumb sewn to its side, with white piping round the mitt; the cuff 11 cm up
+            // the forearm, carried by the forearm (on the hand, it swung out through the sleeve as the wrist bent), a white
+            // band round its open end and the strap round it, the strap's end laid over itself on the back of the wrist.
+            let mut leather = one(mitt());
             leather.add(thumb(), Transform::IDENTITY);
-            leather.add(cuff(-0.235, -0.11, 0.047, 0.041, 0.04, 0.004), Transform::IDENTITY);
-            let mut strap = Build::default();
-            strap.add(cuff(-0.205, -0.15, 0.0505, 0.0445, 0.0, 0.0015), Transform::IDENTITY);
-            strap.add(cuff(-0.203, -0.152, 0.0535, 0.0475, 0.0, 0.0015), Transform::from_xyz(0.0, 0.0015, 0.0).with_scale(Vec3::new(0.62, 1.0, 1.0)));
-            vec![leather, strap]
+            let mut strap = on_arm(cuff(-0.205, -0.15, 0.0505, 0.0445, 0.0, 0.0, 0.0015));
+            strap.add(cuff(-0.203, -0.152, 0.0535, 0.0475, 0.0, 0.0, 0.0015), Transform::from_xyz(0.0, 0.0115, WRIST).with_scale(Vec3::new(0.62, 1.0, 1.0)));
+            vec![
+                (leather, 0, false),
+                (on_arm(cuff(-0.235, -0.1, 0.047, 0.041, 0.04, 0.16, 0.004)), 0, true),
+                (strap, 1, true),
+                (one(piping()), 2, false),
+                (on_arm(cuff(-0.236, -0.226, 0.0495, 0.0435, 0.0, 0.0, 0.0015)), 2, true),
+            ]
         }
         "dusters" => {
             // Brass knuckles: four rings a finger's width apart round the fingers' first bones, just past the knuckles,
@@ -357,7 +456,7 @@ fn shapes(key: &str) -> Vec<Build> {
             for s in [-1.0f32, 1.0] {
                 brass.capsule(Vec3::new(0.041 * s, -0.024, 0.004), Vec3::new(0.035 * s, -0.019, -0.013), 0.0045);
             }
-            vec![brass]
+            vec![(brass, 0, false)]
         }
         _ => Vec::new(),
     }
@@ -373,7 +472,8 @@ fn looks(key: &str, images: &mut Assets<Image>) -> Vec<StandardMaterial> {
                 StandardMaterial { base_color_texture: Some(albedo), normal_map_texture: Some(normal), metallic_roughness_texture: Some(rough), metallic: 0.0,
                                    perceptual_roughness: 1.0, reflectance: 0.4, ..default() }
             };
-            vec![textured(images, [146, 16, 22]), textured(images, [26, 25, 26])]
+            let trim = StandardMaterial { base_color: Color::srgb_u8(226, 224, 218), perceptual_roughness: 0.5, reflectance: 0.4, ..default() };
+            vec![textured(images, [178, 22, 28]), textured(images, [26, 25, 26]), trim]
         }
         // Polished brass: a metal's own colour in what it reflects (brass reflects some 90% of red light, 45% of blue).
         "dusters" => vec![StandardMaterial { base_color: Color::linear_rgb(0.91, 0.74, 0.4), metallic: 1.0, perceptual_roughness: 0.24, ..default() }],
@@ -381,20 +481,28 @@ fn looks(key: &str, images: &mut Assets<Image>) -> Vec<StandardMaterial> {
     }
 }
 
-// Each worn thing's meshes and materials, the right hand's and the left's, made once.
+// Each worn thing's meshes and materials, the right hand's and the left's, made once; and whether each is the forearm's.
 #[derive(Resource, Default)]
-pub struct Made(HashMap<(&'static str, bool), Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>);
+pub struct Made(HashMap<(&'static str, bool), Vec<(Handle<Mesh>, Handle<StandardMaterial>, bool)>>);
 
 impl Made {
     fn get(&mut self, key: &'static str, left: bool, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>)
-           -> Vec<(Handle<Mesh>, Handle<StandardMaterial>)> {
+           -> Vec<(Handle<Mesh>, Handle<StandardMaterial>, bool)> {
         if !self.0.contains_key(&(key, left)) {
             // (The looks shared by both hands: made with the first.)
-            let looks = match self.0.get(&(key, !left)) {
-                Some(made) => made.iter().map(|(_, m)| m.clone()).collect(),
-                None => looks(key, images).into_iter().map(|m| materials.add(m)).collect::<Vec<_>>(),
+            let looks: Vec<Handle<StandardMaterial>> = match self.0.get(&(key, !left)) {
+                Some(made) => {
+                    let mut l: Vec<_> = Vec::new();
+                    for (_, m, _) in made {
+                        if !l.contains(m) {
+                            l.push(m.clone());
+                        }
+                    }
+                    l
+                }
+                None => looks(key, images).into_iter().map(|m| materials.add(m)).collect(),
             };
-            let made = shapes(key).into_iter().zip(looks).map(|(b, m)| (meshes.add(b.mesh(left)), m)).collect();
+            let made = shapes(key).into_iter().map(|(b, k, arm)| (meshes.add(b.mesh(left)), looks[k].clone(), arm)).collect();
             self.0.insert((key, left), made);
         }
         self.0[&(key, left)].clone()
@@ -415,16 +523,18 @@ pub fn board(key: &'static str, made: &mut Made, meshes: &mut Assets<Mesh>, mate
     let rotation = Quat::from_mat3(&turn);
     let mut out = Vec::new();
     for (left, z) in [(false, -apart), (true, apart)] {
-        for (mesh, material) in made.get(key, left, meshes, materials, images) {
-            out.push(Piece { mesh, material, at: Transform::from_xyz(0.0, 0.0, z).with_rotation(rotation) });
+        for (mesh, material, arm) in made.get(key, left, meshes, materials, images) {
+            // (The forearm's pieces where they are on a straight wrist.)
+            let along = if arm { rotation * Vec3::new(0.0, -0.01, -WRIST) } else { Vec3::ZERO };
+            out.push(Piece { mesh, material, at: Transform::from_translation(Vec3::new(0.0, 0.0, z) + along).with_rotation(rotation) });
         }
     }
     Some(out)
 }
 
-// Where the fist's own frame lies in the wrist's (the bone the worn thing is hung from), and whether it is the mirror
-// image's (the left hand's): from the arm as it is closed now.
-fn on_fist(arm: &crate::arm::Arm) -> (Transform, bool) {
+// Where the fist's own frame lies in the wrist's (the bone the worn thing is hung from), the forearm's in the forearm's
+// second bone's, and whether they are the mirror image's (the left hand's): from the arm as it is closed now.
+fn on_fist(arm: &crate::arm::Arm) -> (Transform, Transform, bool) {
     let here = |n: &str, tail: bool| arm.here(n, tail);
     let knuckles: Vec<Vec3> = (2..=5).map(|k| here(&format!("finger{k}-1"), false)).collect();
     let middle = knuckles.iter().sum::<Vec3>() / 4.0;
@@ -442,8 +552,16 @@ fn on_fist(arm: &crate::arm::Arm) -> (Transform, bool) {
     let x = if mirror { -x } else { x };
     let abs = crate::person::absolute(&arm.person.body.bones, &arm.local);
     let (rot, at) = abs[arm.wrist];
+    let scale = Vec3::splat(across.length() / SPREAD);
     let rotation = rot.inverse() * Quat::from_mat3(&Mat3::from_cols(x, y, z));
-    (Transform { translation: rot.inverse() * (middle - at), rotation, scale: Vec3::splat(across.length() / SPREAD) }, mirror)
+    let hand = Transform { translation: rot.inverse() * (middle - at), rotation, scale };
+    // The forearm's frame: its axis from the elbow to the wrist, turned as the fist's about it.
+    let wrist = here("wrist", false);
+    let zf = (wrist - here("lowerarm01", false)).normalize();
+    let xf = (x - zf * x.dot(zf)).normalize();
+    let (rot, at) = abs[arm.twist];
+    let forearm = Transform { translation: rot.inverse() * (wrist - at), rotation: rot.inverse() * Quat::from_mat3(&Mat3::from_cols(xf, zf.cross(xf), zf)), scale };
+    (hand, forearm, mirror)
 }
 
 // What is on the fists now, and its entities.
@@ -465,10 +583,12 @@ fn put_on(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut metals: ResMut<Assets<Metal>>,
+    hall: Res<crate::wet::Hall>,
 ) {
     let Some(arms) = arms else { return };
     let a = weapons.arm();
-    let want = if a.kind == crate::weapons::Kind::Fists && fists.is_up() && !shapes(a.key).is_empty() { a.key } else { "" };
+    let want = if a.kind == crate::weapons::Kind::Fists && fists.is_up() && matches!(a.key, "gloves" | "dusters") { a.key } else { "" };
     if want == on.key {
         return;
     }
@@ -484,15 +604,32 @@ fn put_on(
         return;
     }
     for arm in [&arms.r, &arms.l] {
-        let (t, mirror) = on_fist(arm);
-        for (mesh, material) in made.get(want, mirror, &mut meshes, &mut materials, &mut images) {
-            on.entities.push(commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), t, ChildOf(arm.joints[arm.wrist]), Name::new(want))).id());
+        let (hand, forearm, mirror) = on_fist(arm);
+        for (mesh, material, on_arm) in made.get(want, mirror, &mut meshes, &mut materials, &mut images) {
+            let (t, bone) = if on_arm { (forearm, arm.twist) } else { (hand, arm.wrist) };
+            let mut e = commands.spawn((Mesh3d(mesh), t, ChildOf(arm.joints[bone]), Name::new(want)));
+            // (A metal shows the hall in it: the same look, extended.)
+            match materials.get(&material).filter(|m| m.metallic > 0.5) {
+                Some(base) => {
+                    let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
+                    let metal = metals.add(Metal { base: base.clone(), extension: Polished { hall0, hall1, hall2, hall3, hall4, hall5 } });
+                    e.insert(MeshMaterial3d(metal));
+                }
+                None => {
+                    e.insert(MeshMaterial3d(material));
+                }
+            }
+            on.entities.push(e.id());
         }
     }
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Made>().init_resource::<On>().add_systems(Update, put_on.after(crate::fist::punch));
+    bevy::asset::embedded_asset!(app, "polished.wesl");
+    app.init_resource::<Made>()
+        .init_resource::<On>()
+        .add_plugins(MaterialPlugin::<Metal>::default())
+        .add_systems(Update, put_on.after(crate::fist::punch));
 }
 
 #[cfg(test)]
@@ -504,15 +641,15 @@ mod tests {
     #[test]
     fn glove_in_front() {
         let made = shapes("gloves");
-        let front = made[0].pos.iter().map(|p| p.z).fold(f32::MIN, f32::max);
+        let front = made[0].0.pos.iter().map(|p| p.z).fold(f32::MIN, f32::max);
         assert!((0.04..0.065).contains(&front), "{front}");
-        for (part, mid) in [(mitt(), Vec3::new(0.0, -0.014, -0.035)), (cuff(-0.235, -0.11, 0.047, 0.041, 0.04, 0.004), Vec3::new(0.0, -0.01, -0.17))] {
+        for (part, mid) in [(mitt(), Vec3::new(0.0, -0.014, -0.035)), (cuff(-0.235, -0.11, 0.047, 0.041, 0.04, 0.16, 0.004), Vec3::new(0.0, -0.01, -0.17))] {
             let Some(VertexAttributeValues::Float32x3(p)) = part.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
             let Some(VertexAttributeValues::Float32x3(n)) = part.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
             let out = p.iter().zip(n).filter(|(p, n)| (Vec3::from(**p) - mid).normalize_or_zero().dot(Vec3::from(**n)) > 0.0).count();
             assert!(out as f32 > 0.9 * p.len() as f32, "{out} of {}", p.len());
         }
-        let m = made[0].mesh(true);
+        let m = made[0].0.mesh(true);
         let Some(VertexAttributeValues::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
         assert!(p.iter().map(|v| v[0]).fold(f32::MIN, f32::max) > 0.07);
     }

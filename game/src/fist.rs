@@ -538,17 +538,16 @@ pub fn look(key: &'static str) -> Vec<crate::scenario::Step> {
     s.push(pitch(-0.35));
     s.push(Step::Wait(4));
     s.push(Step::Shot(format!("{key}_guard_down")));
-    // (Looking over the line-up's heads, so the punch meets nothing.)
-    s.push(pitch(0.25));
-    s.push(Step::Wait(4));
+    // (Turned away from the line-up, down the empty hall, so the punch meets nothing; caught every other frame out.)
+    s.extend(crate::scenario::view(&format!("{key}_away"), 0.0, -2.0, [0.0, 1.5, -10.0], 1.65));
     s.push(Step::Do(Box::new(|w: &mut World| crate::warm::press(w, 2))));
     s.push(Step::Wait(60));
     s.push(Step::Shot(format!("{key}_wound")));
     s.push(Step::Do(Box::new(|w: &mut World| crate::warm::release(w, 2))));
-    s.push(Step::Wait(3));
-    s.push(Step::Shot(format!("{key}_thrown")));
-    s.push(Step::Wait(5));
-    s.push(Step::Shot(format!("{key}_out")));
+    for k in 1..=6 {
+        s.push(Step::Wait(2));
+        s.push(Step::Shot(format!("{key}_thrown_{}", k * 2)));
+    }
     s.push(Step::Wait(40));
     s
 }
