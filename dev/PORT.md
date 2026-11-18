@@ -956,3 +956,36 @@ person a minute (14 against the TS's 27), on average 0.28 voices sounding at onc
   let that slide the groundskeeper about at 0.1 to 0.5 m a second, Rapier's floor friction did not. With the hold a joint
   as stiff as 2 kg at the least, the port's chest goes 0.06 to 0.7 m a second over the sweep, the hand 0.55 to 0.65 m
   off. The arm left free still shakes most (forearm2L 1.67 rad/s), as the TS's does (forearmL 2.65).
+
+## Joints, bones and the smaller open items (BACKLOG item 7, branch port/item7-joints)
+
+### How far a joint goes past its range
+Every body scenario's `jitter` entries now log `past_range` (the six joints that went furthest past their range, degrees,
+in the joints' own measure, `Ragdoll::past`), `past_cone_deg` (the shoulders past their cone, `Ragdoll::cone`) and
+`segments` (every segment's high-frequency spin, for the shins). `limits` loads them on purpose: a bat's blow (12 N s)
+across a standing man's forearm and to the side of another's head, a kick (25 N s) across the knee of a man knocked out,
+a dead man thrown up and back at 5 m/s (each part pushed at its bone's head, as the grenade pushes).
+
+Rapier's angular limit row pushes along the plain axis of the parent's joint frame (joint_constraint_helper.rs
+`limit_angular`, `basis.column`), which moves the angle it limits only for a turn about that axis alone; its lock row
+uses the turn's true derivative (`ang_basis`). On a joint turned about two axes at once the limits leaked, with the row's
+impulse at nothing: an elbow (3 degrees of side limit) went 50-107 degrees sideways dragged by the hand (three seeds),
+72 in the crawl, the wrists 50-68, a standing knee 3.5-4.6 past its side limit at rest. In a two-body test (a pinned
+arm, motors, a 100 N m pull) the limits held; in the game neither more solver passes (48) nor PGS iterations helped.
+Tried and dropped: pre-step stops along the true gradient (no better: the solver undoes them within the step), turning
+the hinge's child frame with its bend so the twist and side rows lie along the turn (no better), a soft lock (15 and 60
+Hz: as bad as the limit).
+
+What changed: an axis with no range is a lock (ragdoll.rs `shut`), and the elbow's side range is none (the TS's 3 degrees
+were laxity; a real elbow does not bend sideways). A torn or dislocated elbow (`set_range` with a range) opens the lock
+into a limit again. The knee keeps its 3 degrees: locked, four people standing ten seconds crept 11-13 cm against 4-9.
+
+### The shoulder's cone
+The port has the TS's capsule (ragdoll.rs `shoulders`: the posterior bound of the arm's direction as a function of its
+elevation, 60 degrees behind hanging, 45 level, 20 overhead, Norkin and White; a stiff damped spring past it). Past it:
+see the numbers below.
+
+### Bones (bones.rs)
+Checked per bone and load in dev/research/bone-strength.md. Wrong and fixed: the clavicle's force across was its axial
+figure (1480 N; bent across at speed 732-1159 N: now 1100), the kneecap's 6000 N (8.5 kN in flexed-knee impacts: now
+8500). Not used anywhere: `twist` (nothing loads a bone in torsion).

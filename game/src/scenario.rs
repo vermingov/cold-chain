@@ -348,6 +348,10 @@ struct Acc {
     at: Option<Vec3>,
     // Per segment: steps, the sum of the squared second difference, of |w|.
     segs: Vec<(u32, f64, f64)>,
+    // Per segment, the most its joint went past its range on each axis (hinge, twist, side), and the shoulders past
+    // their cone (left, right): radians.
+    past: Vec<[f32; 3]>,
+    cone: [f32; 2],
 }
 
 #[derive(Resource, Default)]
@@ -377,6 +381,21 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
         acc.mode = Some(b.mode);
         acc.at.get_or_insert(rd.segs[rd.by_name("chest")].now.translation);
         acc.segs.resize(rd.segs.len(), (0, 0.0, 0.0));
+        acc.past.resize(rd.segs.len(), [0.0; 3]);
+        for (k, s) in rd.segs.iter().enumerate() {
+            if s.def.parent.is_some() && !s.def.joint.as_ref().unwrap().lock && !rd.cut_off(k) {
+                let p = rd.past(k);
+                for i in 0..3 {
+                    acc.past[k][i] = acc.past[k][i].max(p[i]);
+                }
+            }
+        }
+        for (i, side) in ["L", "R"].iter().enumerate() {
+            let arm = rd.by_name(&format!("upperarm{side}"));
+            if !rd.segs[arm].broken && !rd.cut_off(arm) {
+                acc.cone[i] = acc.cone[i].max(rd.cone(arm));
+            }
+        }
         for (k, s) in rd.segs.iter().enumerate() {
             let w = s.spin;
             if let (Some(p), Some(p2)) = last[k] {
@@ -411,10 +430,23 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
         };
         let j = w.resource::<Jitter>();
         let mut per: Vec<(f64, f64, u32)> = vec![(0.0, 0.0, 0); names.len()];
+        // The most each joint went past its range (degrees, and on which axis), and the shoulders past their cone.
+        let mut past: Vec<(f32, usize)> = vec![(0.0, 0); names.len()];
+        let mut cone = [0.0f32; 2];
         for (&(e, t), acc) in &j.bins {
             let Some(i) = people.iter().position(|&p| p == e) else { continue };
             if !pick(i, t, acc.state.unwrap(), acc.mode.unwrap()) {
                 continue;
+            }
+            for (k, p) in acc.past.iter().enumerate() {
+                for i in 0..3 {
+                    if p[i] > past[k].0 {
+                        past[k] = (p[i], i);
+                    }
+                }
+            }
+            for i in 0..2 {
+                cone[i] = cone[i].max(acc.cone[i]);
             }
             for (k, &(n, h2, wsum)) in acc.segs.iter().enumerate() {
                 if n > 0 && k < per.len() {
@@ -430,8 +462,15 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
         let mut worst = rows.clone();
         worst.sort_by(|a, b| b.1.total_cmp(&a.1));
         let worst: Vec<Value> = worst.iter().take(5).map(|(n, hf, w)| json!({ "seg": n, "hf": (hf * 100.0).round() / 100.0, "w": (w * 100.0).round() / 100.0 })).collect();
-        info!("jitter {name}: mean hf {mean:.2} rad/s over {seconds} person-seconds");
-        log(w, json!({ "event": "jitter", "situation": name, "person_seconds": seconds, "mean_hf": (mean * 1000.0).round() / 1000.0, "worst": worst }));
+        const AXES: [&str; 3] = ["hinge", "twist", "side"];
+        let deg = |r: f32| (r / crate::person::RAD * 10.0).round() / 10.0;
+        let mut over: Vec<(String, f32, usize)> = past.iter().zip(&names).map(|(p, n)| (n.clone(), p.0, p.1)).filter(|p| p.1 > 0.0).collect();
+        over.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let over: Vec<Value> = over.iter().take(6).map(|(n, r, i)| json!({ "seg": n, "axis": AXES[*i], "deg": deg(*r) })).collect();
+        info!("jitter {name}: mean hf {mean:.2} rad/s over {seconds} person-seconds; past range {over:?}, cone {cone:?}");
+        log(w, json!({ "event": "jitter", "situation": name, "person_seconds": seconds, "mean_hf": (mean * 1000.0).round() / 1000.0, "worst": worst,
+            "past_range": over, "past_cone_deg": cone.map(|c| deg(c.max(0.0))),
+            "segments": rows.iter().map(|(n, hf, _)| json!([n, (hf * 1000.0).round() / 1000.0])).collect::<Vec<_>>() }));
     }))
 }
 
@@ -682,6 +721,161 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(Step::Wait(60 * 6));
             s.extend(view("dead_still", 0.0, -1.0, [0.0, 0.2, 3.0], 1.65));
             s.push(situation("dead lying still", |_, t, _, _| t >= 4));
+        }
+        // Joints loaded past what they allow (port/item7-joints): a blow across one standing man's forearm and one to the
+        // side of another's head, a kick across the knee of a man knocked out, a dead man thrown up and over. How far each
+        // joint went past its range (`past_range`, degrees, as the joints' own angles read it) and the shoulders past
+        // their cone, in each situation's log (every body scenario logs them).
+        "limits" => {
+            s.push(Step::Wait(60));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let people = everyone(w);
+                for (i, &e) in people.iter().enumerate() {
+                    let Some(mut v) = w.get_mut::<crate::vitals::Vitals>(e) else { continue };
+                    match i {
+                        1 => v.out = 1e9,
+                        2 => {
+                            v.dead = true;
+                            v.brain_damage = 1.0;
+                        }
+                        _ => {}
+                    }
+                }
+            })));
+            s.push(each(Some(1), |_, b, rng| b.knock_down(rng)));
+            s.push(each(Some(2), |_, b, rng| b.knock_down(rng)));
+            s.push(Step::Wait(60));
+            // A bat's blow (0.8 kg at 15 m/s) across the forearm and to the side of the head; a kick (some 25 N s) across
+            // the knee; the whole body thrown up and back at 5 m/s.
+            s.push(each(Some(0), |rd, _, _| {
+                let k = rd.by_name("forearmR");
+                let at = rd.middle(k);
+                rd.push(k, Vec3::new(-12.0, 0.0, 0.0), at);
+            }));
+            s.push(each(Some(3), |rd, _, _| {
+                let k = rd.by_name("head");
+                let at = rd.middle(k);
+                rd.push(k, Vec3::new(12.0, 0.0, 0.0), at);
+            }));
+            s.push(each(Some(1), |rd, _, _| {
+                let k = rd.by_name("shinL");
+                let at = rd.segs[k].now.translation;
+                rd.push(k, Vec3::new(25.0, 0.0, 0.0), at);
+            }));
+            // (Each part pushed at its bone's head, as the grenade's blast pushes them, so the body turns as it goes.)
+            s.push(each(Some(2), |rd, _, _| {
+                for k in rd.attached.clone() {
+                    let at = rd.segs[k].now.translation;
+                    let m = rd.segs[k].def.mass;
+                    rd.push(k, Vec3::new(1.5, 4.0, -2.5) * m, at);
+                }
+            }));
+            film(&mut s, "limits", 2, 6, 10, -2.6, 1.8, 1.5);
+            s.push(Step::Wait(60 * 4));
+            s.extend(view("limits_still", 0.0, -1.0, [0.0, 0.2, 3.0], 1.65));
+            s.push(situation("blows", |i, t, _, _| i != 2 && (2..=4).contains(&t)));
+            s.push(situation("thrown", |i, t, _, _| i == 2 && (2..=5).contains(&t)));
+            s.push(situation("lying after", |i, t, _, _| i != 0 && t >= 6));
+        }
+        // The chest wall (port/item7-joints): how deep the breastbone and the front ribs and their cartilage lie under the
+        // skin of each person standing, along lines straight back through the chest at the middle and 4.5 and 9 cm either
+        // side (about the mid-clavicular line), every 2 cm down from the top of the breastbone. A real chest wall is 41-45 mm
+        // deep at the mid-clavicular line on CT (dev/research/body-wall.md 1.2); the TS's bins had the front ribs 0-9 mm
+        // under the skin before tools/anatomy.py `chest_depth`. Then the x-ray of it from the side and the front.
+        "chest" => {
+            s.push(Step::Wait(30));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for (i, e) in everyone(w).into_iter().enumerate() {
+                    let rows = crate::npc::with(w, e, |npc| {
+                        let chest = npc.bone_index("spine01");
+                        let m = npc.rest_to_world(chest);
+                        let notch = (npc.body().bones[npc.bone_index("clavicle.L")].head + npc.body().bones[npc.bone_index("clavicle.R")].head) / 2.0;
+                        let ahead = m.transform_vector3(Vec3::NEG_Z).normalize();
+                        let mut rows = Vec::new();
+                        for down in 0..12 {
+                            for x in [-0.09, -0.045, 0.0, 0.045, 0.09] {
+                                let at = m.transform_point3(notch + Vec3::new(x, -0.02 * down as f32, 0.0));
+                                let from = at + ahead * 0.4;
+                                let skin = npc.surface(from, -ahead, 0.8, false).into_iter().find(|c| c.kind == crate::npc::Kind::Skin).map(|c| c.t);
+                                let bone = |p: &crate::anatomy::TracedPart| p.kind == "bone" || p.kind == "cartilage";
+                                let (spans, _) = npc.trace(from, -ahead, 0.8, 0.0, Some(&bone));
+                                let first = spans.first().map(|s| (s.enter, npc.traced.parts[s.part].name.clone()));
+                                let depth = match (skin, &first) {
+                                    (Some(a), Some((b, _))) => Some(((b - a) * 1000.0).round()),
+                                    _ => None,
+                                };
+                                rows.push(json!({ "x_cm": x * 100.0, "down_cm": 2 * down, "depth_mm": depth, "part": first.map(|f| f.1) }));
+                            }
+                        }
+                        (npc.person.label.clone(), rows)
+                    });
+                    if let Some((who, rows)) = rows {
+                        log(w, json!({ "event": "chest wall", "person": i, "who": who, "rows": rows }));
+                    }
+                }
+            })));
+            s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = true)));
+            for (i, side) in [(1usize, 0.9f32), (2, 0.9)] {
+                s.push(watch(format!("chest_xray_side_{i}"), i, 0.0, side, 1.35));
+                s.push(watch(format!("chest_xray_front_{i}"), i, -0.9, 0.0, 1.35));
+            }
+            s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
+            s.push(watch("chest_skin_side".into(), 1, 0.0, 0.9, 1.35));
+        }
+        // K after heavy damage (the TS hung there): the line-up shot many times, cut with the sword and knife, a grenade,
+        // blood left to run; then K, with the profiler open (its log, `coldchain-profile-*.json`, saved beside log.json)
+        // and each frame's time round it logged.
+        "khang" => {
+            use crate::warm::{aim, press, release, take};
+            s.push(Step::Do(Box::new(crate::profiler::open)));
+            let fight: [(&'static str, usize, &'static str, f32, u8, u32); 14] = [
+                ("ak", 0, "chest", 3.0, 0, 30), ("ak", 1, "belly", 3.0, 0, 30), ("shotgun", 2, "chest", 2.0, 0, 2), ("shotgun", 3, "belly", 2.0, 0, 2),
+                ("pistol", 0, "head", 2.5, 0, 2), ("m4", 2, "thighL", 3.0, 0, 30), ("rifle", 3, "chest", 3.0, 0, 2),
+                ("sword", 0, "upperarmL", 0.8, 2, 10), ("sword", 1, "forearmR", 0.8, 2, 10), ("sword", 2, "shinL", 0.8, 2, 10),
+                ("knife", 3, "belly", 0.6, 0, 10), ("bat", 1, "head", 0.8, 0, 10), ("grenade", 1, "chest", 5.0, 0, 3), ("shotgun", 0, "belly", 1.5, 0, 2),
+            ];
+            for (key, n, part, far, button, hold) in fight {
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    take(w, key);
+                    aim(w, n, part, far);
+                })));
+                s.push(Step::Wait(50));
+                s.push(Step::Do(Box::new(move |w: &mut World| press(w, button))));
+                s.push(Step::Wait(hold));
+                s.push(Step::Do(Box::new(move |w: &mut World| release(w, button))));
+                s.push(Step::Wait(40));
+            }
+            s.push(Step::Wait(300));
+            s.extend(view("khang_before", 0.0, -3.0, [0.0, 0.5, 2.2], 1.65));
+            s.push(Step::Do(Box::new(|w: &mut World| w.insert_resource(Clock(std::time::Instant::now(), Vec::new())))));
+            for k in 0..40 {
+                if k == 5 {
+                    s.push(Step::Do(Box::new(|w: &mut World| {
+                        let t = std::time::Instant::now();
+                        let _ = w.run_system_once(crate::sandbox::reset);
+                        let ms = t.elapsed().as_secs_f64() * 1000.0;
+                        log(w, json!({ "event": "reset", "system_ms": (ms * 10.0).round() / 10.0 }));
+                    })));
+                }
+                s.push(Step::Do(Box::new(|w: &mut World| {
+                    let mut c = w.resource_mut::<Clock>();
+                    let now = std::time::Instant::now();
+                    let ms = (now - c.0).as_secs_f64() * 1000.0;
+                    c.0 = now;
+                    c.1.push((ms * 10.0).round() / 10.0);
+                })));
+                s.push(Step::Wait(1));
+            }
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let frames = w.resource::<Clock>().1.clone();
+                log(w, json!({ "event": "frames round K (ms; K in the sixth)", "ms": frames }));
+            })));
+            s.extend(view("khang_after", 0.0, -3.0, [0.0, 0.5, 2.2], 1.65));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let dir = w.resource::<Out>().0.clone();
+                crate::profiler::save_in(w, dir);
+            })));
+            s.push(Step::Wait(2));
         }
         // K and N: the room cleared and lined up again (every body and joint of the old people gone), then two more made
         // where the eye looks, one on the floor ahead and one up on the ledge.
@@ -948,6 +1142,10 @@ fn cameras(on: bool) -> Step {
         }
     }))
 }
+
+// The wall clock at the last frame, and each frame's time since (the khang scenario).
+#[derive(Resource)]
+struct Clock(std::time::Instant, Vec<f64>);
 
 // Where each person's pelvis is as the run begins, to measure how far they drift standing.
 #[derive(Resource)]

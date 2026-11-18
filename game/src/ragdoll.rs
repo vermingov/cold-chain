@@ -128,7 +128,9 @@ pub fn with_mid_bones(mut body: Body) -> Body {
 // 0-145 and a few degrees past straight, the forearm turning 80 either way, all of it at the wrist's joint, knee 0-140
 // and 5 past straight with almost no give sideways, hip 120 forward and 20 back, 45 out and 30 in, ankle 20 up and 50
 // down, the neck 50 forward and 60 back, the lower back 45 forward, 15 back, 15 to the side and 10 round, the upper
-// back 35, 15, 20 and 30. (The TS's notes on why each is so are in ragdoll.ts beside the same table.)
+// back 35, 15, 20 and 30. (The TS's notes on why each is so are in ragdoll.ts beside the same table.) An axis with no
+// range is held shut (`shut`): the elbow does not bend sideways at all (the TS gave it 3 degrees). (The knee keeps its
+// 3: held shut, four people standing ten seconds crept 11 to 13 cm, against 4 to 9.)
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Hinge {
@@ -204,7 +206,7 @@ pub fn table() -> Vec<SegmentDef> {
                 j("chest", X, (k("shoulderFlex"), -60.0, 175.0), (k("shoulderAbduct"), -50.0, 165.0), 85.0, 110.0,
                   vec![(format!("shoulderAbduct{s}"), -36.0), (format!("shoulderFlex{s}"), -26.0)])),
             def(&format!("upperarm2{s}"), &mid_of("upperarm01", s), 0.013, Capsule, lock(&p("upperarm"), X)),
-            def(&format!("forearm{s}"), &b("lowerarm01"), 0.009, Capsule, j(&p("upperarm2"), Elbow, (k("elbow"), -5.0, 145.0), (None, -3.0, 3.0), 5.0, 80.0, vec![])),
+            def(&format!("forearm{s}"), &b("lowerarm01"), 0.009, Capsule, j(&p("upperarm2"), Elbow, (k("elbow"), -5.0, 145.0), (None, 0.0, 0.0), 5.0, 80.0, vec![])),
             def(&format!("forearm2{s}"), &mid_of("lowerarm01", s), 0.008, Capsule, lock(&p("forearm"), Elbow)),
             def(&format!("hand{s}"), &b("wrist"), 0.006, Box, j(&p("forearm2"), Elbow, (k("wrist"), -75.0, 75.0), (None, -25.0, 25.0), 75.0, 25.0, vec![])),
             def(&format!("thigh{s}"), &b("upperleg01"), 0.06, Capsule, j("pelvis", X, (k("hipFlex"), -20.0, 120.0), (k("hipAbduct"), -30.0, 45.0), 40.0, 320.0, vec![])),
@@ -541,6 +543,14 @@ fn rapier_bound(b: f32, others: f32) -> f32 {
     if w2 <= 0.0 { std::f32::consts::PI.copysign(b) } else { 2.0 * c.atan2(w2.sqrt()) }
 }
 
+// Whether a joint's range on an axis is none: the axis is held shut, by a lock, not a limit. (Rapier's lock reads its
+// angle's change the way the joint actually turns, `ang_basis`; its limit pushes along the parent's plain axis, and has
+// no hold on a turn about two axes at once: dragged by the hand, an elbow with 3 degrees of side limit went 50 to 107
+// degrees sideways with the row pushing nothing, and in the crawl 72; with the side locked, none.)
+fn shut(lo: f32, hi: f32) -> bool {
+    hi - lo < 1e-3
+}
+
 // What a muscle is sending its joint's motors now, so that nothing is sent that has not changed.
 #[derive(Clone, Default)]
 struct Motor {
@@ -822,7 +832,13 @@ impl Ragdoll {
         } else {
             (s.hi[0] - 145.0 * crate::person::RAD).max((s.lo[0] + 145.0 * crate::person::RAD).min(0.0))
         };
-        let mut joint = GenericJointBuilder::new(if j.lock { JointAxesMask::all() } else { JointAxesMask::LIN_AXES })
+        let mut mask = if j.lock { JointAxesMask::all() } else { JointAxesMask::LIN_AXES };
+        for i in 0..3 {
+            if !j.lock && shut(s.lo[i], s.hi[i]) {
+                mask |= ANGULAR[i].into();
+            }
+        }
+        let mut joint = GenericJointBuilder::new(mask)
             .local_anchor1(pivot - parent.head)
             .local_basis1(frame * Quat::from_rotation_x(s.zero))
             .local_anchor2(pivot - d.head)
@@ -831,7 +847,10 @@ impl Ragdoll {
         if !j.lock {
             for i in 0..3 {
                 let z = if i == 0 { s.zero } else { 0.0 };
-                joint = joint.limits(ANGULAR[i], [s.lo[i] - z, s.hi[i] - z]).motor_model(ANGULAR[i], MotorModel::ForceBased);
+                if !shut(s.lo[i], s.hi[i]) {
+                    joint = joint.limits(ANGULAR[i], [s.lo[i] - z, s.hi[i] - z]);
+                }
+                joint = joint.motor_model(ANGULAR[i], MotorModel::ForceBased);
             }
         }
         commands.entity(s.entity).insert(ImpulseJoint::new(self.segs[p].entity, joint.build()));
@@ -921,7 +940,7 @@ impl Ragdoll {
             return;
         }
         for i in 0..3 {
-            let t = target[i].clamp(s.lo[i] + 0.02, s.hi[i] - 0.02);
+            let t = if shut(s.lo[i], s.hi[i]) { s.lo[i] } else { target[i].clamp(s.lo[i] + 0.02, s.hi[i] - 0.02) };
             if !((t - m.t[i]).abs() < 0.002) {
                 m.t[i] = t;
                 m.dirty = true;
@@ -975,7 +994,15 @@ impl Ragdoll {
             let g: &mut GenericJoint = j.data.as_mut();
             for i in 0..3 {
                 let z = if i == 0 { s.zero } else { 0.0 };
-                g.set_limits(ANGULAR[i], [lo[i] - z, hi[i] - z]);
+                // (An axis held shut opened, a hinge torn or put out of joint: then its range is a limit's.)
+                let axis: JointAxesMask = ANGULAR[i].into();
+                if shut(lo[i], hi[i]) {
+                    g.raw.locked_axes |= axis;
+                    g.raw.limit_axes.remove(axis);
+                } else {
+                    g.raw.locked_axes.remove(axis);
+                    g.set_limits(ANGULAR[i], [lo[i] - z, hi[i] - z]);
+                }
             }
         }
     }
@@ -1008,14 +1035,17 @@ impl Ragdoll {
             });
             let Ok(j) = joints.get(s.entity) else { continue };
             let g: &GenericJoint = j.data.as_ref();
-            let near = (0..3).all(|i| g.raw.limits(ANGULAR[i]).is_some_and(|m| (m.min - want[i][0]).abs() < 0.005 && (m.max - want[i][1]).abs() < 0.005));
+            let open = |g: &GenericJoint, i: usize| !g.raw.locked_axes.contains(ANGULAR[i].into());
+            let near = (0..3).all(|i| !open(g, i) || g.raw.limits(ANGULAR[i]).is_some_and(|m| (m.min - want[i][0]).abs() < 0.005 && (m.max - want[i][1]).abs() < 0.005));
             if near {
                 continue;
             }
             if let Ok(mut j) = joints.get_mut(s.entity) {
                 let g: &mut GenericJoint = j.data.as_mut();
                 for i in 0..3 {
-                    g.set_limits(ANGULAR[i], want[i]);
+                    if open(g, i) {
+                        g.set_limits(ANGULAR[i], want[i]);
+                    }
                 }
             }
         }
@@ -1034,17 +1064,12 @@ impl Ragdoll {
             if self.segs[arm].broken || self.cut_off(arm) {
                 continue;
             }
-            let v = self.segs[arm].now.rotation * self.segs[arm].def.end.normalize();
-            let d = self.segs[chest].now.rotation.inverse() * v;
-            let up = (-d.y).clamp(-1.0, 1.0).acos();
-            let half = std::f32::consts::FRAC_PI_2;
-            let most = if up < half { 60.0 - 15.0 * up / half } else { 45.0 - 25.0 * (up - half) / half } * crate::person::RAD;
-            // (Behind the body is +Z here, -Z in the TS.)
-            let past = d.z.clamp(-1.0, 1.0).asin() - most;
+            let past = self.cone(arm);
             if past <= 0.0 {
                 continue;
             }
             // About the axis that brings the arm forward again, in the world.
+            let v = self.segs[arm].now.rotation * self.segs[arm].def.end.normalize();
             let ahead = self.segs[chest].now.rotation * Vec3::NEG_Z;
             let axis = v.cross(ahead);
             if axis.length_squared() < 1e-8 {
@@ -1056,6 +1081,25 @@ impl Ragdoll {
             self.segs[arm].torque += axis * torque;
             self.segs[chest].torque -= axis * torque;
         }
+    }
+
+    // How far an upper arm (`arm`) is past the shoulder's cone, radians (less than nothing inside it).
+    pub fn cone(&self, arm: usize) -> f32 {
+        let chest = self.segs[arm].def.parent.unwrap();
+        let v = self.segs[arm].now.rotation * self.segs[arm].def.end.normalize();
+        let d = self.segs[chest].now.rotation.inverse() * v;
+        let up = (-d.y).clamp(-1.0, 1.0).acos();
+        let half = std::f32::consts::FRAC_PI_2;
+        let most = if up < half { 60.0 - 15.0 * up / half } else { 45.0 - 25.0 * (up - half) / half } * crate::person::RAD;
+        // (Behind the body is +Z here, -Z in the TS.)
+        d.z.clamp(-1.0, 1.0).asin() - most
+    }
+
+    // How far a joint is past its range now (hinge, twist, side; radians, nothing where it is within it).
+    pub fn past(&self, k: usize) -> [f32; 3] {
+        let a = self.angles(k);
+        let s = &self.segs[k];
+        std::array::from_fn(|i| (s.lo[i] - a[i]).max(a[i] - s.hi[i]).max(0.0))
     }
 
     // Whether a segment is on a piece cut off the body (dismember.rs marks the piece's first segment `severed`).

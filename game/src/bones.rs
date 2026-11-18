@@ -38,13 +38,15 @@ use crate::vitals::{Bleed, Into, Rhythm, Side};
 use crate::wounds::{cap, Tool};
 
 // Each bone by its name (side left off): its strength in a young adult man, and what lies over it. The figures and
-// their sources are in dev/research/blunt-trauma.md; laboratory specimens are mostly elderly, so these are the middles of
-// what is reported, and every body varies round them (`grain`).
+// their sources are in dev/research/blunt-trauma.md, each checked against the literature per kind of load in
+// dev/research/bone-strength.md; laboratory specimens are mostly elderly, so these are the middles of what is reported,
+// and every body varies round them (`grain`).
 //   moment  N m of bending a long bone's shaft takes (three-point bending at speed: Kerrigan 2004, Nyquist 1985,
 //           Kirkish 1996, Pintar 1998; the ulna goes before the radius)
 //   bend    N across a flat bone, measured with a 6.5 cm2 impactor (skull: Yoganandan 1995, Nahum 1968; face: Nahum
-//           1975; clavicle 1.48 kN axial)
-//   twist   N m about its length before it breaks in a spiral
+//           1975; the clavicle bent across at speed 0.73-1.16 kN, its 1.48 kN is end on; the kneecap 8.5 kN, Haut 1989)
+//   twist   N m about its length before it breaks in a spiral (Yamada 1970; the femur 155 N m in men of 58 at speed,
+//           Roberts and Pathak 1977). Nothing loads a bone in twist yet: a wrench past a joint's range bends it.
 //   ends    N on its spongy ends (the femur's neck in a fall on the hip: Courtney 1995, 7.2 kN young, 3.4 kN old)
 //   axial   N along it (vertebrae: Brinckmann 1989; the neck 2.2 kN in men; the tibia 16.6 kN at speed, Crandall)
 //   pad     N/m: how stiff the flesh over it is (the spring in F = v sqrt(k m))
@@ -87,7 +89,7 @@ pub fn spec(key: &str) -> Option<BoneSpec> {
         "humerus" => long(1330.0, 230.0, 70.0, 3000.0, None, 80e3, 0.022, 0.6, Some(45.0), ["upperarm01", "lowerarm01", "upperarm"], 0.5),
         "radius" => long(520.0, 100.0, 20.0, 3800.0, None, 150e3, 0.015, 0.25, Some(30.0), ["lowerarm01", "wrist", "forearm"], 0.45),
         "ulna" => long(630.0, 94.0, 20.0, 2500.0, None, 300e3, 0.014, 0.25, Some(30.0), ["lowerarm01", "wrist", "forearm"], 0.45),
-        "clavicle" => flat(1480.0, Some(1480.0), 0.012, 300e3, 0.1, 0.45),
+        "clavicle" => flat(1100.0, Some(1480.0), 0.012, 300e3, 0.1, 0.45),
         "scapula" => flat(3500.0, None, 0.006, 40e3, 0.3, 0.4),
         "rib" => flat(2500.0, None, 0.01, 100e3, 0.12, 0.15),
         "sternum" => flat(4000.0, None, 0.012, 300e3, 0.15, 0.45),
@@ -105,7 +107,7 @@ pub fn spec(key: &str) -> Option<BoneSpec> {
         "lumbar vertebra" => flat(5000.0, Some(6000.0), 0.035, 150e3, 0.15, 0.55),
         "sacrum" => flat(5000.0, Some(5000.0), 0.03, 70e3, 0.5, 0.55),
         "hip bone" => flat(8000.0, None, 0.015, 70e3, 1.5, 0.65),
-        "kneecap" => flat(6000.0, None, 0.02, 150e3, 0.05, 0.45),
+        "kneecap" => flat(8500.0, None, 0.02, 150e3, 0.05, 0.45),
         // The small bones of the hand and foot (estimates against the forces of a fall on the hand, a punch's knuckles and
         // a stamped foot): the scaphoid is what a young man breaks falling on his hand, a metacarpal what a punch breaks.
         "scaphoid" => flat(2400.0, None, 0.012, 150e3, 0.02, 0.35),
