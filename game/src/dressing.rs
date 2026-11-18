@@ -246,8 +246,8 @@ pub enum Covers {
     // A bandage round the head, its middle plane through `mid` square to `m`, round the skull's middle `o`.
     Band { mid: Vec3, m: Vec3, o: Vec3 },
     // Over the end of a stump, the cut through `c` square to `n` (away from the body), and wound round the stump from the
-    // end back up it by a roll's width: `r` is how far out the stump's skin is round the middle of its end.
-    Stump { c: Vec3, n: Vec3, r: f32 },
+    // end back up it by a roll's width: `rim` is the skin's outline round the end, `r` how far out it is on the whole.
+    Stump { c: Vec3, n: Vec3, r: f32, rim: Vec<Vec3> },
 }
 
 impl Covers {
@@ -262,7 +262,7 @@ impl Covers {
                 p > low - 0.01 && p < high + 0.01 && (r - a - axis * p).length() < far
             }
             Covers::Band { mid, m, o } => (r - mid).dot(m).abs() < BAND / 2.0 + 0.01 && r.distance(o) < 0.16,
-            Covers::Stump { c, n, r: out } => {
+            Covers::Stump { c, n, r: out, .. } => {
                 let along = (r - c).dot(n);
                 along > -ROLL - 0.01 && along < 0.03 && (r - c - n * along).length() < out * 1.45 + 0.02
             }
@@ -398,9 +398,11 @@ impl Npc<'_> {
         let make = |kind, covers, per: f32, area: f32| Some(Dressing { mark: mark.clone(), kind, covers, per, capacity: area * 1e4 * per, held: 0.0, since: 0.0, seen: None, off: false });
         // A stump's end (the bleeding out of its cut face): the gauze over the end and wound back up the stump, as a stump
         // is dressed.
-        if let Some(&(c, n, r)) = self.hurt.stumps.iter().find(|(c, n, r)| (mark.rest - *c).dot(*n).abs() < 0.012 && mark.rest.distance(*c) < r * 1.5) {
+        let spread = |c: Vec3, rim: &[Vec3]| rim.iter().map(|q| q.distance(c)).sum::<f32>() / rim.len().max(1) as f32;
+        if let Some((c, n, rim)) = self.hurt.stumps.iter().find(|(c, n, rim)| (mark.rest - *c).dot(*n).abs() < 0.012 && mark.rest.distance(*c) < spread(*c, rim) * 1.5) {
+            let r = spread(*c, rim);
             let round = 2.0 * std::f32::consts::PI * (r + lift);
-            return make("wrap", Covers::Stump { c, n, r }, GAUZE_WRAP, round * ROLL + std::f32::consts::PI * r * r);
+            return make("wrap", Covers::Stump { c: *c, n: *n, r, rim: rim.clone() }, GAUZE_WRAP, round * ROLL + std::f32::consts::PI * r * r);
         }
         match region {
             Some("face") | Some("neck") => {
@@ -663,7 +665,7 @@ pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize, flesh: Opti
     let opening;
     let pad = matches!(d.covers, Covers::Pad { .. });
     let mut end = None;
-    match d.covers {
+    match d.covers.clone() {
         Covers::Pad { c, n, ex, ey, side } => {
             // A pad, square on the skin, centred on the wound, its sides along the body and across it; thickest in the
             // middle where it is folded over itself, the tape over its ends thinner.
@@ -725,16 +727,17 @@ pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize, flesh: Opti
                 Some((x, p - p0, q + nv * (lift + thick), nv))
             });
         }
-        Covers::Stump { c, n, r } => {
+        Covers::Stump { c, n, r, rim } => {
             // Round the stump from its end back up it, the end itself covered by the gauze folded over it (`end` below).
             // The picture's y runs up the stump from its end's rim (-r) and, over the end, from the middle of it (0), so
             // the blood spreads from the middle out over the end and on up.
             let e0 = n.cross(if n.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
             let e1 = n.cross(e0);
             let round = std::f32::consts::TAU * (r + lift);
-            layout = Vec4::new(round, ROLL + 2.0 * r + 0.03, -round / 2.0, -r - ROLL - 0.015);
+            // (Over the end the picture reaches r past its middle, and the roll's band is drawn 1.5 cm in from its edges.)
+            layout = Vec4::new(round, ROLL + 2.0 * r + 0.06, -round / 2.0, -r - ROLL - 0.015);
             opening = (c - n * (ROLL / 2.0), n, r * 1.45 + 0.07, ROLL / 2.0 + 0.02);
-            end = Some((c, n, e0, e1, r));
+            end = Some((c, n, e0, e1, rim));
             place = Box::new(move |v| {
                 let q = body.position[v];
                 let along = (q - c).dot(n);
@@ -801,34 +804,33 @@ pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize, flesh: Opti
     }
     // The end of a stump: the gauze folded over it, a low dome from the stump's skin round the end (taken from the skin
     // there, each way round) over the cut face, carried by the bone the limb hung from.
-    if let Some((c, n, e0, e1, r)) = end {
+    if let Some((c, n, e0, e1, rim)) = end {
         const ROUND: usize = 36;
         const UP: usize = 6;
-        let mut out = [0.0f32; ROUND];
-        for part in body.parts.iter().filter(|p| p.kind == "skin") {
-            for &q in &body.position[part.vertex_start..part.vertex_start + part.vertex_count] {
-                let along = (q - c).dot(n);
-                let o = q - c - n * along;
-                if (-0.015..=0.0).contains(&along) && o.length() < r * 1.6 {
-                    let a = o.dot(e1).atan2(o.dot(e0)).rem_euclid(std::f32::consts::TAU);
-                    let k = (a / std::f32::consts::TAU * ROUND as f32) as usize % ROUND;
-                    out[k] = out[k].max(o.length());
-                }
-            }
+        // The skin's outline round the end, ROUND points evenly along it.
+        let mut along = vec![0.0f32];
+        for k in 0..rim.len() {
+            along.push(along[k] + rim[k].distance(rim[(k + 1) % rim.len()]));
         }
-        for k in 0..ROUND {
-            if out[k] == 0.0 {
-                out[k] = r;
-            }
+        let total = along[rim.len()].max(1e-6);
+        let out: Vec<Vec3> = (0..ROUND).map(|k| {
+            let at = k as f32 / ROUND as f32 * total;
+            let i = along.partition_point(|&a| a <= at).clamp(1, rim.len()) - 1;
+            let t = (at - along[i]) / (along[i + 1] - along[i]).max(1e-9);
+            rim[i].lerp(rim[(i + 1) % rim.len()], t) - c
+        }).collect();
+        if out.len() < 3 {
+            return None;
         }
         let prox = d.mark.owner;
         let dome = 0.012 + lift;
         // Rings from 2 cm up the stump, over its rim and in to the middle of the end; each corner where it lies, which way it
         // faces, and where it is in the picture.
         let corner = |k: usize, i: i32| -> (Vec3, Vec3, Vec2) {
-            let a = k as f32 / ROUND as f32 * std::f32::consts::TAU;
-            let way = e0 * a.cos() + e1 * a.sin();
-            let rr = out[k % ROUND] + lift;
+            let o = out[k % ROUND];
+            let a = o.dot(e1).atan2(o.dot(e0));
+            let way = o.normalize_or_zero();
+            let rr = o.length() + lift;
             let (p, normal, s) = if i < 0 {
                 (c + way * rr - n * 0.02, way, rr + 0.02)
             } else {

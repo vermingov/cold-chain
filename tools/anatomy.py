@@ -498,21 +498,25 @@ def main():
         lat = np.array([1.0, 0.0, 0.0])
         raw = {name: thin(*read_named(source, names, patterns), cell) for name, _, patterns, cell in GENITALS}
         whole = carry_mm(np.concatenate([c for c, _ in raw.values()]))
-        # (The source's axis: from the root of the crura to the glans, the far end of the bodies from the person's tip.)
-        tip = carry_mm(raw['corpus spongiosum'][0])
-        tip = tip[np.argmax(np.linalg.norm(tip - whole.mean(axis=0), axis=1))]
-        root = whole[np.argmax(np.linalg.norm(whole - tip, axis=1))]
+        # (The source's axis: from the root of the crura to the end of the glans, the point of it furthest from them.)
+        glans = carry_mm(read_named(source, names, [r'^Glans penis$'])[0])
+        root = whole[np.argmax(np.linalg.norm(whole - glans.mean(axis=0), axis=1))]
+        tip = glans[np.argmax(np.linalg.norm(glans - root, axis=1))]
         axis = (tip - root) / np.linalg.norm(tip - root)
         up = np.cross(axis, lat)
         up /= np.linalg.norm(up)
         reach = np.linalg.norm(tip - root)
-        out_of = lambda c: np.linalg.norm((c - root) - np.outer((c - root) @ axis, axis), axis=1)
-        thick = np.percentile(out_of(whole)[((whole - root) @ axis / reach) > LEAVES + 0.1], 95)
+        # The source's own middle line (it bends): the middle of its bodies every fortieth of the way along.
+        sw = (whole - root) @ axis / reach
+        bins = [(k + 0.5) / 40 for k in range(40) if ((sw >= k / 40) & (sw < (k + 1) / 40)).any()]
+        mids = np.array([whole[(sw >= b - 0.0125) & (sw < b + 0.0125)].mean(axis=0) for b in bins])
+        middle = lambda s: np.column_stack([np.interp(s, bins, mids[:, k]) for k in range(3)])
+        thick = np.percentile(np.linalg.norm(whole - middle(sw), axis=1)[sw > LEAVES + 0.1], 95)
         for name, kind, _, _ in GENITALS:
             corners, faces = raw[name]
             corners = carry_mm(corners)
             s = (corners - root) @ axis / reach
-            x, y = (corners - root) @ lat, (corners - root) @ up
+            x, y = (corners - middle(s)) @ lat, (corners - middle(s)) @ up
             u = np.clip((s - LEAVES) / (1 - LEAVES), 0, 1)
             at = np.column_stack([np.interp(u, along, line[:, k]) for k in range(3)])
             r = np.interp(u, along, radius) * INSIDE / thick
@@ -521,11 +525,11 @@ def main():
             ahead /= np.linalg.norm(ahead, axis=1, keepdims=True)
             their_up = np.cross(ahead, lat)
             their_up /= np.linalg.norm(their_up, axis=1, keepdims=True)
-            outside = at + lat * (x * r)[:, None] + their_up * (y * r)[:, None]
+            hanging = at + lat * (x * r)[:, None] + their_up * (y * r)[:, None]
             # Inside the body the root keeps the trunk's carrying, moved by what its end moved, less and less toward the crura.
-            moved = line[0] - (root + axis * LEAVES * reach)
-            inside = corners + np.outer(np.clip(s / LEAVES, 0, 1), moved)
-            corners = np.where((s > LEAVES)[:, None], outside, inside)
+            moved = line[0] - middle(np.array([LEAVES]))[0]
+            within = corners + np.outer(np.clip(s / LEAVES, 0, 1), moved)
+            corners = np.where((s > LEAVES)[:, None], hanging, within)
             add(name, kind, 'root', corners, faces)
         for (name, kind, patterns, cell), (centre, r) in zip(TESTES, [(t[:3], t[3]) for t in header['genitals']['testes']]):
             corners, faces = thin(*read_named(source, names, patterns), cell)

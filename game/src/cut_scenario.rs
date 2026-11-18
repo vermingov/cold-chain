@@ -127,7 +127,8 @@ fn beside(i: usize, k: usize, piece: bool, d: f32, turn: f32) -> impl Fn(&mut Wo
 // The `stumps` scenario: every limb cut off at each of its places (both hands, forearms, upper arms, feet, shins and
 // thighs, and the head), spread over the five; each stump and piece close up from its end and from two sides, the same in
 // the x-ray, then each stump dressed and seen again, with what is still bleeding out of it before and after.
-pub fn stumps() -> Vec<Step> {
+// (`stumps-dressed`, without `views`: only the dressings.)
+pub fn stumps(views: bool) -> Vec<Step> {
     use dismember::Limb::*;
     // (Who, which, which side: a person's cuts are numbered in this order.)
     const CUTS: [(usize, dismember::Limb, &str); 13] = [
@@ -169,16 +170,18 @@ pub fn stumps() -> Vec<Step> {
             }
         }
     };
-    all_sides(&mut s, "");
-    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = true)));
-    s.push(Step::Wait(4));
-    for (i, k, name) in numbered() {
-        for piece in [false, true] {
-            let what = if piece { "piece" } else { "stump" };
-            close_on(&mut s, &format!("xray_{name}_{what}"), beside(i, k, piece, 0.4, 0.0));
+    if views {
+        all_sides(&mut s, "");
+        s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = true)));
+        s.push(Step::Wait(4));
+        for (i, k, name) in numbered() {
+            for piece in [false, true] {
+                let what = if piece { "piece" } else { "stump" };
+                close_on(&mut s, &format!("xray_{name}_{what}"), beside(i, k, piece, 0.4, 0.0));
+            }
         }
+        s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
     }
-    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
     // Each stump dressed, as the hands' Hands and the medkit do (dressing::wounds, worst first, and dress): the wound at the
     // stump's end.
     s.push(Step::Do(Box::new(move |w: &mut World| {

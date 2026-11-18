@@ -158,6 +158,8 @@ impl Limb {
 }
 
 const CARRIES: f32 = 0.75;
+// How far from the middle of a cut (of the limb's reach) the flesh of the segment it is in goes with the piece.
+const NEAR: f32 = 1.3;
 
 // The ragdoll segment a point is on, as the limb that would come off there.
 fn segment_limb(base: &str) -> Option<Limb> {
@@ -223,7 +225,7 @@ impl CutOff {
     // Whether a point of the body at rest `p`, carried by bone `bone` before this cut, is on the piece: past the plane
     // and on the limb (split's test for the skin's corners, for one bone).
     pub fn on_piece(&self, p: Vec3, bone: usize) -> bool {
-        (p - self.c).dot(self.n) > 0.0 && (self.gone[bone] || (self.near[bone] && p.distance_squared(self.c) < self.reach * self.reach * 4.0))
+        (p - self.c).dot(self.n) > 0.0 && (self.gone[bone] || (self.near[bone] && p.distance_squared(self.c) < (self.reach * NEAR).powi(2)))
     }
 
     // The bone that carries that point after the cut: on the piece, one of the piece's (its first bone for one of the
@@ -532,27 +534,15 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
         state.apply(world);
     });
 
-    // The stump's end, for a dressing put on it: the skin's mean distance from the middle of the cut, on the body's side.
-    {
-        let (mut sum, mut count) = (0.0, 0);
-        for part in body.parts.iter().filter(|p| p.kind == "skin") {
-            for &q in &body.position[part.vertex_start..part.vertex_start + part.vertex_count] {
-                let along = (q - c).dot(n);
-                let out = q - c - n * along;
-                if (-0.02..=0.0).contains(&along) && out.length() < l.reach * 1.5 {
-                    sum += out.length();
-                    count += 1;
-                }
-            }
-        }
-        let r = if count > 0 { sum / count as f32 } else { l.reach * 0.5 };
-        world.get_mut::<Hurt>(who).unwrap().stumps.push((c, n, r));
-    }
-
     // Both ends closed, the blood, the hurt.
     let t_ends = std::time::Instant::now();
     let ends = ends(world, who, body, limb, side, c, n, prox, root_bone, how);
     let ends_ms = t_ends.elapsed().as_secs_f32() * 1000.0;
+    // The stump's end, for a dressing put on it: the skin's outline round the cut.
+    if let Some(k) = &ends.caps {
+        let rim = k.skin.iter().map(|&(x, y)| c + k.e1 * x + k.e2 * y).collect();
+        world.get_mut::<Hurt>(who).unwrap().stumps.push((c, n, rim));
+    }
     shape.start(world, who, ends.caps);
     entities.extend(ends.entities);
     let tip = root_bone;
@@ -590,7 +580,9 @@ fn split(world: &mut World, who: Entity, body_arc: &std::sync::Arc<Body>, limb: 
     let body = &**body_arc;
     let mut flesh = world.entity_mut(who).take::<Flesh>().unwrap();
     let vertices = body.position.len();
-    // Past the plane, and carried by the limb (or by the segment the cut is in, near the cut).
+    // Past the plane, and carried mostly by the limb (or by the limb and the segment the cut is in, near the cut). (Any of
+    // the limb's weight at all, or any of the segment's within twice the limb's reach, took the trousers' seat and crotch
+    // with a thigh cut off, and the cloth there was stretched into a flap from the piece back to where the body lay.)
     let past: Vec<bool> = (0..vertices).map(|v| {
         let d = body.position[v] - c;
         if d.dot(n) <= 0.0 {
@@ -609,7 +601,7 @@ fn split(world: &mut World, who: Entity, body_arc: &std::sync::Arc<Body>, limb: 
                 here += w;
             }
         }
-        limbs > 0.0 || (here > 0.0 && d.length_squared() < reach * reach * 4.0)
+        limbs >= 0.5 || (limbs + here >= 0.5 && d.length_squared() < (reach * NEAR).powi(2))
     }).collect();
     // Triangles: wholly past (the piece's), not at all (the body's), or across the plane (both, for skin and clothes,
     // which are cut at the plane; anything else goes with the side most of it is on).

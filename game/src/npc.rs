@@ -272,8 +272,8 @@ pub struct Hurt {
     // what the body keeps is carried by the bone the limb hung from); None, the file's.
     pub weights: Option<Arc<(Vec<[u16; 4]>, Vec<[u8; 4]>)>>,
     // The ends of the limbs cut off, at rest: the cut's middle, which way its plane faces (away from the body), and the
-    // stump's skin's mean distance from the middle (a dressing's, dressing.rs).
-    pub stumps: Vec<(Vec3, Vec3, f32)>,
+    // skin's outline round it, in order (a dressing's, dressing.rs).
+    pub stumps: Vec<(Vec3, Vec3, Vec<Vec3>)>,
     // The body held still for a burst of questions (`Npc::hold`, a grenade's fragments): the bones in the world worked
     // out once, and what trace asks of them, until `let_go`.
     held: Option<Arc<Held>>,
