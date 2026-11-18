@@ -653,6 +653,11 @@ impl Ragdoll {
                     Friction::coefficient(0.75),
                     Restitution::coefficient(0.02),
                     Damping { linear_damping: 0.05, angular_damping: 0.5 },
+                    // No gyroscopic term: Rapier's is explicit, given once a substep, and on a slender segment (a forearm's
+                    // turning inertia about its length is a tenth of that across it) held at a joint limit it turns the spin
+                    // the limit stops into spin about the other axes. A forearm on a joint taking 120 N m went 75 degrees
+                    // through a 5-degree limit with it and stayed within 3 without it (port/b-ragdoll, PORT.md).
+                    GyroscopicForces::disabled(),
                     Velocity::default(),
                     ExternalImpulse::default(),
                     ActiveEvents::COLLISION_EVENTS,
@@ -1459,13 +1464,20 @@ pub fn send(mut ragdolls: Query<&mut Ragdoll>, mut joints: Query<&mut ImpulseJoi
 // its contacts (off by default), and given sixteen passes: at eight the feet still crept 2.5 cm/s, at twelve the knee
 // still sagged 3 degrees, at sixteen it is within 2 and four people stood ten seconds within 2.5 to 10 cm of where
 // they were made (stand scenario).
+// A joint that has gone off is brought back at up to CORRECT a second (radians, metres; Rapier's 3 by default, which
+// its contacts share but only reach 16 to 32 cm deep). Rapier solves every joint before every contact in each pass, so
+// a hand pulled while the body under it is held by the floor leaves the arm's joints a little off at every substep,
+// and at 3 a second the drift outran the correction: dragged by the hand, a dead man's wrist went 42 degrees past its
+// range and his elbow 32 in plain Rapier (dev/ragdoll-replica), 1.5 at 30.
 fn solver(mut contexts: Query<&mut RapierContextSimulation, Added<RapierContextSimulation>>) {
     for mut c in &mut contexts {
         c.integration_parameters.warmstart_joints = true;
         c.integration_parameters.num_solver_iterations = SOLVER_PASSES;
+        c.integration_parameters.normalized_max_corrective_velocity = CORRECT;
     }
 }
 const SOLVER_PASSES: usize = 16;
+const CORRECT: f32 = 30.0;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, solver).configure_sets(FixedUpdate, (Steps::Push, Steps::Give).chain().before(PhysicsSet::SyncBackend))
