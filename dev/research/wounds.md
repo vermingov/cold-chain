@@ -386,6 +386,30 @@ Buckshot: single hole with scalloped edges at ~90 cm; a large gaping wound with 
 
 ---
 
+## 7a. Torn, not cut: wounds burst open, evisceration, blood in cloth (the play-test, 2026-11-18)
+
+The play-test's reports: holes "like a drilled tube" with neat rings of skin, fat and muscle; bowel "poking out as a
+cone" and "flat shards"; a shirt's stain "one dark blob with a hard jagged edge". What the real ones look like.
+
+| Fact | Detail | Tag |
+|---|---|---|
+| A wound burst from inside is a tear | Gas (contact shots) or a blast enters under the skin and lifts it before it splits: the hole's margins are ragged, often scalloped or split radially, and the tissue under the edge is torn back from it (undermined), the cavity under the skin wider than the hole. | S [DiMaio] (contact wounds; shotgun 5.1), [FM-smooth] |
+| Tissue bridges and tags | Torn wounds keep strands and tags of tissue across and in them; layers end at different depths round the wound rather than in clean bands. The clean banded face is a cut's (sec. 0). | S [Stahl77], [FM-slash] |
+| Contact shotgun to the trunk | One round hole about the bore, seared edge, a wide raw abraded margin; inside, a ragged cavity full of blood and torn tissue with the wad in it. Not a tube one can see down. | S [DiMaio] 5.1 |
+| Contact shotgun / rifle to the head | Bursting: scalp torn in large flaps, stellate splits radiating from the defect, brain pulped and thrown out. | S [DiMaio] 4.5, 5.1 |
+| Evisceration | Through a wound in the abdominal wall large enough, loops of small bowel or omentum push out, still on their mesentery, wet and glistening, and hang or lie on the body with gravity; through a small one at most a knuckle of bowel or a tag of omentum or fat plugs it. Omentum is the commonest thing out (75 % of 81 stab eviscerations). | S [PubMed 10528593], viscera.rs |
+| Blood in cotton | Blood is drawn into the yarns by capillarity and travels along them faster than across: a stain on woven cloth has a feathered edge that follows the warp and weft, not a smooth or cut-out one. Its centre, where blood keeps coming, is saturated and nearly black-red; the edge carries less and reads lighter red. | E (bloodstain pattern analysis on fabric, as generally taught; no source read here) |
+| Serum halo | Plasma wicks further than the cells: a pale, damp halo can lie ahead of the red edge on absorbent fabric. | E (as above; its width a few mm) |
+| Drying | A drying blood film carries cells to its edge (coffee-ring): a dried stain is darker at its rim than its middle, and browns. | S Brutin et al., J. Fluid Mech. 2011, "Pattern formation in drying drops of blood" (from memory, not re-read) |
+
+### What to draw: torn wounds and stains
+
+- [x] Burst openings: a ragged, lobed edge with short splits (viscera.rs `torn`, the skin's hole and the wall's top one line), the fat under it undermined, the layers ending at different depths, all of it under blood and clot (wall.rs, wall.wesl), and the cavity closed behind (no see-through)
+- [x] Organs only where seen through the hole; bowel only out through a hole wide enough for a doubled loop (viscera.rs)
+- [x] Cloth stains: dark and full in the middle, thinning to a soft edge that creeps along the threads, a damp halo, a darker rim drying (fluid.wesl `stained`)
+
+---
+
 ## 8. Ante-mortem vs post-mortem wounds (what a player could see)
 
 | Feature | Inflicted in life | Inflicted after death | Tag |

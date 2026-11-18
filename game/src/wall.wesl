@@ -198,7 +198,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         // Torn tissue bleeds from every face and the blast drives blood into it: most of it under a film of blood and
         // clot, the pale fat and the white of fascia showing through in tags and patches.
         let clot = mix(0.5, wall_noise(p * 70.0 + 21.0) * 0.6 + wall_noise(p * 240.0 + 2.0) * 0.4, fade(240.0, px));
-        mm += 0.02 + 0.25 * smoothstep(0.35, 0.75, clot) + 0.04 * oozes;
+        mm += 0.05 + 0.3 * smoothstep(0.25, 0.6, clot) + 0.04 * oozes;
     }
     pbr_input.material.base_color = vec4(blood_over(wall, mm, 1.0), 1.0);
     let wall_gloss = mix(gloss, 0.75, clamp(mm * 10.0, 0.0, 1.0));

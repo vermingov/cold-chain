@@ -41,14 +41,15 @@ fn fire(name: &'static str, n: usize, part: &'static str, far: f32, weapon: &'st
         act(move |w| crate::warm::take(w, weapon)),
         Step::Wait(90),
         act(move |w| {
-            // (Then the eye moved so that the bore, which is held some 9 cm right of it and 12 below, runs through the
-            // part rather than the eye's line: close up, that is the difference between the belly and the flank.)
+            // (Then looked at a point 9 cm left of the part and 12 above it, so that the bore, which is held that far
+            // right of the eye and below it, runs through the part: close up, that is the difference between the belly
+            // and the flank, or the head and the chest.)
             let Some((_, at)) = crate::warm::aim(w, n, part, far) else { return };
             for mut p in w.query::<&mut Player>().iter_mut(w) {
-                p.pos.x -= 0.09;
-                p.stand += 0.12;
                 let eye = p.eye().translation;
-                let d = at - eye;
+                // (The head's segment starts at the neck: its vault, where a charge bursts the skull, is some 12 cm up.)
+                let up = if part == "head" { 0.12 } else { 0.0 };
+                let d = at + Vec3::new(-0.09, 0.12 + up, 0.0) - eye;
                 p.yaw = (-d.x).atan2(-d.z);
                 p.pitch = d.y.atan2(d.x.hypot(d.z));
             }
