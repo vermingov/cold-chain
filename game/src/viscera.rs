@@ -125,7 +125,8 @@ fn shown(kind: &str, name: &str) -> bool {
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 pub struct Wet {
-    // Its colour (linear) and what it is: vessels, mottle, fat, and 1 for an organ (0: a rope of bowel, its picture its own).
+    // Its colour (linear) and what it is: vessels, mottle, fat, and 1 for an organ (2 the brain, folded; 0: a rope of
+    // bowel, its picture its own).
     #[uniform(100)]
     pub base: Vec4,
     #[uniform(100)]
@@ -1057,7 +1058,7 @@ impl Looks {
         // seen down a hole into the belly.)
         let h = materials.add(ExtendedMaterial {
             base: StandardMaterial { base_color: Color::WHITE, metallic: 0.0, perceptual_roughness: rough, ..default() },
-            extension: Wet { base: linear(c), look: Vec4::new(vessels, mottle, fat, 1.0) },
+            extension: Wet { base: linear(c), look: Vec4::new(vessels, mottle, fat, if kind == "brain" { 2.0 } else { 1.0 }) },
         });
         self.organs.push((kind.to_string(), h.clone()));
         h

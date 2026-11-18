@@ -1284,3 +1284,93 @@ it, so the samples of the very frames could be cut out (`perf script --time`). N
   the async compute pool, bevy_render `create_pipeline_task`, not these threads), so this stall should not happen there. Not measured on a real machine.
   Nothing was changed: what the scenario numbers after a blast show as PostUpdate is partly the render world's first-use
   compiles; read the profile's `compiles` beside it.
+
+## People, stumps and the loose ends (BACKLOG items 5 and 3, item 7's loose ends; branch port/b-people)
+
+### The cast (item 5)
+The man in the hood is gone; in his place two (sandbox.rs `BODIES`, five now, 1.5 m apart as before):
+- **white**, "Man in white": early twenties, MakeHuman's own T-shirt and jeans (`male_casualsuit02`, CC0) recoloured
+  white (people.py `tint`) with its printed MakeHuman logo painted over by the shirt's own cloth (`erase`), shoes04,
+  brows eyebrow008, 76 kg. Cries with the hood's takes (sandbox.rs `voice`: the young, energetic voice).
+- **naked**, "Naked man": forties, nothing on, 81 kg, his head shaved to the stubble his skin paints (no hair proxy:
+  short03 was a bob). His skin is jartur69's CC0 middle-aged man (skins02) with his body hair, beard stubble and
+  genitals painted. MakeHuman dropped its genital proxies (and they were AGPL); its base
+  mesh still carries the male genitals as a CC0 helper (`helper-genital`, 182 quads, penis in front of the scrotum),
+  which people.py `genitals` smooths twice (Catmull-Clark, 2912 quads), weights from the helper's own MakeHuman
+  weights, and lays on the skin picture's genital islands (the shaft unrolled round its axis, the glans round its
+  opening, the scrotum's wrinkled skin); drawn as part of his skin (one part, its corners after the body's). He cries
+  with the groundskeeper's takes: there is no voice of his own (cries are Fish Audio takes, tools/cries.py; making one
+  is a new take, not something to synthesise).
+- Insides (tools/anatomy.py): everyone now has a prostate and seminal vesicles (kinds `prostate`, `gland`); the naked
+  man has the corpora cavernosa, corpus spongiosum and glans (kind `penis`) and the testes with their epididymes
+  (`testis`), the penis carried along his own shaft (the source's lies forward from the pubis; each point past where it
+  leaves the body goes as far along his shaft and as far out from its middle, scaled to its width, the root in the
+  perineum moved with it) and each testis into its half of the scrotum. The x-ray's looks and wounds.rs's bleeding and
+  size have the new kinds.
+- Not modelled, said plainly: pubic and body hair are painted on the skin, not strands; no foreskin or erectile
+  behaviour; the urethra is not a part of its own. No other source for genital geometry under CC0/CC-BY was found
+  (the MakeHuman community packs have skins with genitals painted, no meshes).
+- Every place that named the hood: the scenarios (face.rs, head_scenario.rs, skin.rs, cut_scenario.rs: index 3 is the man
+  in white now), `blasts` (weapons.rs: the line-up's last two by `BODIES.len()`), the people and blood scenarios'
+  positions (they assumed four), sound.rs and face.rs (the voice by `sandbox::voice`).
+
+### Stumps (item 3)
+`stumps` (cut_scenario.rs) cuts every limb at every place (both hands, forearms, upper arms, feet, shins, thighs and the
+head) over the five, then shows each stump and piece from its end and two sides, the same in the x-ray, then dresses each
+stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and the causes:
+- **The x-ray's bones stretched from the stump to the piece** (the user's screenshot: a forearm's radius and ulna a metre
+  long). Each x-ray corner hangs wholly from one bone, by the triangle it was last written for (anatomy.rs `build`): a
+  long bone's two halves (the bone and its mid bone) shared their corners at the middle, and nothing about a cut ever
+  reached the x-ray. A cut now gives the person their own copy of each changed look with every corner on the bone
+  that carries it after the cut (dismember.rs `CutOff::carrier`: on the piece, the piece's; on the body, the body's),
+  and stops drawing the triangles the cut goes through (a corner each side), which the cut faces close (anatomy.rs
+  `cut`). What medicine traces (`Hurt::traced`) is regrouped the same way, so a shot into the piece meets its bones where
+  they lie, and the vessels' points too.
+- **A dressing on a stump stretched into a bar to the piece** (the user's second screenshot). `gauze` laid every dressing
+  on the file's skin with the file's weights, so the skin that went with the piece, still carried by the piece's bones,
+  went into the roll. Now it is laid on the person's own flesh after cuts (flesh.rs `Flesh`: what is still drawn, its
+  weights), never on a triangle a cut runs through; and a wound at a stump's end gets a stump dressing
+  (`Covers::Stump`): the roll wound from the end 10 cm back up the stump and the gauze folded over the end, a low dome
+  shaped by the skin's outline at the cut (`Hurt::stumps`), on the bone the limb hung from; its picture runs from the
+  end's middle out over the rim and up the stump, so the blood spreads from the middle. (dressing.rs said "a stump:
+  phase 3's": nothing had been done for one.)
+- **The trousers' seat went with a thigh** and was stretched into a flap from the piece to the body: `split` put on the
+  piece any corner past the plane with any weight on the limb's bones, or any on the segment's within twice the reach
+  (30 cm for a thigh: the crotch). Now the limb must carry half of a corner, or the limb and the segment together half
+  of it within 1.3 of the reach (`NEAR`); the x-ray's test is the same.
+- Looked at and left: the stump's sleeve or trouser leg ends at the plane a little proud of the cut face (cloth is wider
+  than the limb: it is drawn so); a blade's cut face shows the bones' sections, the muscle compartments and the arteries
+  round, and spurts; the pieces lie and roll as bodies. No hole, stretched skin, spike or floating piece in the 13 cuts'
+  78 pictures and 26 x-ray pictures of the last run (all three fixes in); the overalls' baggy seat still flares a
+  little at the top of the groundskeeper's severed thigh, as the cloth hung there. Some pictures look from inside a
+  body that fell over the stump (the scenario's eye is placed by the cut's own direction, not round what lies there).
+- Dressed stumps (`stumps-dressed`, each stump's bleeding out of its end before and just after, ml/s): hand 13.4 -> 3.0,
+  forearm 28.3 -> 6.4, upper arm 27.7 -> 6.2, foot 19.2 -> 4.3, shin 24.9 -> 5.5, thigh 69.0 -> 15.5, neck 39.9 -> 9.6;
+  ten seconds on, the gauze full (13 to 62 ml) and the rest running out from under it. That is DRESSED's figures
+  (arterial 0.35, venous 0.05): a pressure dressing slows a stump's bleeding and does not stop an artery; a thigh's
+  still bleeds out in a few minutes, as without a tourniquet it would (a tourniquet is not in the game).
+
+### The loose ends (item 7)
+- **The brain like crumpled shards**: tools/anatomy.py thinned the cerebrum's 34 gyri and lobes as one mesh into 8 mm
+  cells, which merged corners of neighbouring gyri across the sulci and turned triangles over (a render of the part
+  from three sides: hundreds facing inward), and its `gyrus$` pattern took two branches of the middle cerebral artery
+  as brain. Now each gyrus is thinned by itself at 4 mm (21 400 corners, 44 500 triangles, was 3 100 and 12 800) and
+  the arteries are left out; organs.wesl folds the brain's surface into gyri a centimetre across with dark sulci
+  (`look.w` 2), the pia's vessels as before. Seen through the rifle's exit: the two occipital lobes and the fissure
+  between them, glistening, with vessels.
+- **Faint bloodshot**: the vessels were where a warped noise crossed its middle, lines a twentieth of a cell wide: under
+  a pixel at any distance, so the white was only pink. Now 24 trunks, 60 branches and 110 fine vessels counted round the
+  eye, winding in from the edges toward the cornea, each at least a pixel wide (eye.wesl `bloodshot`), and a slight
+  redness already shows (`red` to the power 0.6).
+- **Zigzag vomit**: a stream's points were let go along this frame's direction from this frame's mouth: a head turning
+  as it vomited (its mouth moving 1.6 cm a frame) laid each frame's points out as a straight piece of its own, a step
+  from the last, a staircase. Now each point is let go from where the source was at its moment and the way it pointed
+  then (between last frame's and this one's), carrying the source's own speed (blood.rs `stream`); and a vomit leaves
+  at one speed for the whole vomit from the middle of the mouth (throat.rs `gush`: it was drawn afresh every frame from
+  the lowest of the three outlets). Once the steps were gone the rope still had long straight pieces with corners: it
+  was drawn between any two points within 5 cm, across the gaps where points between had broken into drops or landed;
+  now only between points still joined (`Stream::joined`). Arterial jets from a moving limb are the same streams.
+- **Drops as dark balls**: drops in the air were a pool's surface (fluid.rs DROP, sRGB about 77, 28, 27), opaque, lit
+  only from the front: a dark ball with a white point. Now a drop's own depth of blood, linear 0.17 red, and lit through
+  (`diffuse_transmission` 0.55, red attenuation over 1.5 mm): across or against a lamp they glow red. A rounder sphere
+  (12 by 8).

@@ -53,9 +53,11 @@ pub struct Throat {
     // Retches still to come before the vomit.
     pub heaves: u32,
     pub heave_t: f32,
-    // Seconds left of a vomit, and the ml coming up out of the stomach in it.
+    // Seconds left of a vomit, the ml coming up out of the stomach in it, and the speed it leaves the mouth at (m/s: one
+    // for the whole vomit, the force behind it being the belly's).
     pub vomiting: f32,
     pub emptying: f32,
+    pub gush: f32,
     // Degrees the jaw is forced open by a retch or a vomit (face.rs), and how far the body folds over (behaviour.rs).
     pub gape: f32,
     pub retch: f32,
@@ -508,6 +510,7 @@ impl ThroatOf<'_, '_> {
                     t.vomiting = EMPTIES;
                     let stomach = t.stomach;
                     self.t().emptying = stomach * (0.6 + 0.3 * self.0.dice.next());
+                    self.t().gush = 1.6 + 0.8 * self.0.dice.next();
                     self.sound("vomit", 1.0);
                     if !self.0.vitals.injuries.iter().any(|i| i.text == "Vomiting blood") {
                         self.0.vitals.injure("Vomiting blood", 5.0);
@@ -554,9 +557,19 @@ impl ThroatOf<'_, '_> {
     // few at rest: Cobb et al. 2005, viscera.rs). Most of that is spent in the gullet and the throat, and it leaves the
     // mouth at a couple of metres a second, out the way the mouth faces (an estimate: no study measures it): a gush as
     // wide as the gaping mouth lets it be, not a trickle down the chin.
+    //
+    // It leaves from the middle of the mouth's opening at the vomit's own speed. (Thrown from the lowest of the three
+    // outlets at a speed drawn afresh each frame, the rope's points were let go a mouth's width apart as the head turned
+    // and one frame's overtook the last's: the rope folded back and forth on itself, a zigzag.)
     fn gush(&mut self, ml: f32, dt: f32) {
-        let Some((hit, at, out)) = self.lowest() else { return };
-        let speed = 1.6 + 0.8 * self.0.dice.next();
+        let Some((hit, _, _)) = self.lowest() else { return };
+        let t = &self.0.hurt.throat;
+        if t.outlets.is_empty() {
+            return;
+        }
+        let at = t.outlets.iter().map(|o| self.0.rest_to_world(o.owner).transform_point3(o.rest)).sum::<Vec3>() / t.outlets.len() as f32;
+        let out = t.centre.map_or(Vec3::ZERO, |(rest, owner)| (at - self.0.rest_to_world(owner).transform_point3(rest)).normalize_or_zero());
+        let speed = if t.gush > 0.0 { t.gush } else { 2.0 };
         let q = (ml * 0.8 * 1e-6) / dt;
         let r = (q / (std::f32::consts::PI * speed)).sqrt().clamp(0.004, 0.02);
         let fwd = self.0.hurt.throat.fwd;

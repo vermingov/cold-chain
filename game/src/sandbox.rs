@@ -17,14 +17,15 @@ use crate::ragdoll::Ragdoll;
 use crate::rng::Rng;
 use crate::vitals::Vitals;
 
-pub const BODIES: [&str; 4] = ["oldman", "sexton", "buyer", "hood"];
+pub const BODIES: [&str; 5] = ["oldman", "sexton", "buyer", "white", "naked"];
 
 pub fn called(body: &str) -> &'static str {
     match body {
         "oldman" => "Old man",
         "sexton" => "Groundskeeper",
         "buyer" => "Young man",
-        _ => "Man in a hood",
+        "white" => "Man in white",
+        _ => "Naked man",
     }
 }
 
@@ -34,7 +35,18 @@ fn mass(body: &str) -> f32 {
         "oldman" => 72.0,
         "sexton" => 80.0,
         "buyer" => 86.0,
-        _ => 82.0,
+        "white" => 76.0,
+        _ => 81.0,
+    }
+}
+
+// Whose cries (assets/cries, tools/cries.py) a body cries with. The man in white has the young, energetic voice the man
+// in the hood had; the naked man has no takes of his own and borrows the groundskeeper's middle-aged one.
+pub fn voice(body: &str) -> &str {
+    match body {
+        "white" => "hood",
+        "naked" => "sexton",
+        b => b,
     }
 }
 

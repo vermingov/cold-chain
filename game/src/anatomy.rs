@@ -119,6 +119,7 @@ const LOOKS: &[(&str, [f32; 3])] = &[
     ("colon", [0.75, 0.55, 0.45]), ("bladder", [0.85, 0.75, 0.55]), ("pancreas", [0.85, 0.7, 0.5]), ("gallbladder", [0.3, 0.45, 0.2]),
     ("adrenal", [0.85, 0.6, 0.2]), ("muscle", [0.55, 0.15, 0.12]), ("airway", [0.85, 0.75, 0.7]), ("oesophagus", [0.8, 0.5, 0.45]),
     ("artery", [0.75, 0.05, 0.05]), ("vein", [0.2, 0.15, 0.45]), ("cord", [0.92, 0.88, 0.7]),
+    ("prostate", [0.7, 0.42, 0.36]), ("gland", [0.8, 0.62, 0.5]), ("penis", [0.6, 0.18, 0.2]), ("testis", [0.82, 0.7, 0.62]),
 ];
 
 // Every body's insides, read once, and the x-ray's looks.
@@ -134,6 +135,7 @@ pub struct Anatomy {
 // One look's mesh of a body's x-ray, shared by everyone of that body until their own is changed: each corner of the file
 // it keeps (`local`, u32::MAX for the rest) and the parts drawn in it. `source` is a copy of the mesh for a person's own
 // copies to be made from on another thread (`regroup`).
+#[derive(Clone)]
 pub struct LookMesh {
     pub look: usize,
     pub mesh: Handle<Mesh>,
@@ -421,6 +423,101 @@ pub fn regroup(
     }
 }
 
+// A limb cut off person `who` (dismember.rs): their insides carried from now on by the bones on each side of the cut
+// (`CutOff::carrier`), in the x-ray and in what medicine traces. The x-ray's corners each hang wholly from one bone and
+// were shared by triangles hung from different ones (a long bone's halves meet at the middle; a forearm cut off took the
+// lower half's bone and left the upper's, and the triangles where they met, and every triangle past the cut still on
+// the upper half's bone, stretched a spike from the stump to the hand on the floor). Each look's corners are given the
+// bone that carries them now, and the triangles the cut goes through (a corner on each side) are no longer drawn: the
+// stump's end and the piece's are closed by the cut faces (cutface.rs), which show the bone's section.
+pub fn cut(world: &mut World, who: Entity, cut: &crate::dismember::CutOff) {
+    let Some(insides) = world.get::<Person>(who).map(|p| p.insides) else { return };
+    let Some(traced) = world.get::<crate::npc::Hurt>(who).map(|h| h.traced.clone()) else { return };
+    // What medicine traces: each part's triangles regrouped by the bone that carries them now (a group whose bone changed
+    // keeps its place in the list, so a part's index means what it did; a new group goes on the end).
+    let mut parts = traced.parts.clone();
+    let mut more = Vec::new();
+    for tp in &mut parts {
+        let mut groups: Vec<(usize, Vec<u32>)> = Vec::new();
+        for &i in tp.clusters.iter().flat_map(|c| c.tris.iter()) {
+            let t = &traced.index[i as usize..i as usize + 3];
+            let mid = (traced.position[t[0] as usize] + traced.position[t[1] as usize] + traced.position[t[2] as usize]) / 3.0;
+            let owner = cut.carrier(mid, tp.owner);
+            match groups.iter_mut().find(|g| g.0 == owner) {
+                Some(g) => g.1.push(i),
+                None => groups.push((owner, vec![i])),
+            }
+        }
+        if groups.len() == 1 && groups[0].0 == tp.owner {
+            continue;
+        }
+        let first = groups.iter().position(|g| g.0 == tp.owner).unwrap_or(0);
+        for (k, (owner, tris)) in groups.into_iter().enumerate() {
+            let clusters = cluster(&traced.position, &traced.index, tris);
+            let lo = clusters.iter().fold(Vec3::INFINITY, |a, c| a.min(c.lo));
+            let hi = clusters.iter().fold(Vec3::NEG_INFINITY, |a, c| a.max(c.hi));
+            let part = TracedPart { owner, clusters, lo, hi, ..tp.clone() };
+            if k == first {
+                *tp = part;
+            } else {
+                more.push(part);
+            }
+        }
+    }
+    parts.extend(more);
+    let tubes = traced.tubes.iter().map(|t| TracedTube { points: t.points.iter().map(|&(p, r, b)| (p, r, cut.carrier(p, b))).collect(), ..t.clone() }).collect();
+    let now = std::sync::Arc::new(Traced { parts, tubes, position: traced.position.clone(), index: traced.index.clone(), source: traced.source.clone() });
+    if let Some(mut h) = world.get_mut::<crate::npc::Hurt>(who) {
+        h.traced = now;
+    }
+
+    // The x-ray: this person's own copy of each look whose corners changed bone.
+    let Some(mut x) = world.get_mut::<Xray>(insides) else { return };
+    let mut looks: Vec<LookMesh> = x.looks.iter().cloned().collect();
+    let mut across: Vec<(u32, usize)> = Vec::new();
+    let mut changed = Vec::new();
+    for (l, lm) in looks.iter_mut().enumerate() {
+        let Some(VertexAttributeValues::Uint16x4(was)) = lm.source.attribute(Mesh::ATTRIBUTE_JOINT_INDEX) else { continue };
+        let mut joints = was.clone();
+        let mut piece = vec![false; joints.len()];
+        let mut any = false;
+        for (v, &k) in lm.local.iter().enumerate() {
+            if k == u32::MAX {
+                continue;
+            }
+            let (p, b) = (traced.position[v], joints[k as usize][0] as usize);
+            piece[k as usize] = cut.on_piece(p, b);
+            let now = cut.carrier(p, b) as u16;
+            if now != joints[k as usize][0] {
+                joints[k as usize][0] = now;
+                any = true;
+            }
+        }
+        for &pi in &lm.parts {
+            let part = &traced.source[pi];
+            for i in (part.index_start..part.index_start + part.index_count).step_by(3) {
+                let side = |q: usize| piece[lm.local[traced.index[i + q] as usize] as usize];
+                if side(0) != side(1) || side(0) != side(2) {
+                    across.push((i as u32, pi));
+                }
+            }
+        }
+        if any {
+            let mut mesh = (*lm.source).clone();
+            mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(joints));
+            lm.source = std::sync::Arc::new(mesh);
+            changed.push(l);
+        }
+    }
+    x.looks = std::sync::Arc::new(looks);
+    for l in changed {
+        x.stale[l] = true;
+    }
+    for (i, pi) in across {
+        x.hide(&traced.index, &[i], pi);
+    }
+}
+
 // X: everyone's insides shown through them, the skin and clothes all but gone (sandbox.ts see).
 #[derive(Resource, Default)]
 pub struct Seeing(pub bool);
@@ -478,6 +575,7 @@ pub fn plugin(app: &mut App) {
 const CLUSTER: usize = 48; // triangles to a box of the coarse tree each part's triangles are sorted into
 
 // A box of a part's triangles (offsets into the index), in rest space.
+#[derive(Clone)]
 pub struct Cluster {
     pub lo: Vec3,
     pub hi: Vec3,
@@ -486,6 +584,7 @@ pub struct Cluster {
 
 // A part as it is traced: the triangles of one part carried by one bone (a long bone is two, its halves on the bone and
 // its mid bone: `half`), sorted into clusters, and the box round all of them.
+#[derive(Clone)]
 pub struct TracedPart {
     pub name: String,
     pub kind: String,
@@ -498,6 +597,7 @@ pub struct TracedPart {
     pub hi: Vec3,
 }
 
+#[derive(Clone)]
 pub struct TracedTube {
     pub name: String,
     pub kind: String,

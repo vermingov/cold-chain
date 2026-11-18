@@ -300,8 +300,8 @@ pub fn steps(part: &str) -> Vec<Step> {
         }), 60));
         s.push(Step::Wait(3));
         s.extend(mouth("cough", o, 0.7, 0.1, 70.0));
-        // 4. The man in the hood with a stomach full of blood: the retches, then the vomit, from the side.
-        let h = "hood";
+        // 4. The man in white with a stomach full of blood: the retches, then the vomit, from the side.
+        let h = "white";
         s.push(with(h, |n| {
             n.hurt.throat.stomach = 600.0;
             n.hurt.throat.nausea = 0.999;
@@ -341,8 +341,8 @@ pub fn steps(part: &str) -> Vec<Step> {
             n.slash_through(&points, 0.02, across);
         }));
         s.push(bleeds("knife across the throat", "buyer"));
-        s.push(neck("hood", Vec3::NEG_Z, |n, at, d| { crate::wounds::blow(n, at, d, 0.79, 15.0, None); }));
-        s.push(bleeds("bat into the throat", "hood"));
+        s.push(neck("white", Vec3::NEG_Z, |n, at, d| { crate::wounds::blow(n, at, d, 0.79, 15.0, None); }));
+        s.push(bleeds("bat into the throat", "white"));
         s.push(Step::Wait(90));
         s.extend(face("neck_knife", "buyer", 0.0, 0.45));
     }
@@ -358,7 +358,7 @@ pub fn steps(part: &str) -> Vec<Step> {
             ("oldman", 0.0, 0.0, "sword_eyes", "sword_eyes_side"),
             ("sexton", -0.065, 0.0, "sword_mouth", "sword_mouth_side"),
             ("buyer", -0.1, 0.0, "sword_chin", "sword_chin_side"),
-            ("hood", -0.04, 30.0, "sword_slant", "sword_slant_side"),
+            ("white", -0.04, 30.0, "sword_slant", "sword_slant_side"),
         ] {
             s.push(sword(body, height, tilt));
             s.push(taken());
@@ -391,7 +391,7 @@ pub fn steps(part: &str) -> Vec<Step> {
             s.push(Step::Shot(name.into()));
         }
         s.extend(dark(120));
-        for (body, name) in [("oldman", "sword_eyes_later"), ("sexton", "sword_mouth_later"), ("buyer", "sword_chin_later"), ("hood", "sword_slant_later")] {
+        for (body, name) in [("oldman", "sword_eyes_later"), ("sexton", "sword_mouth_later"), ("buyer", "sword_chin_later"), ("white", "sword_slant_later")] {
             s.extend(face(name, body, 20.0, 0.5));
         }
     }
@@ -402,7 +402,7 @@ pub fn steps(part: &str) -> Vec<Step> {
         }
         // A rifle bullet through the old man's head from the front (the exit behind), a shotgun's charge at contact
         // range into the groundskeeper's temple (as weapons.rs fires it within a metre: one heavy missile), a bat on the
-        // young man's crown, a sword's cut across the hooded man's forehead; each opening close up.
+        // young man's crown, a sword's cut across the man in white's forehead; each opening close up.
         s.push(shoot("oldman", "head", Vec3::new(0.0, 0.07, 0.0), Vec3::new(0.0, 0.0, 1.0), "rifle"));
         s.push(bleeds("rifle through the head", "oldman"));
         s.push(with("sexton", |n| {
@@ -426,13 +426,16 @@ pub fn steps(part: &str) -> Vec<Step> {
             }
         }));
         s.push(bleeds("bat on the crown", "buyer"));
-        s.push(sword("hood", 0.07, 0.0));
-        s.push(bleeds("sword across the forehead", "hood"));
+        s.push(sword("white", 0.07, 0.0));
+        s.push(bleeds("sword across the forehead", "white"));
         s.push(taken());
         s.push(Step::Wait(30));
-        for (name, body) in [("skull_rifle", "oldman"), ("skull_shotgun", "sexton"), ("skull_sword", "hood")] {
+        // (Nothing in the hand: the gun stood in front of the openings.)
+        s.push(act(|w| crate::warm::take(w, "hands")));
+        for (name, body) in [("skull_rifle", "oldman"), ("skull_shotgun", "sexton"), ("skull_sword", "white")] {
             s.extend(opening(name, body, 0.25));
             s.extend(opening(Box::leak(format!("{name}_close").into_boxed_str()), body, 0.14));
+            s.extend(opening(Box::leak(format!("{name}_near").into_boxed_str()), body, 0.08));
         }
         for (name, body, turn) in [("skull_rifle_front", "oldman", 0.0), ("skull_bat", "buyer", 0.0)] {
             s.extend(face(name, body, turn, 0.4));
@@ -448,7 +451,7 @@ pub fn steps(part: &str) -> Vec<Step> {
         }
         // A punch onto the old man's left eye (not hard enough to knock him out), a knife's edge drawn across the
         // groundskeeper's right eye, a pistol bullet across the young man's face under his eyes (through both cheekbones,
-        // past the eyes, not through them), a bat's end into the hooded man's left eye; then the old man dead, and ten
+        // past the eyes, not through them), a bat's end into the man in white's left eye; then the old man dead, and ten
         // minutes on.
         s.push(with("oldman", |n| {
             let b = n.bone_index("eye.L");
@@ -475,7 +478,7 @@ pub fn steps(part: &str) -> Vec<Step> {
             n.slash_through(&points, 0.012, across);
         }));
         s.push(shoot("buyer", "eye.L", Vec3::new(-0.06, -0.022, 0.0), Vec3::new(1.0, 0.0, 0.0), "pistol"));
-        s.push(with("hood", |n| {
+        s.push(with("white", |n| {
             let b = n.bone_index("eye.L");
             let rot = n.segment("head").map_or(Quat::IDENTITY, |k| n.segment_world(k).rotation);
             let ahead = rot * Vec3::NEG_Z;
@@ -484,7 +487,7 @@ pub fn steps(part: &str) -> Vec<Step> {
                 crate::wounds::blow(n, skin.point, -ahead, 0.79, 10.0, Some(crate::wounds::Tool::Named("bat")));
             }
         }));
-        for (who_, n) in [("oldman", "punch"), ("sexton", "knife"), ("buyer", "under the eyes"), ("hood", "bat")] {
+        for (who_, n) in [("oldman", "punch"), ("sexton", "knife"), ("buyer", "under the eyes"), ("white", "bat")] {
             s.push(bleeds(n, who_));
         }
         // (The lids held open for the pictures, as whoever looks at a hurt eye holds them: a hurt eye clamps shut.)
@@ -505,14 +508,14 @@ pub fn steps(part: &str) -> Vec<Step> {
             log(w, v);
         };
         s.push(Step::Wait(120));
-        for (name, body) in [("eye_punch", "oldman"), ("eye_knife", "sexton"), ("eye_under", "buyer"), ("eye_bat", "hood")] {
+        for (name, body) in [("eye_punch", "oldman"), ("eye_knife", "sexton"), ("eye_under", "buyer"), ("eye_bat", "white")] {
             s.push(open());
             s.push(Step::Wait(2));
             s.push(act(move |w| eyes(w, name, body)));
             s.extend(face(name, body, 0.0, 0.1));
         }
         s.extend(dark(60 * 60));
-        for (name, body) in [("eye_punch_later", "oldman"), ("eye_knife_later", "sexton"), ("eye_under_later", "buyer"), ("eye_bat_later", "hood")] {
+        for (name, body) in [("eye_punch_later", "oldman"), ("eye_knife_later", "sexton"), ("eye_under_later", "buyer"), ("eye_bat_later", "white")] {
             s.push(open());
             s.push(Step::Wait(2));
             s.push(act(move |w| eyes(w, name, body)));

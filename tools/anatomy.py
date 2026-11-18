@@ -24,6 +24,7 @@ name, kind, path [[x, y, z, radius], ...], bones [name per point].
 
 import json
 import os
+import re
 import struct
 import sys
 
@@ -61,7 +62,22 @@ TRUNK = [(n, k, p, c) for n, k, p, c in ORGANS if n not in ('spine', 'pelvis', '
     ('left clavicle', 'bone', [r'^Left clavicle$'], 3.0),
     ('right scapula', 'bone', [r'^Right scapula$'], 5.0),
     ('left scapula', 'bone', [r'^Left scapula$'], 5.0),
+    ('prostate', 'prostate', [r'^Prostate$'], 2.5),
+    ('seminal vesicles', 'gland', [r'^(Left|Right) seminal vesicle$'], 2.5),
 ]
+
+# The genitals, for a person whose own are drawn (tools/people.py `genitals`: the header's `genitals`, the shaft's middle
+# line and each half of the scrotum): the erectile bodies and the glans, the testes with their epididymes. The source's
+# penis lies forward from the pubis; ours hangs: each part's points past where it leaves the body (`LEAVES` of the way
+# from its root to its tip) are carried along the person's own shaft, as far along it as they were along the source's
+# and as far out from its middle as they were, scaled to its width; the root inside the body comes with them gradually.
+GENITALS = [
+    ('corpora cavernosa', 'penis', [r'^Corpus cavernosum of penis$'], 2.5),
+    ('corpus spongiosum', 'penis', [r'^Corpus spongiosum of penis$', r'^Glans penis$'], 2.5),
+]
+TESTES = [(f'{s.lower()} testis', 'testis', [rf'^{s} testis$', rf'^{s} epididymis$'], 2.0) for s, _ in SIDES]
+LEAVES = 0.56       # the source's penis leaves the body in front of the symphysis this far along it from its root
+INSIDE = 0.82       # of the shaft's radius that the erectile bodies fill (the rest skin, dartos and fascia)
 
 # The lungs are not in the source as solids, only their airways: each lung is the hull round its bronchial tree,
 # swollen out to where the pleura would be.
@@ -92,7 +108,7 @@ HEAD = [
     ('hyoid bone', 'bone', [r'^Hyoid bone$'], 2.0),
     ('thyroid cartilage', 'cartilage', [r'^Thyroid cartilage$'], 3.0),
     ('cricoid cartilage', 'cartilage', [r'^Cricoid cartilage$'], 2.5),
-    ('brain', 'brain', [r'gyrus$', r'^(Left|Right) occipital lobe$', r'^Orbital gyrus$', r'^White matter of (left|right) cerebral hemisphere$'], 8.0),
+    ('brain', 'brain', [r'^(?!Branch).*gyrus$', r'^(Left|Right) occipital lobe$', r'^White matter of (left|right) cerebral hemisphere$'], 4.0),
     ('cerebellum', 'brain', [r'^Cerebellum$'], 6.0),
     ('brainstem', 'brainstem', [r'^Medulla oblongata$', r'^Pons$', r'^Midbrain$'], 4.0),
     ('atlas', 'bone', [r'^Atlas$'], 3.0),
@@ -474,7 +490,69 @@ def main():
         faces[inward] = faces[inward][:, ::-1]
         add(name, 'lung', 'spine01', corners, faces)
 
+    if 'genitals' in header:
+        shaft = np.array(header['genitals']['shaft'])
+        line, radius = shaft[:, :3], shaft[:, 3]
+        along = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))])
+        along /= along[-1]
+        lat = np.array([1.0, 0.0, 0.0])
+        raw = {name: thin(*read_named(source, names, patterns), cell) for name, _, patterns, cell in GENITALS}
+        whole = carry_mm(np.concatenate([c for c, _ in raw.values()]))
+        # (The source's axis: from the root of the crura to the end of the glans, the point of it furthest from them.)
+        glans = carry_mm(read_named(source, names, [r'^Glans penis$'])[0])
+        root = whole[np.argmax(np.linalg.norm(whole - glans.mean(axis=0), axis=1))]
+        tip = glans[np.argmax(np.linalg.norm(glans - root, axis=1))]
+        axis = (tip - root) / np.linalg.norm(tip - root)
+        up = np.cross(axis, lat)
+        up /= np.linalg.norm(up)
+        reach = np.linalg.norm(tip - root)
+        # The source's own middle line (it bends): the middle of its bodies every fortieth of the way along.
+        sw = (whole - root) @ axis / reach
+        bins = [(k + 0.5) / 40 for k in range(40) if ((sw >= k / 40) & (sw < (k + 1) / 40)).any()]
+        mids = np.array([whole[(sw >= b - 0.0125) & (sw < b + 0.0125)].mean(axis=0) for b in bins])
+        middle = lambda s: np.column_stack([np.interp(s, bins, mids[:, k]) for k in range(3)])
+        thick = np.percentile(np.linalg.norm(whole - middle(sw), axis=1)[sw > LEAVES + 0.1], 95)
+        for name, kind, _, _ in GENITALS:
+            corners, faces = raw[name]
+            corners = carry_mm(corners)
+            s = (corners - root) @ axis / reach
+            x, y = (corners - middle(s)) @ lat, (corners - middle(s)) @ up
+            u = np.clip((s - LEAVES) / (1 - LEAVES), 0, 1)
+            at = np.column_stack([np.interp(u, along, line[:, k]) for k in range(3)])
+            r = np.interp(u, along, radius) * INSIDE / thick
+            ahead = np.column_stack([np.interp(np.minimum(u + 0.02, 1), along, line[:, k]) for k in range(3)]) - \
+                np.column_stack([np.interp(np.maximum(u - 0.02, 0), along, line[:, k]) for k in range(3)])
+            ahead /= np.linalg.norm(ahead, axis=1, keepdims=True)
+            their_up = np.cross(ahead, lat)
+            their_up /= np.linalg.norm(their_up, axis=1, keepdims=True)
+            hanging = at + lat * (x * r)[:, None] + their_up * (y * r)[:, None]
+            # Inside the body the root keeps the trunk's carrying, moved by what its end moved, less and less toward the crura.
+            moved = line[0] - middle(np.array([LEAVES]))[0]
+            within = corners + np.outer(np.clip(s / LEAVES, 0, 1), moved)
+            corners = np.where((s > LEAVES)[:, None], hanging, within)
+            add(name, kind, 'root', corners, faces)
+        for (name, kind, patterns, cell), (centre, r) in zip(TESTES, [(t[:3], t[3]) for t in header['genitals']['testes']]):
+            corners, faces = thin(*read_named(source, names, patterns), cell)
+            corners = carry_mm(corners)
+            middle = corners.mean(axis=0)
+            size = np.linalg.norm(corners - middle, axis=1).max()
+            # (The person's left half of the scrotum for the source's left testis: both are in the game's frame.)
+            corners = np.array(centre) + (corners - middle) * min(1.0, 0.85 * r / size)
+            add(name, kind, 'root', corners, faces)
+
     for name, kind, patterns, cell in HEAD:
+        if name == 'brain':
+            # The cerebrum is the source's 34 gyri and lobes, each a closed surface of its own, thinned one by one: thinned
+            # as one mesh, 8 mm cells merged the corners of neighbouring gyri across the sulci between them, and what was
+            # left was crumpled shards facing every way. (The `gyrus` names also caught two branches of the middle
+            # cerebral artery, drawn as brain.)
+            pieces = [thin(turned(c), f, cell / 1000) for c, f in (read_named(source, names, [rf'^{re.escape(n)}$']) for n in
+                      sorted({n for n in names.values() if any(re.search(p, n) for p in patterns)}))]
+            corners = np.concatenate([c for c, _ in pieces])
+            starts = np.cumsum([0] + [len(c) for c, _ in pieces[:-1]])
+            faces = np.concatenate([f + k for (_, f), k in zip(pieces, starts)])
+            add(name, kind, 'neck01', head_fit(corners), faces)
+            continue
         corners, faces = read_named(source, names, patterns)
         corners, faces = thin(turned(corners), faces, cell / 1000)
         # (The mandible goes with the jaw the face opens, tools/people.py's face rig; the rest with the neck and head.)
