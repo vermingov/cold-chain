@@ -1084,6 +1084,28 @@ the leak along the arm. Next to look at: the row's bias, capped at `max_correcti
 back only so fast), and the muscle motors on the same axes (finalised in a block of their own, so nothing keeps them off
 the limit row's direction).
 
+### Rapier's NaN rollback
+Rapier (0.36's quarantine) rolled back and disabled two bodies over a NaN in one khang run of four, and in every
+arsenal-use run: Young man (7)'s chest and right hand at the knife's cut (frame 241), the man limp from then on.
+Probed (non-finite state handed to Rapier before each step, every `ExternalImpulse`, `Ragdoll::push` and `turn` with a
+backtrace), the NaN came in through the impulses, from `Behaviour::hold`'s hand pressed on the wound: the wound's way out
+(`Wound::out`) was the push's direction, `normalize_or_zero`, and the cut gave no push (its blade spent no energy, so
+wounds.rs's share and the impulse are 0); `tend` normalised the zero vector every frame, the hand's target went NaN, and
+its pull (`motor::push`, the hand and back on the chest) put NaN into both. Neither a motor target, a joint frame, a
+mass after a cut nor a blast: nothing else non-finite reached Rapier in any heavy scenario. A wound with no push now
+faces out from its segment's middle through the point.
+
+| rollbacks (runs) | before | after |
+|---|---|---|
+| arsenal-use, the knife (every arm to the sword; knife alone) | 4 of 4 | 0 of 3 |
+| arsenal-use, the grenade alone | 0 | 0 |
+| khang | 1 of 4 | 0 of 1 |
+| cut, wounds, limits | 0 | 0 |
+
+(The whole of arsenal-use runs past the 25 minutes the measuring script allows on this machine, two at once: the knife
+and the grenade were run alone besides.) Seen on the way, not a NaN: the sword's blows set the forearm they meet
+spinning at 800-1000 rad/s (khang, frame 811, before the cut), its turning inertia 0.0007 kg m2.
+
 ### The shoulder's cone
 The port has the TS's capsule (ragdoll.rs `shoulders`: the posterior bound of the arm's direction as a function of its
 elevation, 60 degrees behind hanging, 45 level, 20 overhead, Norkin and White; a stiff damped spring past it). Mostly it

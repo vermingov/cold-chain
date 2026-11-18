@@ -496,10 +496,14 @@ impl Behaviour {
         let n = impulse.length();
         // (Pellets or fragments landing together on one part are one wound, as big as all of them.)
         let size = n + self.wound.as_ref().filter(|w| w.seg == seg && w.t < 0.3).map_or(0.0, |w| w.size);
+        // The way out of the wound: against the push, or with none (a blade's slit that spent nothing) out from the
+        // segment's middle through it. (Left zero, tend's normalize made it NaN, and the hand sent to it pushed NaN into
+        // the hand and the chest: Rapier rolled both back and disabled them, the knife in arsenal-use.)
+        let out = (-impulse).try_normalize().unwrap_or_else(|| (point - rd.middle(seg)).normalize_or(Vec3::Y));
         self.wound = Some(Wound {
             seg,
             local: into.transform_point3(point),
-            out: into.transform_vector3(-impulse.normalize_or_zero()),
+            out: into.transform_vector3(out),
             t: 0.0,
             size,
             hands: None,
