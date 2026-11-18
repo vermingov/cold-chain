@@ -64,9 +64,13 @@ struct Stream {
     d: Vec<f32>,
     age: Vec<f32>,
     life: Vec<f32>,
+    // Whether each point is still joined to the one let go before it (none has broken away or landed between them).
+    joined: Vec<bool>,
     fed: f32,
     // The aim off the skin's normal, a bleed's own (npc.ts `_aims`: a random half-box, kept for the bleed).
     aim: Vec3,
+    // Where it was let go from last frame and how fast, which way.
+    last: Option<(Vec3, Vec3)>,
 }
 
 // A mark on the room: tile `kind` of the splash sheet, its X and Y axes (scaled), facing out along `n` from `at`.
@@ -237,20 +241,32 @@ impl Blood {
         }
         let jitter: [f32; 6] = std::array::from_fn(|_| self.rand());
         let s = self.streams.get_mut(&key).unwrap();
+        // (A stream fed again after a pause starts afresh where it is now.)
+        let last = s.last.filter(|_| clock - s.fed < dt * 1.5);
         s.fed = clock;
-        // Several points a frame, as if let go through it, so the rope is smooth however slow the frame.
+        // (What leaves a moving mouth or limb carries its speed as well as its own: a vomit from a head swinging round.)
+        let carried = last.map_or(Vec3::ZERO, |(was, _)| ((at - was) / dt).clamp_length_max(5.0));
+        let now = dir * speed + carried;
+        let (was_at, was_v) = last.unwrap_or((at, now));
+        s.last = Some((at, now));
+        // Several points a frame, as if let go through it, so the rope is smooth however slow the frame: each from where
+        // the source was at its moment and the way it pointed then, between last frame's and this one's. (All let go
+        // along this frame's way, a mouth turning as it vomited laid each frame's points out in a straight piece of its
+        // own, at an angle to the next: the rope was a staircase.)
         let pieces = ((speed * dt / 0.012).ceil() as usize).clamp(1, 6);
         for k in (0..pieces).rev() {
             if s.p.len() >= 90 {
                 break;
             }
-            let t = k as f32 / pieces as f32 * dt;
-            let v = dir * speed;
-            s.p.push(at + v * t + Vec3::new(0.0, -4.9 * t * t, 0.0));
+            let f = k as f32 / pieces as f32;
+            let t = f * dt;
+            let v = now.lerp(was_v, f);
+            s.p.push(at.lerp(was_at, f) + v * t + Vec3::new(0.0, -4.9 * t * t, 0.0));
             s.v.push(v + Vec3::new(0.0, -9.81 * t, 0.0));
             s.ml.push(ml / pieces as f32);
             s.d.push(r * 2.0);
             s.age.push(t);
+            s.joined.push(last.is_some() || k + 1 < pieces);
             // Thicker streams hold together longer.
             s.life.push(BREAKS * (0.6 + jitter[k] * 0.8) * (r / 0.0015).powf(1.5).clamp(0.5, 2.0));
         }
@@ -729,6 +745,7 @@ fn streams(b: &mut Blood, dt: f32, people: &mut Query<Person_, ()>, dice: &mut D
     let mut all = std::mem::take(&mut b.streams);
     for s in all.values_mut() {
         let mut kept = 0;
+        let mut broke = false;
         for i in 0..s.p.len() {
             let mut v = s.v[i];
             let slow = (-drag(s.d[i], v.length()) * dt * 0.3).exp();
@@ -736,16 +753,21 @@ fn streams(b: &mut Blood, dt: f32, people: &mut Query<Person_, ()>, dice: &mut D
             let mut at = s.p[i] + v * dt;
             let (d, ml, age, life) = (s.d[i], s.ml[i], s.age[i] + dt, s.life[i]);
             if age > FREE && !b.crowd.is_empty() && onto(b, people, dice, frame, at, v, d, ml, worlds) {
+                broke = true;
                 continue;
             }
             if b.lands(&mut at, v, d, ml, map, floor) {
+                broke = true;
                 continue;
             }
             if age > life {
                 // Broken: the rope pinches into drops a little wider than itself.
                 b.add(at, v, (d * 1.6).min(0.006), ml, age);
+                broke = true;
                 continue;
             }
+            s.joined[kept] = s.joined[i] && !broke;
+            broke = false;
             s.p[kept] = at;
             s.v[kept] = v;
             s.d[kept] = d;
@@ -760,6 +782,7 @@ fn streams(b: &mut Blood, dt: f32, people: &mut Query<Person_, ()>, dice: &mut D
         s.ml.truncate(kept);
         s.age.truncate(kept);
         s.life.truncate(kept);
+        s.joined.truncate(kept);
     }
     let clock = b.clock;
     all.retain(|_, s| !s.p.is_empty() || clock - s.fed <= 1.0);
@@ -982,11 +1005,18 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
          mut stains: ResMut<Assets<ExtendedMaterial<StandardMaterial, Stain>>>, hall: Res<crate::wet::Hall>) {
     let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
     let mut blood = Blood::new();
-    // Blood in the air: dark red, glossy (fluid.rs DROP).
+    // Blood in the air: glossy, and as a drop is a millimetre or a few of it, not a pool's depth, the light that goes into
+    // it comes back out red, much of it round its far side: lit from behind or across it glows (a spray against a lamp is
+    // a cloud of red beads). Drawn as a pool's surface (fluid.rs DROP), opaque and lit only from its front, each was a
+    // dark ball with a white point on it.
     let air = materials.add(StandardMaterial {
-        base_color: crate::fluid::DROP,
+        base_color: Color::linear_rgb(0.17, 0.011, 0.01),
         perceptual_roughness: 0.06,
         reflectance: 0.35,
+        diffuse_transmission: 0.55,
+        thickness: 0.002,
+        attenuation_distance: 0.0015,
+        attenuation_color: Color::linear_rgb(0.9, 0.04, 0.03),
         ..default()
     });
     let mut pool = |mesh: Mesh, count: usize, name: &'static str| -> Vec<Entity> {
@@ -995,7 +1025,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             .map(|_| commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(air.clone()), Transform::default(), Visibility::Hidden, NotShadowCaster, Name::new(name))).id())
             .collect()
     };
-    let drops = pool(Sphere::new(0.5).mesh().uv(8, 5), MOST, "drop");
+    let drops = pool(Sphere::new(0.5).mesh().uv(12, 8), MOST, "drop");
     let ropes = pool(Cylinder::new(0.5, 1.0).mesh().resolution(7).build(), ROPES, "stream");
     let sheet = images.add(splash_sheet(&mut blood.rng));
     let material = stains.add(ExtendedMaterial {
@@ -1076,10 +1106,12 @@ fn draw(mut blood: ResMut<Blood>, mut drawn: ResMut<Drawn>, mut things: Query<(&
             if ropes >= ROPES {
                 break 'streams;
             }
+            // (Only points still joined: drawn across a gap where points between had broken away or landed, the rope was
+            // a line of long straight pieces with corners.)
             let (a, c) = (s.p[i], s.p[i + 1]);
             let way = c - a;
             let long = way.length();
-            if !(1e-5..=0.05).contains(&long) {
+            if !s.joined[i + 1] || !(1e-5..=0.05).contains(&long) {
                 continue;
             }
             let r = (s.d[i] + s.d[i + 1]) * 0.5;
@@ -1615,7 +1647,7 @@ pub fn scenario() -> Vec<Step> {
         // (Each view waits six frames for the eye to settle: the five are half a second apart.)
         at = t + 0.5;
         s.push(Step::Do(Box::new(move |w: &mut World| tally(w, t))));
-        let x = |i: usize| (i as f32 - 1.5) * 1.5;
+        let x = |i: usize| (i as f32 - (crate::sandbox::BODIES.len() as f32 - 1.0) / 2.0) * 1.5;
         s.extend(view(&format!("blood_{t:03}_femoral"), x(0) - 1.0, 0.6, [x(0), 0.6, 2.2], 1.5));
         s.extend(view(&format!("blood_{t:03}_neck"), x(1) + 0.9, 1.0, [x(1), 0.05, 2.6], 1.6));
         s.extend(view(&format!("blood_{t:03}_chest"), x(2), 0.7, [x(2), 0.9, 2.2], 1.5));

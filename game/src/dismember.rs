@@ -158,6 +158,8 @@ impl Limb {
 }
 
 const CARRIES: f32 = 0.75;
+// How far from the middle of a cut (of the limb's reach) the flesh of the segment it is in goes with the piece.
+const NEAR: f32 = 1.3;
 
 // The ragdoll segment a point is on, as the limb that would come off there.
 fn segment_limb(base: &str) -> Option<Limb> {
@@ -212,6 +214,38 @@ pub struct CutOff {
     pub n: Vec3,
     pub drains: f32,
     pub entities: Vec<Entity>,
+    // Each bone of the body: whether it went with the piece, and whether it is one of the bones of the segment the cut is
+    // in (its flesh past the plane, within `reach` twice over, went too); the limb's reach.
+    pub gone: Vec<bool>,
+    pub near: Vec<bool>,
+    pub reach: f32,
+}
+
+impl CutOff {
+    // Whether a point of the body at rest `p`, carried by bone `bone` before this cut, is on the piece: past the plane
+    // and on the limb (split's test for the skin's corners, for one bone).
+    pub fn on_piece(&self, p: Vec3, bone: usize) -> bool {
+        (p - self.c).dot(self.n) > 0.0 && (self.gone[bone] || (self.near[bone] && p.distance_squared(self.c) < (self.reach * NEAR).powi(2)))
+    }
+
+    // The bone that carries that point after the cut: on the piece, one of the piece's (its first bone for one of the
+    // body's); on the body, one of the body's (the bone the limb hung from for one of the piece's).
+    pub fn carrier(&self, p: Vec3, bone: usize) -> usize {
+        match (self.on_piece(p, bone), self.gone[bone]) {
+            (true, false) => self.root_bone,
+            (false, true) => self.prox,
+            _ => bone,
+        }
+    }
+}
+
+impl Dismember {
+    // The bone that carries a point of the body at rest, hung from `bone` before any cut, after all of them: what every
+    // mesh skinned to the skeleton is carried by once limbs have come off, so nothing stretches from a stump to its
+    // piece (the x-ray, the dressings; the skin and clothes are cut along the plane besides, flesh.rs).
+    pub fn carrier(&self, p: Vec3, bone: usize) -> usize {
+        self.cuts.iter().fold(bone, |b, cut| cut.carrier(p, b))
+    }
 }
 
 #[derive(Component, Default)]
@@ -504,11 +538,17 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
     let t_ends = std::time::Instant::now();
     let ends = ends(world, who, body, limb, side, c, n, prox, root_bone, how);
     let ends_ms = t_ends.elapsed().as_secs_f32() * 1000.0;
+    // The stump's end, for a dressing put on it: the skin's outline round the cut.
+    if let Some(k) = &ends.caps {
+        let rim = k.skin.iter().map(|&(x, y)| c + k.e1 * x + k.e2 * y).collect();
+        world.get_mut::<Hurt>(who).unwrap().stumps.push((c, n, rim));
+    }
     shape.start(world, who, ends.caps);
     entities.extend(ends.entities);
     let tip = root_bone;
     let spread = world.get::<Ragdoll>(who).unwrap().segs[root].spread.iter().copied().filter(|&x| x != root_bone).collect();
-    let cut = CutOff { limb, side: side.to_string(), how, root, segs, root_bone, spread, prox, tip, c, n, drains: 0.0, entities };
+    let cut = CutOff { limb, side: side.to_string(), how, root, segs, root_bone, spread, prox, tip, c, n, drains: 0.0, entities, gone, near, reach: l.reach };
+    crate::anatomy::cut(world, who, &cut);
     bleed(world, who, &cut, &ends.vessels, ends.e1, ends.e2, how);
     let death = hurt(world, who, &cut);
     {
@@ -540,7 +580,9 @@ fn split(world: &mut World, who: Entity, body_arc: &std::sync::Arc<Body>, limb: 
     let body = &**body_arc;
     let mut flesh = world.entity_mut(who).take::<Flesh>().unwrap();
     let vertices = body.position.len();
-    // Past the plane, and carried by the limb (or by the segment the cut is in, near the cut).
+    // Past the plane, and carried mostly by the limb (or by the limb and the segment the cut is in, near the cut). (Any of
+    // the limb's weight at all, or any of the segment's within twice the limb's reach, took the trousers' seat and crotch
+    // with a thigh cut off, and the cloth there was stretched into a flap from the piece back to where the body lay.)
     let past: Vec<bool> = (0..vertices).map(|v| {
         let d = body.position[v] - c;
         if d.dot(n) <= 0.0 {
@@ -559,7 +601,7 @@ fn split(world: &mut World, who: Entity, body_arc: &std::sync::Arc<Body>, limb: 
                 here += w;
             }
         }
-        limbs > 0.0 || (here > 0.0 && d.length_squared() < reach * reach * 4.0)
+        limbs >= 0.5 || (limbs + here >= 0.5 && d.length_squared() < (reach * NEAR).powi(2))
     }).collect();
     // Triangles: wholly past (the piece's), not at all (the body's), or across the plane (both, for skin and clothes,
     // which are cut at the plane; anything else goes with the side most of it is on).
@@ -1224,3 +1266,28 @@ pub fn end_world(world: &mut World, who: Entity, k: usize, piece: bool) -> Optio
 
 #[allow(dead_code)]
 fn _unused(_: Indices, _: PrimitiveTopology, _: VertexAttributeValues, _: RenderAssetUsages, _: Extent3d, _: TextureDimension, _: TextureFormat) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Bones 0 (the body), 1 (the segment the cut is in), 2 (the piece's first) and 3 (below it); the cut at x = 0 facing +X.
+    fn cut() -> CutOff {
+        CutOff {
+            limb: Limb::Forearm, side: "R".into(), how: How::Blade, root: 0, segs: Vec::new(), root_bone: 2, spread: Vec::new(), prox: 1, tip: 2,
+            c: Vec3::ZERO, n: Vec3::X, drains: 0.0, entities: Vec::new(), gone: vec![false, false, true, true], near: vec![false, true, false, false], reach: 0.1,
+        }
+    }
+
+    // Each side's points end up on that side's bones, whichever bone carried them before; the body's far from the cut stay.
+    #[test]
+    fn carried_by_their_side() {
+        let c = cut();
+        assert_eq!(c.carrier(Vec3::new(-0.02, 0.0, 0.0), 3), 1);
+        assert_eq!(c.carrier(Vec3::new(0.02, 0.0, 0.0), 1), 2);
+        assert_eq!(c.carrier(Vec3::new(0.02, 0.0, 0.0), 3), 3);
+        assert_eq!(c.carrier(Vec3::new(-0.02, 0.0, 0.0), 1), 1);
+        assert_eq!(c.carrier(Vec3::new(0.5, 0.0, 0.0), 1), 1);
+        assert_eq!(c.carrier(Vec3::new(0.5, 0.0, 0.0), 0), 0);
+    }
+}

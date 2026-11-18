@@ -982,7 +982,7 @@ mod tests {
 //
 // `cargo run -- --scenario face --out <dir>`: the groundskeeper's face close up at rest, in the middle of each cry
 // (forced: npc.say), in pain, mid-blink, looking at the player from the side; then the young man's eye shot through with
-// a pellet, the old man killed (the dying breath, and his face half a minute on), the man in the hood's jaw broken by a
+// a pellet, the old man killed (the dying breath, and his face half a minute on), the man in white's jaw broken by a
 // bat with his front teeth knocked out. Each picture's face (its action units, jaw, pupils) goes into the log.
 // tools/port-face.mjs takes the same pictures in the TS game.
 
@@ -1066,7 +1066,7 @@ fn say(w: &mut World, body: &str, kind: &'static str) {
     let e = who(w, body);
     crate::npc::with(w, e, |npc| npc.say(kind, 1.0, true));
     let head = w.get::<Person>(e).map(|p| p.joints[p.body.by_name["head"]]);
-    let playing = w.resource_mut::<Sound>().play(&format!("{kind}-{body}"), crate::sound::Play { gain: 1.0, follow: head, ..default() });
+    let playing = w.resource_mut::<Sound>().play(&format!("{kind}-{}", crate::sandbox::voice(body)), crate::sound::Play { gain: 1.0, follow: head, ..default() });
     if let Some(playing) = playing {
         w.resource_mut::<Voices>().0.insert(e, (playing, kind));
     }
@@ -1149,8 +1149,8 @@ pub fn scenario() -> Vec<Step> {
     s.extend(close("face_dying", "oldman", 0.0, 0.5));
     s.extend(dark(60 * 30));
     s.extend(close("face_dead", "oldman", 0.0, 0.5));
-    // The man in the hood: a bat into his chin until the jaw goes, and his front teeth knocked out.
-    s.push(npc("hood", |npc| {
+    // The man in white: a bat into his chin until the jaw goes, and his front teeth knocked out.
+    s.push(npc("white", |npc| {
         let ahead = npc.segment("head").map_or(Vec3::NEG_Z, |k| npc.segment_world(k).rotation * Vec3::NEG_Z);
         let jaw = npc.bone_index("jaw");
         let chin = npc.world_of(npc.body().bones[jaw].tail, jaw, None).0;
@@ -1172,15 +1172,15 @@ pub fn scenario() -> Vec<Step> {
         // same, hanging as bones.rs lets a jaw broken on both sides hang, and said so in the log.)
         if npc.hurt.bones.jaw_hangs == 0.0 {
             npc.hurt.bones.jaw_hangs = 18.0;
-            info!("hood: the jaw held; hung at 18 degrees as if broken on both sides");
+            info!("white: the jaw held; hung at 18 degrees as if broken on both sides");
         }
         let hangs = npc.hurt.bones.jaw_hangs;
         let gone: Vec<String> = npc.hurt.teeth.teeth.iter().filter(|t| t.state != crate::teeth::State::Whole).map(|t| format!("{} {:?}", t.name, t.state)).collect();
-        info!("hood: jaw hangs {hangs}, teeth {gone:?}");
+        info!("white: jaw hangs {hangs}, teeth {gone:?}");
     }));
     s.push(Step::Wait(60));
-    s.extend(close("face_jaw_teeth", "hood", 0.0, 0.45));
-    s.extend(close("face_jaw_teeth_side", "hood", 30.0, 0.45));
+    s.extend(close("face_jaw_teeth", "white", 0.0, 0.45));
+    s.extend(close("face_jaw_teeth_side", "white", 30.0, 0.45));
     // The groundskeeper's head cut off (dismember.rs: a piece of its own, placed by hand): the face goes on on it, its
     // bones worked out from where the piece is (each bone's chain checked against medicine's whole skeleton), until the
     // death that follows.

@@ -92,18 +92,43 @@ fn noise2(p: vec2<f32>) -> f32 {
     return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-// Bloodshot (`red`, 0 to 1): the conjunctiva's vessels dilated, a net of fine red lines on the white that wander and
-// branch, thickest and most out toward the lids and fading toward the cornea (conjunctival injection: unlike the
-// ciliary flush of an inflamed eye, which rings the cornea), over a pink flush of the white itself. The lines are where
-// a warped noise crosses its middle; two sizes of them, the finer ones the branches.
-fn bloodshot(uv: vec2<f32>, rc: f32, red: f32) -> vec4<f32> {
-    let out = mix(0.5, 1.0, smoothstep(eye.sizes.x * 1.1, SCLERA * 0.8, rc));
+// Bloodshot (`red`, 0 to 1): conjunctival injection, the conjunctiva's vessels swollen and showing, running in from the
+// edges of the white (the fornices, under the lids) toward the cornea, wavy, thinning as they go, a few thick trunks and
+// many fine ones, the most at the corners of the eye, and a fine net between them; the white itself flushed pink. They
+// fade short of the cornea's edge (unlike the ciliary flush of an inflamed eye, which rings it). Each size of vessel is
+// a set of wandering lines round the eye's middle, each line reaching in its own way. (The TS's were where a warped
+// noise crossed its middle, a pale even net at most half covering the white: the user found them too faint.)
+fn bloodshot(uv: vec2<f32>, c: vec2<f32>, rc: f32, red: f32) -> vec4<f32> {
+    let d = uv - c;
+    let a = atan2(d.y, d.x);
+    let r = clamp((rc - eye.sizes.x) / (SCLERA - eye.sizes.x), 0.0, 1.0);
+    let corners = 0.55 + 0.45 * abs(cos(a));
+    var lines = 0.0;
+    for (var k = 0; k < 3; k++) {
+        let f = f32(k);
+        // 24 trunks round the eye, 60 branches, 110 fine ones, winding; each line's width a share of the gap between
+        // them (a swollen trunk some 0.1 mm on a 24 mm eye), and never under about a pixel: thinner, it shimmered away to
+        // nothing, as the TS's net did at any distance past a hand's breadth.
+        let count = select(select(110.0, 60.0, k == 1), 24.0, k == 0);
+        let wander = (noise2(vec2(cos(a) * 2.5 + f * 11.0, sin(a) * 2.5 + r * (9.0 + f * 6.0))) - 0.5) * (1.2 + f * 0.8);
+        let u = a / 6.2831853 * count + wander;
+        let which = hash2(vec2(floor(u), f * 7.0));
+        // (Each vessel reaches in its own way: trunks to near the limbus, the finer ones less far.)
+        let reach = 0.1 + 0.55 * which + f * 0.1;
+        let width = (0.12 - f * 0.035) * mix(0.5, 1.0, r);
+        let px = fwidth(u);
+        let line = (1.0 - smoothstep(width * 0.5, width * 0.5 + px, abs(fract(u) - 0.5))) * min(1.0, width / max(px, 1e-5));
+        lines = max(lines, line * smoothstep(reach - 0.1, reach + 0.15, r) * (0.6 + 0.4 * which) * (1.0 - f * 0.2));
+    }
+    // And the fine net between them.
     let warp = vec2(noise2(uv * 40.0), noise2(uv * 40.0 + 17.0)) * 2.5;
-    let big = 1.0 - smoothstep(0.0, 0.05, abs(noise2(uv * 70.0 + warp) - 0.5));
     let fine = 1.0 - smoothstep(0.0, 0.035, abs(noise2(uv * 160.0 + warp * 1.7) - 0.5));
-    let lines = max(big, fine * 0.6 * smoothstep(0.3, 0.8, noise2(uv * 25.0)));
-    let flush = rgba(205.0, 92.0, 86.0, 0.6 * red * out);
-    return over(flush, rgba(150.0, 18.0, 18.0, 0.9 * red * out * lines));
+    lines = max(lines, fine * 0.5 * smoothstep(0.2, 0.7, r) * smoothstep(0.3, 0.8, noise2(uv * 25.0)));
+    // (A slight redness already shows: the eye reads a few red vessels long before the whole white is pink.)
+    let k = pow(red, 0.6);
+    let near = smoothstep(0.0, 0.35, r);
+    let flush = rgba(222.0, 120.0, 112.0, min(1.0, 0.65 * k * near * corners));
+    return over(flush, rgba(165.0, 14.0, 20.0, min(1.0, 1.4 * k * lines * corners)));
 }
 
 // The damage sheet at `uv`: what the TS painted on its canvas, in its order, over the eye's bloodshot white.
@@ -112,7 +137,7 @@ fn damage(uv: vec2<f32>, c: vec2<f32>, red: f32) -> vec4<f32> {
     let rc = distance(uv, c);
     let white = inside(rc, SCLERA) * (1.0 - inside(rc, eye.sizes.x * 1.03));
     if red > 0.0 {
-        let b = bloodshot(uv, rc, red);
+        let b = bloodshot(uv, c, rc, red);
         out = over(out, vec4(b.rgb, b.a * white));
     }
     // Blood under the conjunctiva: bright red, flat, sharp-edged, on the white only (the cornea's edge is its limit).
