@@ -20,7 +20,7 @@ use crate::{babylon, Loading};
 const ROWS: [(f32, &[&str]); 3] = [
     (1.95, &["rifle", "shotgun", "ak", "m4", "r22"]),
     (1.38, &["pistol", "deagle", "knife", "sword", "bat", "grenade", "throw", "fists", "bandage", "medkit"]),
-    (0.82, &["shovel", "sledge", "hammer"]),
+    (0.82, &["shovel", "sledge", "hammer", "dusters", "gloves"]),
 ];
 struct Wall {
     x: f32,
@@ -101,6 +101,7 @@ fn build(
     mut images: ResMut<Assets<Image>>,
     mut rng: ResMut<Rng>,
     (gltfs, nodes, gltf_meshes): (Res<Assets<Gltf>>, Res<Assets<GltfNode>>, Res<Assets<GltfMesh>>),
+    mut made: ResMut<crate::worn::Made>,
 ) {
     commands.spawn((
         Mesh3d(meshes.add(Rectangle::new(WALL.width, WALL.height))),
@@ -120,6 +121,7 @@ fn build(
     models.prepare(&[BOX], &assets, &mut meshes, &mut materials);
     let kits = kit(&mut meshes, &mut materials, &mut images, &mut rng);
     let fists = wraps(&mut meshes, &mut materials);
+    let worn: Vec<(&str, Vec<Piece>)> = ["dusters", "gloves"].into_iter().filter_map(|k| Some((k, crate::worn::board(k, &mut made, &mut meshes, &mut materials)?))).collect();
     let mut arsenal = Arsenal::default();
     for (y, keys) in ROWS {
         // Each thing as it will hang (its turn) and its box so turned, in the TS's space.
@@ -130,6 +132,8 @@ fn build(
                 (Quat::IDENTITY, (Vec3::from(b.min), Vec3::from(b.max)))
             } else if key == "fists" {
                 (Quat::IDENTITY, ts_box(pieces_bounds(&fists, Quat::IDENTITY, &meshes)))
+            } else if let Some((_, pieces)) = worn.iter().find(|(k, _)| *k == key) {
+                (Quat::IDENTITY, ts_box(pieces_bounds(pieces, Quat::IDENTITY, &meshes)))
             } else if let Some((_, pieces)) = kits.iter().find(|(k, _)| *k == key) {
                 // Turned on the wall from how they are held: the medkit's cross and the bandage roll's side to the
                 // room. (The TS's -90 degrees about Y, the other way here.)
@@ -153,7 +157,11 @@ fn build(
             let where_ = Transform::from_translation(babylon(at.x, at.y, at.z)).with_rotation(turn);
             arsenal.hung.push((key, babylon(at.x + lo.x, at.y + lo.y, at.z + hi.z), babylon(at.x + hi.x, at.y + hi.y, at.z + lo.z)));
             // (No shadow from anything on the board: it is outside the cones of the lamps that cast shadows.)
-            let pieces: Option<&Vec<Piece>> = if key == "fists" { Some(&fists) } else { kits.iter().find(|(k, _)| *k == key).map(|(_, p)| p) };
+            let pieces: Option<&Vec<Piece>> = if key == "fists" {
+                Some(&fists)
+            } else {
+                kits.iter().chain(worn.iter()).find(|(k, _)| *k == key).map(|(_, p)| p)
+            };
             if key == "throw" {
                 models.place(&mut commands, BOX, where_);
             } else if let Some(pieces) = pieces {

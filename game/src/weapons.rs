@@ -223,6 +223,9 @@ pub const ARMS: &[Arm] = &[
     Arm { key: "hands", name: "Hands", kind: Kind::Grab, ..A },
     // Punched with: the left button the left fist, the right the right; held down, wound up harder (fist.rs).
     Arm { key: "fists", name: "Fists", kind: Kind::Fists, ..A },
+    // The same fists in knuckle dusters or boxing gloves (worn.rs: what each does to a punch).
+    Arm { key: "dusters", name: "Knuckle dusters", kind: Kind::Fists, ..A },
+    Arm { key: "gloves", name: "Boxing gloves", kind: Kind::Fists, ..A },
     Arm { key: "throw", name: "Throw things", kind: Kind::Throw, ..A },
     // Held on a wound (dressing.ts): the bandage dresses the one looked at, the medkit every one the person has.
     Arm { key: "bandage", name: "Bandage", kind: Kind::Dress, ..A },
@@ -2999,7 +3002,7 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
             Kind::Gun => 3.2,
             Kind::Throw => 2.5,
             Kind::Grenade => 5.0,
-            _ if matches!(key, "knife" | "hammer" | "fists" | "hands") => 0.5,
+            _ if matches!(key, "knife" | "hammer" | "fists" | "dusters" | "gloves" | "hands") => 0.5,
             _ => 0.75,
         };
         // At the wall: the east wall, 11 m off, at chest height; then at the young man (the third), at his chest.
@@ -3194,7 +3197,7 @@ pub fn viewmodel() -> Vec<crate::scenario::Step> {
         let near = match a.kind {
             Kind::Gun => 3.2,
             Kind::Grenade => 5.0,
-            _ if matches!(key, "knife" | "hammer" | "fists") => 0.5,
+            _ if matches!(key, "knife" | "hammer" | "fists" | "dusters" | "gloves") => 0.5,
             _ => 0.75,
         };
         let at_person = move |s: &mut Vec<Step>| s.push(stand(0.75, 2.2 - near, [0.75, 1.3, 2.2], 1.65));

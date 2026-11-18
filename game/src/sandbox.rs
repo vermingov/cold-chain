@@ -70,7 +70,12 @@ pub struct Spawner<'w, 's> {
 
 impl Spawner<'_, '_> {
     // A person of body `body` standing at `at` (Bevy's), facing `yaw` as the TS measured it.
-    fn spawn(&mut self, body: &str, at: Vec3, yaw: f32) -> Entity {
+    // Something added to a person just made (bout.rs: an opponent).
+    pub fn mark(&mut self, e: Entity, what: impl Bundle) {
+        self.commands.entity(e).insert(what);
+    }
+
+    pub fn spawn(&mut self, body: &str, at: Vec3, yaw: f32) -> Entity {
         self.people.load(&BODIES);
         self.anatomy.load(&BODIES);
         self.made.0 += 1;

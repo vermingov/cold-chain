@@ -175,6 +175,11 @@ pub fn tool(name: &str) -> Option<What> {
         "flat" => What { k: 5e6, area: 25.0 },
         "edge" => What { k: 5e6, area: 2.0 },
         "hammer" => What { k: 5e6, area: 5.0 },
+        // A fist in knuckle dusters: the arm behind it gives as a bare fist's does (fist.rs FIST_GIVES), but nothing of the
+        // hand's own between the bar and the skin, on the bar's 6 cm2 across the knuckles; in a boxing glove, 2 to 4 cm
+        // of foam in series with the arm, over the glove's face (dev/research/fist-weapons.md).
+        "dusters" => What { k: 1.6e5, area: 6.0 },
+        "glove" => What { k: 2.2e4, area: 70.0 },
         "wall" => What { k: 5e6, area: 2500.0 },
         _ => return None,
     })

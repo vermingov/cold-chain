@@ -99,6 +99,10 @@ fn blocks() -> Vec<Block> {
     block("crate", -7.5, -6.5, 0.0, 1.0, 4.5, 5.5, false);
     block("crate", -7.3, -6.7, 1.0, 1.6, 4.7, 5.3, false);
     block("crate", -6.2, -5.7, 0.0, 0.5, 4.6, 5.1, false);
+    // The boxing ring (ring.rs, which draws it): its platform, 45 cm up, and the step up to it at its north-west corner.
+    let r = crate::ring::RING;
+    block("ring", r.x0, r.x1, 0.0, r.floor, r.z0, r.z1, false);
+    block("ring", r.x0 - 0.55, r.x0, 0.0, r.floor / 2.0, r.z1 - 0.8, r.z1, false);
     out
 }
 
@@ -560,7 +564,8 @@ fn build(
     commands.spawn((Mesh3d(meshes.add(room.mesh(true))), MeshMaterial3d(paint.clone()), NotShadowCaster, Name::new("hall")));
     let slope = map.slope();
     let mut things = Sheet::default();
-    for b in &map.blocks {
+    // (The ring is drawn as a ring, ring.rs.)
+    for b in map.blocks.iter().filter(|b| b.kind != "ring") {
         faces(&mut things, b, slope);
     }
     commands.spawn((Mesh3d(meshes.add(things.mesh(true))), MeshMaterial3d(paint), Name::new("structures")));
