@@ -368,8 +368,9 @@ pub struct Behaviour {
     dt: f32,
     cradle: char,
     pub felt: Felt,
-    // Taken hold of (Grabbed), and a leg cut off (dismember.rs): neither stands.
+    // Taken hold of (Grabbed), and by which segment, and a leg cut off (dismember.rs): neither stands.
     pub grabbed: bool,
+    pub held: Option<usize>,
     pub leg_gone: bool,
     // The bones broken in each limb, (side, bone key): bones.rs's, when it comes.
     pub breaks: Vec<(char, String)>,
@@ -440,6 +441,7 @@ impl Behaviour {
             cradle: ' ',
             felt: Felt::default(),
             grabbed: false,
+            held: None,
             leg_gone: false,
             breaks: Vec::new(),
         };
@@ -630,6 +632,12 @@ impl Behaviour {
             }
         }
         self.guard(rd, dt);
+        // A limb taken hold of and pulled on goes with the pull: its muscles let it be drawn out straight rather than
+        // hold it to the pose against the one dragging them (writhing, they held the arm curled in against a pull of up
+        // to 900 N, and the elbow, wrist and shoulder were wrenched round past their ranges, 60 to 80 degrees).
+        if let Some(part) = self.held.and_then(|k| motor::Part::limb(&rd.segs[k].def.name)) {
+            *self.strength.at(part) = 0.0;
+        }
         let guarded = self.guarded.clone();
         self.muscles.follow(rd, person, &pose, &self.strength, &guarded, dt);
         rd.limp = self.state != State::Stand;
@@ -825,6 +833,8 @@ impl Behaviour {
             let floor = self.floor;
             let down = down.clone();
             let hull = hull.clone();
+            let thighs: Vec<usize> = down.iter().map(|&f| rd.by_name(&format!("thigh{}", rd.segs[f].def.name.chars().last().unwrap()))).collect();
+            let belly = rd.by_name("belly");
             self.act(move |rd, dt| {
                 let com = rd.com();
                 let vel = rd.com_velocity();
@@ -853,16 +863,19 @@ impl Behaviour {
                 // m2 about its length: at 40 kg m2 its damping alone was more than a step can give and turned it back and
                 // forth.)
                 let twist = motor::toward(rd, pelvis, face, 40.0, 1.5, f32::INFINITY, Some(spin)).y.clamp(-40.0 * legs, 40.0 * legs);
-                rd.turn(pelvis, Vec3::new(0.0, twist * dt, 0.0));
+                motor::turn(rd, pelvis, Vec3::new(0.0, twist, 0.0), &down, dt);
                 // The trunk kept upright over the legs, the hip strategy, as far as the muscles round the hips (about 300
                 // N m both together) and the back hold it, pushing on the floor through the legs: without it a stride
                 // pitched the pelvis forty degrees over the front leg and took the body down, and at a third of that a
                 // shove still tipped the trunk back a little more with every step until it lay back at fifty degrees. The
                 // chest is held as far over as the pose bends the back, so a body doubled over is not straightened.
+                // Each turn is a muscle's, so it turns the other side of its joint back: the hips' the thighs standing on
+                // the floor, the back's the belly. (Given to the trunk alone it came from nowhere, and held a standing body
+                // upright against anything that pushed it, a shove or another body leaning on it, up to 450 N m.)
                 let t = motor::toward(rd, pelvis, face, 25.0, 12.0, 300.0 * legs, Some(spin));
-                rd.turn(pelvis, Vec3::new(t.x, 0.0, t.z) * dt);
+                motor::turn(rd, pelvis, Vec3::new(t.x, 0.0, t.z), &thighs, dt);
                 let t = motor::toward(rd, chest, bent, 25.0, 12.0, 150.0 * legs, Some(spin));
-                rd.turn(chest, Vec3::new(t.x, 0.0, t.z) * dt);
+                motor::turn(rd, chest, Vec3::new(t.x, 0.0, t.z), &[belly], dt);
             });
         }
 
@@ -2268,7 +2281,7 @@ fn think(
     map: Res<Map>,
     players: Query<&Player>,
     mut rng: ResMut<Rng>,
-    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&mut Hurt>, Has<Grabbed>)>,
+    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&mut Hurt>, Option<&Grabbed>)>,
     mut sounds: MessageWriter<Heard>,
 ) {
     let dt = time.delta_secs();
@@ -2287,7 +2300,8 @@ fn think(
             b.retch = h.throat.retch;
             b.breaks = h.bones.breaks.iter().filter_map(|br| Some((if br.side? == Side::L { 'L' } else { 'R' }, br.key.clone()))).collect();
         }
-        b.grabbed = grabbed;
+        b.grabbed = grabbed.is_some();
+        b.held = grabbed.map(|g| g.seg);
         b.update(dt, &person, &mut rd, &map, eye, &mut rng, &mut heard);
         if let Some(v) = &mut vitals {
             v.pain = b.felt.pain;

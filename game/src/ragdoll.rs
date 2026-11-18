@@ -653,6 +653,11 @@ impl Ragdoll {
                     Friction::coefficient(0.75),
                     Restitution::coefficient(0.02),
                     Damping { linear_damping: 0.05, angular_damping: 0.5 },
+                    // No gyroscopic term: Rapier's is explicit, given once a substep, and on a slender segment (a forearm's
+                    // turning inertia about its length is a tenth of that across it) held at a joint limit it turns the spin
+                    // the limit stops into spin about the other axes. A forearm on a joint taking 120 N m went 75 degrees
+                    // through a 5-degree limit with it and stayed within 3 without it (port/b-ragdoll, PORT.md).
+                    GyroscopicForces::disabled(),
                     Velocity::default(),
                     ExternalImpulse::default(),
                     ActiveEvents::COLLISION_EVENTS,
