@@ -277,7 +277,9 @@ pub fn steps(name: &str) -> Vec<Step> {
             s.push(Step::Do(Box::new(|w: &mut World| muzzle(w, "rifle wall: backed off"))));
         }
         "melee" => {
-            for key in ["knife", "sword", "bat", "shovel", "sledge", "hammer"] {
+            // (MELEE=sword,bat tries only those.)
+            let only: Option<Vec<String>> = std::env::var("MELEE").ok().map(|v| v.split(',').map(String::from).collect());
+            for key in ["knife", "sword", "bat", "shovel", "sledge", "hammer"].into_iter().filter(|k| only.as_ref().is_none_or(|o| o.iter().any(|x| x == k))) {
                 s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::take(w, key))));
                 s.push(reset());
                 // Facing the south wall from 0.45 m: a cut or blow, then a stab or one from overhead. Nothing to meet.
@@ -288,17 +290,15 @@ pub fn steps(name: &str) -> Vec<Step> {
                     s.push(act(Act::Press(button)));
                     s.push(Step::Wait(1));
                     s.push(act(Act::Release(button)));
-                    // The deepest any point of its box went past the wall's face (z = 11 - the box is in the hand's frame).
+                    // The deepest any corner of its hull went past the wall's face (z = 11).
                     for k in 0..30 {
                         s.push(Step::Wait(2));
                         s.push(Step::Do(Box::new(move |w: &mut World| {
                             let eye = *w.query_filtered::<&Transform, With<Player>>().iter(w).next().unwrap();
                             let h = w.resource::<Hand>();
-                            let Some(&(lo, hi)) = h.boxes.get(key) else { return };
+                            let Some(hull) = h.shapes.get(key).and_then(|c| c.as_convex_polyhedron()) else { return };
                             let hand = h.world(&eye);
-                            let deepest = (0..8)
-                                .map(|c| hand.transform_point(Vec3::new([lo.x, hi.x][c & 1], [lo.y, hi.y][(c >> 1) & 1], [lo.z, hi.z][c >> 2])).z - 11.0)
-                                .fold(f32::MIN, f32::max);
+                            let deepest = hull.points().map(|p| hand.transform_point(p).z - 11.0).fold(f32::MIN, f32::max);
                             let (back, tilt) = (h.back, h.tilt);
                             log(w, json!({ "event": "into wall", "key": key, "what": what, "k": k, "deepest": deepest, "back": back, "tilt": tilt }));
                         })));
@@ -308,8 +308,17 @@ pub fn steps(name: &str) -> Vec<Step> {
                     }
                     s.push(hits(what));
                 }
-                // At the third person's belly from 0.55 m: swung (hits), then 0.6 m to one side of the head (nothing).
-                s.push(put(line(2), -2.2 + 0.55 + 0.15, Vec3::new(line(2), 1.1, -2.2), 1.65));
+                // At the third person's belly from as far as arsenal-use stands with each (0.6 m with the knife and the
+                // hammer, 0.8 with the long ones, 0.9 with the sword): swung (hits), then 0.6 m to one side of the head,
+                // looking past it (nothing, or what is in the way as the swing comes across).
+                let far = match key {
+                    "knife" | "hammer" => 0.6,
+                    "sword" => 0.9,
+                    _ => 0.8,
+                };
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    crate::warm::aim(w, 2, "belly", far);
+                })));
                 s.push(Step::Wait(30));
                 s.push(Step::Do(Box::new(move |w: &mut World| w.resource_mut::<Weapons>().log.clear())));
                 s.push(act(Act::Press(0)));

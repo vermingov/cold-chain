@@ -439,6 +439,10 @@ pub struct Action {
     was: Option<Vec<Vec3>>,
     // A cut's crossings of each person's skin, drawn once the swing is through (npc.slash).
     hits: Vec<(Entity, Vec<Vec3>)>,
+    // Met the room's wall (`animate`): the last pose clear of it (a fraction of the swing) and how far through its time
+    // the swing was then; it comes back the way it went from there. And the last pose clear of it so far.
+    stopped: Option<(f32, f32)>,
+    clear: f32,
 }
 
 // What is carried: six at hand (1 to 6), twelve more in the bag. An empty hand is the hands.
@@ -1167,7 +1171,7 @@ fn swing(cx: &mut Cx, how: How) {
     let a = cx.weapons.arm();
     let length = if how == How::Stab { 0.35 } else { a.swing };
     cx.weapons.busy = length;
-    cx.weapons.action = Some(Action { how, t: 0.0, length, landed: false, was: None, hits: Vec::new() });
+    cx.weapons.action = Some(Action { how, t: 0.0, length, landed: false, was: None, hits: Vec::new(), stopped: None, clear: 0.0 });
     let rate = match a.key {
         "knife" => 1.25,
         "hammer" => 1.2,
@@ -1218,7 +1222,9 @@ fn sweep(cx: &mut Cx, dt: f32) {
     let p = act.t / act.length;
     let how = act.how;
     let Some(tip) = cx.hand.anchors.get(a.key).map(|x| x.tip) else { return };
-    let along: &[f32] = if how == How::Stab { &[1.0] } else { swept(a.key, a.kind) };
+    // (A stab is the point driven in; the rest of the edge meeting someone first, as a long blade thrust from too close
+    // does, draws across them as a cut would.)
+    let along = swept(a.key, a.kind);
     let hand = cx.hand.world(&cx.eye());
     let now: Vec<Vec3> = along.iter().map(|f| hand.transform_point(tip * *f)).collect();
     let act = cx.weapons.action.as_mut().unwrap();
@@ -1229,16 +1235,18 @@ fn sweep(cx: &mut Cx, dt: f32) {
         _ => (0.1, 0.85),
     };
     let Some(was) = was else { return };
-    if p < from || p > to || (act.landed && how != How::Cut) {
+    if p < from || p > to || (act.landed && how != How::Cut) || act.stopped.is_some() {
         return;
     }
-    for k in 0..now.len() {
+    // (The point first: a stab is that, where it goes in.)
+    let order: Vec<usize> = if how == How::Stab { (0..now.len()).rev().collect() } else { (0..now.len()).collect() };
+    for k in order {
         let Some((who, hit, dir)) = meets(cx, was[k], now[k]) else { continue };
         let far = was[k].distance(now[k]);
         // (Which point of the thing met them, and its move this frame: the hit is on that, wherever the eye looks.)
         cx.weapons.log.push(json!({ "swept": [was[k].to_array(), now[k].to_array()], "of_the_way_to_the_tip": along[k], "met": hit.point.to_array() }));
         let label = cx.label(who);
-        match how {
+        match if how == How::Stab && along[k] < 1.0 { How::Cut } else { how } {
             How::Stab => {
                 let stab = a.stab.unwrap();
                 let across = cx.hand.anchors.get(a.key).and_then(|x| x.edge).map(|e| (hand.rotation * e).normalize());
@@ -2132,6 +2140,7 @@ pub fn animate(
     rapier: ReadRapierContext,
     mut ragdolls: Query<(Entity, &mut Ragdoll)>,
     mut segments: Local<HashMap<Entity, (Entity, usize)>>,
+    mut sound: ResMut<Sound>,
 ) {
     let dt = time.delta_secs();
     let a = weapons.arm();
@@ -2159,8 +2168,13 @@ pub fn animate(
     let mut turn = Vec3::ZERO;
     let mut right = h.right;
     let mut left = h.left;
+    let mut swung = 0.0;
     if let (Some(act), Some(keys)) = (&weapons.action, weapons.action.as_ref().and_then(|x| swings(key, x.how))) {
-        let p = (act.t / act.length).min(1.0);
+        let p = match act.stopped {
+            Some((at, when)) => at * (1.0 - ((act.t / act.length - when) / (1.0 - when).max(1e-3)).clamp(0.0, 1.0)),
+            None => (act.t / act.length).min(1.0),
+        };
+        swung = p;
         let t = h.turn.unwrap_or([0.0; 3]);
         let from = [0.0, h.at[0], h.at[1], h.at[2], t[0], t[1], t[2]];
         let mut to = from;
@@ -2250,31 +2264,54 @@ pub fn animate(
 
     // Solid where it is drawn: held against a wall or someone it stops there, pulled back toward the chest as far as the
     // arms can take it and then turned aside (a gun's muzzle down, a blade or a tool's head up), as the hands do when
-    // the body comes up against something. It goes back out as the way clears, a little slower than it came in. Through a
-    // stab, a cut or a blow only the room stops it (what it meets in a person is `sweep`'s), and a dressing is put on
-    // someone. Pressed against someone it pushes them, with what arms holding a thing out give: a little.
+    // the body comes up against something. It goes back out as the way clears, a little slower than it came in. A stab, a
+    // cut or a blow is not bent out of the way: what it meets in a person is `sweep`'s, and the room's wall stops it.
+    // A dressing is put on someone. Pressed against someone it pushes them, with what arms holding a thing out give: a
+    // little.
     let (mut back, mut tilt) = (0.0, 0.0);
     hand.against = None;
+    let walls = QueryFilter::only_fixed().groups(CollisionGroups::new(Group::ALL, WORLD));
+    let sign = if a.gun.is_some() { 1.0 } else { -1.0 };
     if let (Some(shape), Some(&bounds), Ok(ctx)) = (hand.shapes.get(key), hand.boxes.get(key), rapier.single()) {
-        segments.clear();
-        for (who, rd) in &ragdolls {
-            segments.extend(rd.segs.iter().enumerate().map(|(k, s)| (s.entity, (who, k))));
+        // A swing or a stab that meets the room's wall (as drawn, pulled back as far as it still is) stops there, heard,
+        // and comes back the way it went, kept out of the wall on its way.
+        if let Some(act) = weapons.action.as_mut().filter(|x| x.stopped.is_none()) {
+            let (at, turned) = tilted(pos - Vec3::Z * hand.back, q, bounds, sign * hand.tilt);
+            let world = eye.mul_transform(Transform { translation: e(at), rotation: ts_turn(turned), scale: Vec3::ONE });
+            let mut met = false;
+            ctx.intersect_shape(world.translation, world.rotation, shape, walls, |_, _| {
+                met = true;
+                false
+            });
+            if !met {
+                act.clear = swung;
+            } else {
+                act.stopped = Some((act.clear, (act.t / act.length).min(1.0)));
+                let tip = hand.anchors.get(key).map_or(world.translation, |x| world.transform_point(x.tip));
+                // (No take of a tool or blade striking concrete: the grenade's steel on the floor, or the bat's blow.)
+                sound.play(if key == "bat" { "blunt" } else { "bounce-metal" }, Play::at(tip).gain(0.7));
+            }
         }
-        let people = weapons.action.is_none() && a.kind != Kind::Dress;
-        // (As far back as the arms take it: what is held out in the hands to some 12 cm ahead of the eye, against the chest;
-        // a long gun's stock no further into the shoulder than a few centimetres.)
-        let long = a.gun.is_some() && h.at[2] < 0.4;
-        let most = if long { 0.06 } else { (h.at[2] - 0.12).clamp(0.04, 0.4) };
-        let sign = if a.gun.is_some() { 1.0 } else { -1.0 };
-        let met;
-        (back, tilt, met) = clear_of(&ctx, people.then_some(&*segments), eye, pos, q, shape, bounds, most, sign);
-        if let Some((e, at)) = met.filter(|_| back > 0.002) {
-            if let Some(&(who, k)) = segments.get(&e) {
-                hand.against = Some((who, at));
-                // About 400 N/m of give in the arms, and no more than 80 N (a firm press of a thing held out).
-                let push = (back * 400.0).min(80.0);
-                if let Ok((_, mut rd)) = ragdolls.get_mut(who) {
-                    rd.push(k, eye.forward().as_vec3() * push * dt, at);
+        if weapons.action.as_ref().is_none_or(|x| x.stopped.is_some()) {
+            segments.clear();
+            for (who, rd) in &ragdolls {
+                segments.extend(rd.segs.iter().enumerate().map(|(k, s)| (s.entity, (who, k))));
+            }
+            let people = weapons.action.is_none() && a.kind != Kind::Dress;
+            // (As far back as the arms take it: what is held out in the hands to some 12 cm ahead of the eye, against the
+            // chest; a long gun's stock no further into the shoulder than a few centimetres.)
+            let long = a.gun.is_some() && h.at[2] < 0.4;
+            let most = if long { 0.06 } else { (h.at[2] - 0.12).clamp(0.04, 0.4) };
+            let met;
+            (back, tilt, met) = clear_of(&ctx, people.then_some(&*segments), eye, pos, q, shape, bounds, most, sign);
+            if let Some((e, at)) = met.filter(|_| back > 0.002) {
+                if let Some(&(who, k)) = segments.get(&e) {
+                    hand.against = Some((who, at));
+                    // About 400 N/m of give in the arms, and no more than 80 N (a firm press of a thing held out).
+                    let push = (back * 400.0).min(80.0);
+                    if let Ok((_, mut rd)) = ragdolls.get_mut(who) {
+                        rd.push(k, eye.forward().as_vec3() * push * dt, at);
+                    }
                 }
             }
         }
@@ -2284,7 +2321,7 @@ pub fn animate(
     hand.tilt = tilt.max(hand.tilt + (tilt - hand.tilt) * out);
     pos.z -= hand.back;
     if let Some(&bounds) = hand.boxes.get(key) {
-        (pos, q) = tilted(pos, q, bounds, if a.gun.is_some() { hand.tilt } else { -hand.tilt });
+        (pos, q) = tilted(pos, q, bounds, sign * hand.tilt);
     }
     hand.local = Transform { translation: e(pos), rotation: ts_turn(q), scale: Vec3::ONE };
     if let Some(he) = hand.entity {
