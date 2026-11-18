@@ -740,18 +740,17 @@ pub enum Tool {
 }
 
 // Something swung or thrown into the person at `point`, moving along `dir` at `speed` m/s with `mass` kg behind it.
-pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) {
+// The peak force the bone or chest under it took (N; 0 where none was in the way).
+pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) -> f32 {
     let pain = npc.vitals.pain;
     let first = npc.vitals.bleeds.len();
-    let seg = npc.nearest(point).0;
-    let name = seg.map_or("chest".to_string(), |k| npc.person.segments[k].name.clone());
+    let seg = npc.struck(point, dir);
     let skin = npc.surface(point - dir * 0.25, dir, 0.5, false).into_iter().find(|h| h.kind == Kind::Skin);
+    let name = seg.map_or("chest".to_string(), |k| npc.person.segments[k].name.clone());
     let energy = 0.5 * mass * speed * speed;
     let base = base_of(&name).to_string();
     // The bone first in its way takes the force the flesh over it lets through (bones.rs); the soft parts take the energy.
-    if let Some(k) = seg {
-        npc.bones().impact(k, point, dir, mass, speed, tool);
-    }
+    let force = seg.map_or(0.0, |k| npc.bones().impact(k, point, dir, mass, speed, tool));
     // (A blow to the throat is not one to the head: no concussion, nor the scalp's bleeding. What it breaks there, the
     // larynx, is bones.rs's.)
     if base == "head" && npc.in_neck(point) {
@@ -796,6 +795,7 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
         npc.eyes().struck(point, dir, energy, narrow);
     }
     npc.hit(point, dir * (mass * speed * 0.9), 0.0);
+    force
 }
 
 fn rupture(npc: &mut Npc, p: usize, energy: f32) {

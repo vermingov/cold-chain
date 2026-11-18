@@ -276,6 +276,10 @@ pub struct Held {
 }
 
 const AIMED: f32 = 15.0;
+// A long gun's firing hand at rest: its butt in the pocket in front of the shoulder joint (arm.rs SHOULDER), some 4 cm
+// ahead of the eye, the head up off the stock. (With the hand at 28 cm the butt was level with the eye, the guns sat low
+// in the corner of the view and the hand on the grip filled it.)
+const LONG: [f32; 3] = [0.13, -0.125, 0.32];
 // A long gun's firing hand: on a pistol grip raked back some 20 degrees, the index finger along to the trigger.
 // Its other hand reaches the forend because the body turns that shoulder forward and in, as a rifleman stands.
 const FORWARD: [f32; 3] = [-0.06, 0.0, 0.12];
@@ -295,12 +299,15 @@ pub fn held(key: &str) -> Option<Held> {
         "knife" => h([0.17, -0.17, 0.42], Some([-0.75, -0.2, -0.1]), Some(HANDLE), None, [0.0; 2]),
         "sword" => h([0.16, -0.21, 0.45], Some([-0.95, -0.3, 0.15]), Some(HANDLE), Some(handle_at(-0.1)), [0.0; 2]),
         "bat" => h([0.19, -0.22, 0.42], Some([-1.15, -0.35, 0.3]), Some(handle_at(0.085)), Some(HANDLE), [0.0; 2]),
-        "pistol" => h([0.07, -0.115, 0.5], None, Some(g("grip", [0.0, -0.005, -0.005], [0.0, -0.95, -0.31], [0.0, -0.31, 0.95])),
-            Some(g("support", [-0.022, -0.02, 0.008], [0.1, -0.95, -0.3], [0.45, -0.25, 0.85])), [0.035, 0.2]),
-        "rifle" => h([0.14, -0.14, 0.28], None, Some(RIFLE_GRIP), Some(forend([0.0, 0.01, 0.36])), [0.06, 0.12]),
-        "shotgun" => h([0.14, -0.145, 0.29], None, Some(RIFLE_GRIP), Some(forend([0.0, 0.04, 0.32])), [0.06, 0.15]),
-        "ak" => h([0.14, -0.15, 0.33], None, Some(PISTOL_GRIP), Some(forend([0.0, 0.075, 0.29])), [0.03, 0.06]),
-        "m4" => h([0.14, -0.14, 0.29], None, Some(PISTOL_GRIP), Some(forend([0.0, 0.07, 0.27])), [0.025, 0.05]),
+        // A handgun in two hands: the firing hand high on the grip, the web of its thumb up under the slide; the other hand
+        // round the front of it, its palm on the grip's left side and its fingers over the first hand's, the hand running
+        // forward along the frame (turned across it, toward the right, the palm faced back at the eye).
+        "pistol" => h([0.07, -0.115, 0.5], None, Some(g("grip", [0.0, 0.013, -0.005], [0.0, -0.95, -0.31], [0.0, -0.31, 0.95])),
+            Some(g("support", [-0.008, -0.002, 0.012], [0.1, -0.95, -0.3], [0.12, -0.3, 0.95])), [0.035, 0.2]),
+        "rifle" => h(LONG, None, Some(RIFLE_GRIP), Some(forend([0.0, 0.01, 0.36])), [0.06, 0.12]),
+        "shotgun" => h([LONG[0], LONG[1] - 0.005, LONG[2] + 0.01], None, Some(RIFLE_GRIP), Some(forend([0.0, 0.04, 0.32])), [0.06, 0.15]),
+        "ak" => h([LONG[0], LONG[1] - 0.01, LONG[2] + 0.05], None, Some(PISTOL_GRIP), Some(forend([0.0, 0.075, 0.29])), [0.03, 0.06]),
+        "m4" => h([LONG[0], LONG[1], LONG[2] + 0.01], None, Some(PISTOL_GRIP), Some(forend([0.0, 0.07, 0.27])), [0.025, 0.05]),
         "grenade" => h([0.15, -0.16, 0.4], Some([-1.3, -0.2, 0.0]), Some(g("ball", [0.0, 0.0, -0.005], [0.0, 0.0, -1.0], [-1.0, 0.0, 0.0])), None, [0.0; 2]),
         "bandage" => h([0.1, -0.13, 0.4], Some([0.3, 0.0, 0.0]), Some(g("ball", [0.0; 3], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0])),
             Some(g("pinch", [-0.03, -0.065, -0.025], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0])), [0.0; 2]),
@@ -308,14 +315,16 @@ pub fn held(key: &str) -> Option<Held> {
         // 6): it drives back and flips up far more, held out the same way in two hands. (Its grip is raked back further
         // than the 9 mm's, about 37 degrees: the hands lie along it.)
         "deagle" => h([0.06, -0.11, 0.52], None, Some(g("grip", [0.0; 3], [0.0, -0.8, -0.6], [0.0, -0.6, 0.8])),
-            Some(g("support", [-0.026, -0.018, 0.01], [0.1, -0.8, -0.59], [0.45, -0.35, 0.82])), [0.06, 0.45]),
+            Some(g("support", [-0.01, -0.004, 0.014], [0.1, -0.8, -0.59], [0.12, -0.6, 0.8])), [0.06, 0.45]),
         // A 10/22: a straight wrist (no pistol grip), the other hand under the forend. Its .22 LR recoils by a fraction of
         // a joule in a 2.3 kg rifle: hardly a nudge.
-        "r22" => h([0.14, -0.14, 0.28], None, Some(RIFLE_GRIP), Some(forend([0.0, 0.015, 0.32])), [0.006, 0.012]),
-        // The tools in both hands (the hammer in one), carried up as the bat is; the shovel across the body, its blade up
-        // by the left shoulder and the left hand up its shaft.
-        "shovel" => h([0.2, -0.25, 0.38], Some([-0.75, -0.6, 0.5]), Some(HANDLE), Some(handle_at(0.2)), [0.0; 2]),
-        "sledge" => h([0.2, -0.26, 0.4], Some([-1.0, -0.35, 0.3]), Some(handle_at(0.12)), Some(HANDLE), [0.0; 2]),
+        "r22" => h(LONG, None, Some(RIFLE_GRIP), Some(forend([0.0, 0.015, 0.32])), [0.006, 0.012]),
+        // The tools in both hands (the hammer in one), carried up as the bat is; the long ones stood up past upright and
+        // leaning out to the right, their heads back over the right shoulder, out of the way of the eye. (The shovel was carried across the
+        // body to the left shoulder and the sledge's long handle stood up before the eye: both across the middle of the
+        // view, the shovel's blade over the crosshair.)
+        "shovel" => h([0.21, -0.26, 0.36], Some([-1.8, -0.9, 0.5]), Some(HANDLE), Some(handle_at(0.2)), [0.0; 2]),
+        "sledge" => h([0.21, -0.27, 0.37], Some([-1.8, -0.9, 0.3]), Some(handle_at(0.12)), Some(HANDLE), [0.0; 2]),
         "hammer" => h([0.17, -0.19, 0.42], Some([-1.05, -0.2, -0.1]), Some(HANDLE), None, [0.0; 2]),
         "medkit" => h([0.0, -0.2, 0.5], Some([0.35, 0.1, 0.0]), Some(g("wrap", [0.12, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0])),
             Some(g("wrap", [-0.12, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0])), [0.0; 2]),
@@ -729,7 +738,8 @@ pub struct Crossing {
 // The first skin or clothes of `npc` the line from `o` along `d` crosses within `far` (npc.surface).
 pub fn surface(npc: &mut Npc, o: Vec3, d: Vec3, far: f32) -> Option<Crossing> {
     let c = npc.surface(o, d, far, false).into_iter().find(|h| matches!(h.kind, npc::Kind::Skin | npc::Kind::Cloth))?;
-    Some(Crossing { point: c.point, t: c.t, segment: npc.nearest(c.point).0.unwrap_or(0) })
+    let segment = npc.struck(c.point, d).unwrap_or(0);
+    Some(Crossing { point: c.point, t: c.t, segment })
 }
 
 // What a missile did (wounds.rs Pierced): whether it went in, stopped in there, where it ended or came out, with what
@@ -770,13 +780,13 @@ fn pierce_with(cx: &mut Cx, who: Entity, origin: Vec3, dir: Vec3, m: &Missile, f
 
 #[allow(clippy::too_many_arguments)]
 fn blow(cx: &mut Cx, who: Entity, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) {
-    let seg = cx.npc(who, |n| {
-        wounds::blow(n, point, dir, mass, speed, tool.map(Tool::wounds));
-        n.nearest(point).0.map(|k| n.person.segments[k].name.clone())
-    });
+    let (force, seg) = cx.npc(who, |n| {
+        let force = wounds::blow(n, point, dir, mass, speed, tool.map(Tool::wounds));
+        (force, n.struck(point, dir).map(|k| n.person.segments[k].name.clone()))
+    }).unzip();
     let label = cx.label(who);
     cx.weapons.log.push(json!({ "hit": "blow", "person": label, "segment": seg.flatten(), "point": point.to_array(), "dir": dir.to_array(), "mass": mass,
-                                "speed": speed, "joules": 0.5 * mass * speed * speed, "tool": format!("{tool:?}") }));
+                                "speed": speed, "joules": 0.5 * mass * speed * speed, "newtons": force, "tool": format!("{tool:?}") }));
 }
 
 // --- the thing in the hand --------------------------------------------------------------------------------------------
@@ -1210,6 +1220,8 @@ fn sweep(cx: &mut Cx, dt: f32) {
     for k in 0..now.len() {
         let Some((who, hit, dir)) = meets(cx, was[k], now[k]) else { continue };
         let far = was[k].distance(now[k]);
+        // (Which point of the thing met them, and its move this frame: the hit is on that, wherever the eye looks.)
+        cx.weapons.log.push(json!({ "swept": [was[k].to_array(), now[k].to_array()], "of_the_way_to_the_tip": along[k], "met": hit.point.to_array() }));
         let label = cx.label(who);
         match how {
             How::Stab => {
@@ -2717,9 +2729,25 @@ fn stain(
     }
 }
 
+// For a check only (the `viewmodel` scenario): the camera taken this far from the eye (in its own frame) once the hands and
+// what they hold are posed, to see them from the side; what hangs from the eye is put back where it was in the world.
+#[derive(Resource, Default)]
+pub struct Aside(pub Option<Transform>);
+
+fn aside(aside: Res<Aside>, hand: Res<Hand>, mut eye: Query<&mut Transform, With<Player>>, mut transforms: Query<&mut Transform, Without<Player>>) {
+    let Some(off) = aside.0 else { return };
+    let Ok(mut t) = eye.single_mut() else { return };
+    *t = t.mul_transform(off);
+    if let Some(Ok(mut h)) = hand.entity.map(|e| transforms.get_mut(e)) {
+        *h = Transform::from_matrix(off.to_matrix().inverse() * hand.local.to_matrix());
+    }
+}
+
 pub fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "held.wesl");
     app.add_plugins(MaterialPlugin::<HeldMaterial>::default())
+        .init_resource::<Aside>()
+        .add_systems(PostUpdate, aside.before(bevy::transform::TransformSystems::Propagate))
         .init_resource::<Weapons>()
         .init_resource::<WeaponModels>()
         .init_resource::<Hand>()
@@ -2961,6 +2989,303 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
             }
             Kind::Dress => {}
         }
+    }
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        let dir = w.resource::<crate::scenario::Out>().0.clone();
+        crate::profiler::save_in(w, dir);
+    })));
+    s.push(Step::Wait(2));
+    s
+}
+
+// --- the `viewmodel` scenario ----------------------------------------------------------------------------------------------
+//
+// Everything on the board in the hand, as the player sees it: at rest looking ahead, at the floor and at the ceiling, then
+// in use (a gun fired and reloading, a blade's stab and cut, a tool's swing and its blow from overhead, the fists wound up
+// and thrown, the grenade lobbed) at the young man in the line-up, a picture of each. Each gun is also fired at the east
+// wall with the crosshair (`sight`) noted first: where the bullet hit, put on the screen, against where the crosshair was.
+// `VIEWMODEL=pistol,r22` shows only those.
+
+// The look turned up (positive) or down from level, radians.
+fn pitch(p: f32) -> crate::scenario::Step {
+    crate::scenario::Step::Do(Box::new(move |w: &mut World| {
+        for mut pl in w.query::<&mut Player>().iter_mut(w) {
+            pl.pitch = p;
+        }
+    }))
+}
+
+// A picture at full resolution (the frames between are drawn at a quarter, to be quicker on a software renderer).
+fn picture(s: &mut Vec<crate::scenario::Step>, name: String) {
+    use crate::scenario::Step;
+    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = 1.0)));
+    // (The image is made its new size a frame or two after it is asked for.)
+    s.push(Step::Wait(3));
+    s.push(Step::Shot(name));
+    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = 4.0)));
+}
+
+pub fn viewmodel() -> Vec<crate::scenario::Step> {
+    use crate::scenario::Step;
+    let mut s = Vec::new();
+    let only: Option<Vec<String>> = std::env::var("VIEWMODEL").ok().map(|v| v.split(',').map(String::from).collect());
+    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = 4.0)));
+    for a in ARMS.iter().filter(|a| only.as_ref().is_none_or(|o| o.iter().any(|k| k == a.key))) {
+        let key = a.key;
+        if held(key).is_none() && a.kind != Kind::Fists {
+            continue;
+        }
+        s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::take(w, key))));
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            use bevy::ecs::system::RunSystemOnce;
+            let _ = w.run_system_once(crate::sandbox::reset);
+        })));
+        // At rest: ahead, down at the floor, up at the ceiling (the hands given time to catch up with each turn).
+        s.push(stand(0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
+        for (name, p) in [("ahead", 0.0), ("down", -1.25), ("up", 1.1)] {
+            s.push(pitch(p));
+            s.push(Step::Wait(25));
+            picture(&mut s, format!("vm_{key}_{name}"));
+        }
+        s.push(pitch(0.0));
+        s.push(Step::Wait(30));
+        // From the right and a little ahead, looking back at the hands; then from above.
+        for (name, off) in [("side", Transform::from_xyz(0.55, -0.05, -0.3).looking_at(Vec3::new(0.05, -0.15, -0.35), Vec3::Y)),
+                            ("above", Transform::from_xyz(0.05, 0.35, -0.3).looking_at(Vec3::new(0.05, -0.15, -0.32), Vec3::NEG_Z))] {
+            s.push(Step::Do(Box::new(move |w: &mut World| w.resource_mut::<Aside>().0 = Some(off))));
+            picture(&mut s, format!("vm_{key}_{name}"));
+            s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Aside>().0 = None)));
+        }
+        let near = match a.kind {
+            Kind::Gun => 3.2,
+            Kind::Grenade => 5.0,
+            _ if matches!(key, "knife" | "hammer" | "fists") => 0.5,
+            _ => 0.75,
+        };
+        let at_person = move |s: &mut Vec<Step>| s.push(stand(0.75, 2.2 - near, [0.75, 1.3, 2.2], 1.65));
+        let frames = |secs: f32| (secs * 60.0).round() as u32;
+        match a.kind {
+            Kind::Gun => {
+                // At the east wall: the crosshair, then the shot, and where it hit on the screen.
+                s.push(stand(0.0, -4.0, [11.0, 1.4, -4.0], 1.65));
+                s.push(Step::Wait(40));
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    let sight = w.resource::<Weapons>().sight;
+                    w.resource_mut::<Weapons>().log.clear();
+                    crate::scenario::log(w, json!({ "event": "sight", "what": key, "sight": sight.map(|v| v.to_array()) }));
+                    crate::warm::press(w, 0);
+                })));
+                s.push(Step::Wait(2));
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    crate::warm::release(w, 0);
+                    let hits: Vec<Vec3> = w.resource::<Weapons>().log.iter().filter(|h| h["hit"] == "wall")
+                        .filter_map(|h| serde_json::from_value::<[f32; 3]>(h["point"].clone()).ok()).map(Vec3::from).collect();
+                    let mut q = w.query_filtered::<(&Camera, &GlobalTransform), With<Player>>();
+                    let Ok((camera, eye)) = q.single(w) else { return };
+                    let on: Vec<[f32; 2]> = hits.iter().filter_map(|p| camera.world_to_ndc(eye, *p)).map(|p| [(p.x + 1.0) / 2.0, (1.0 - p.y) / 2.0]).collect();
+                    crate::scenario::log(w, json!({ "event": "hit on the screen", "what": key, "at": on }));
+                })));
+                s.push(Step::Wait(40));
+                at_person(&mut s);
+                s.push(Step::Wait(40));
+                s.push(Step::Do(Box::new(|w: &mut World| crate::warm::press(w, 0))));
+                picture(&mut s, format!("vm_{key}_fire"));
+                s.push(Step::Do(Box::new(|w: &mut World| crate::warm::release(w, 0))));
+                s.push(Step::Wait(60));
+                s.push(push(vec![Act::Reload]));
+                s.push(Step::Wait(frames(a.gun.as_ref().unwrap().reload * 0.45)));
+                picture(&mut s, format!("vm_{key}_reload"));
+            }
+            Kind::Blade | Kind::Blunt => {
+                at_person(&mut s);
+                s.push(Step::Wait(40));
+                let first = if a.kind == Kind::Blade { ("stab", 0.35 * 0.3) } else { ("blow", a.swing * 0.42) };
+                s.push(Step::Do(Box::new(|w: &mut World| {
+                    crate::warm::press(w, 0);
+                    crate::warm::release(w, 0);
+                })));
+                s.push(Step::Wait(frames(first.1)));
+                picture(&mut s, format!("vm_{key}_{}", first.0));
+                s.push(Step::Wait(40));
+                if a.kind == Kind::Blade || a.down.is_some() {
+                    let second = if a.kind == Kind::Blade { ("cut", a.swing * 0.4) } else { ("overhead", a.swing * 0.3) };
+                    s.push(Step::Do(Box::new(|w: &mut World| {
+                        crate::warm::press(w, 2);
+                        crate::warm::release(w, 2);
+                    })));
+                    s.push(Step::Wait(frames(second.1)));
+                    picture(&mut s, format!("vm_{key}_{}", second.0));
+                    s.push(Step::Wait(40));
+                }
+            }
+            Kind::Fists => {
+                at_person(&mut s);
+                s.push(Step::Wait(30));
+                s.push(Step::Do(Box::new(|w: &mut World| crate::warm::press(w, 2))));
+                s.push(Step::Wait(50));
+                picture(&mut s, "vm_fists_wound".into());
+                s.push(Step::Do(Box::new(|w: &mut World| crate::warm::release(w, 2))));
+                s.push(Step::Wait(5));
+                picture(&mut s, "vm_fists_punch".into());
+                s.push(Step::Wait(40));
+            }
+            Kind::Grenade => {
+                at_person(&mut s);
+                s.push(Step::Wait(30));
+                s.push(Step::Do(Box::new(|w: &mut World| {
+                    crate::warm::press(w, 2);
+                    crate::warm::release(w, 2);
+                })));
+                s.push(Step::Wait(12));
+                picture(&mut s, "vm_grenade_lob".into());
+                // (Its fuse burnt down before the next is taken up.)
+                s.push(Step::Wait(340));
+            }
+            _ => {}
+        }
+        s.push(report(format!("{key}: in use")));
+    }
+    // Last, as it takes the sleeves off: what the arms cost a frame, all of it (the game's code, the render thread, the
+    // drawing), by the wall clock: the empty hands (no arms drawn) against the fists up (both arms in the guard, nothing
+    // else), looking at the line-up, twice over. (On a machine shared with other work it is lost in the noise.)
+    if only.as_ref().is_none_or(|o| o.iter().any(|k| k == "cost")) {
+        s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::graphics::Graphics>().level = 1.0)));
+        s.push(stand(0.0, -4.0, [0.0, 1.4, 2.0], 1.65));
+        // Then the fists with what each part of the arms adds taken away in turn: their shadows, then the sleeves.
+        for (k, key) in ["hands", "fists", "hands", "fists", "fists", "fists"].into_iter().enumerate() {
+            // (The wall clock: the scenario's own clock goes a sixtieth of a second a frame whatever the frame took.)
+            let from = std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+            let to = from.clone();
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                crate::warm::take(w, key);
+                let Some(roots) = w.get_resource::<crate::hands::Arms>().map(|a| [a.r.root, a.l.root]) else { return };
+                let mut stack = roots.to_vec();
+                let mut parts = Vec::new();
+                while let Some(e) = stack.pop() {
+                    stack.extend(w.get::<Children>(e).into_iter().flat_map(|c| c.iter()));
+                    parts.push((e, w.get::<Name>(e).map_or(String::new(), |n| n.to_string())));
+                }
+                for (e, name) in parts {
+                    if k >= 4 {
+                        w.entity_mut(e).insert(bevy::light::NotShadowCaster);
+                    }
+                    if k >= 5 && name == "sleeve" {
+                        w.entity_mut(e).insert(Visibility::Hidden);
+                    }
+                }
+            })));
+            s.push(Step::Wait(20));
+            s.push(Step::Do(Box::new(move |_: &mut World| *from.lock().unwrap() = std::time::Instant::now())));
+            s.push(Step::Wait(120));
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                let ms = to.lock().unwrap().elapsed().as_secs_f64() * 1000.0 / 120.0;
+                let what = ["the empty hands", "the fists", "the empty hands", "the fists", "the fists, casting no shadow", "the fists, no shadow, no sleeves"][k];
+                crate::scenario::log(w, json!({ "event": "cost", "what": what, "ms_a_frame": ms }));
+            })));
+        }
+    }
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        let dir = w.resource::<crate::scenario::Out>().0.clone();
+        crate::profiler::save_in(w, dir);
+    })));
+    s.push(Step::Wait(2));
+    s
+}
+
+// --- the `blasts` scenario ----------------------------------------------------------------------------------------------
+//
+// The shotgun's cost (the TS spent 110 to 360 ms of JS on one blast): fired into a person with the muzzle 0.35 m off (the
+// charge still one mass) and 1.75 m off (nine pellets), and along the line-up from its end the same, so that what goes
+// through one goes on into the next. Each blast's own time (`fire`'s "ms") and the hits into the log; with --profile, the
+// "weapons" row of the profiler holds the blast's whole frame. Then the same with a stab and a blow from just over a head:
+// the eye looking past the top of it, what is in the hand going where it goes.
+pub fn blasts() -> Vec<crate::scenario::Step> {
+    use crate::scenario::Step;
+    let reset = || Step::Do(Box::new(|w: &mut World| {
+        use bevy::ecs::system::RunSystemOnce;
+        let _ = w.run_system_once(crate::sandbox::reset);
+    }));
+    let mut s = vec![Step::Do(Box::new(|w: &mut World| crate::warm::take(w, "shotgun"))), Step::Wait(30)];
+    // (who, the part, how far; or None: from the line-up's end, along it, this far from the first)
+    // (Metres from the eye: the shotgun's muzzle is some 1.25 m ahead of it, so at 1.6 m the charge goes in as one, at 3 m
+    // the pellets have parted.)
+    let blasts: [(&str, Option<(usize, &str)>, f32); 4] = [
+        ("a person, the muzzle 0.35 m off", Some((1, "chest")), 1.6),
+        ("a person, the muzzle 1.75 m off", Some((2, "belly")), 3.0),
+        ("the line-up from its end, the muzzle 1.75 m off", None, 3.0),
+        ("the line-up from its end, the muzzle 0.35 m off", None, 1.6),
+    ];
+    for (i, (what, at, far)) in blasts.into_iter().enumerate() {
+        s.push(reset());
+        s.push(Step::Do(Box::new(|w: &mut World| crate::warm::take(w, "shotgun"))));
+        s.push(Step::Wait(60));
+        match at {
+            Some((n, part)) => s.push(Step::Do(Box::new(move |w: &mut World| {
+                crate::warm::aim(w, n, part, far);
+            }))),
+            // The barrel on the line through the chests of the last two (the hooded man's, the young man's), the eye
+            // `far` back from the last along it: through him and on into the next. (The barrel is held off the eye's
+            // line, some 9 cm right and 6 up of it: side on and close, a look at his chest put the shot beside him; and
+            // a fixed point down the room left the line beside him or not as he stood.)
+            None => s.push(Step::Do(Box::new(move |w: &mut World| {
+                let chest = |w: &mut World, n| crate::warm::aim(w, n, "chest", 0.0).map(|(_, at)| at);
+                let (Some(end), Some(next)) = (chest(w, 3), chest(w, 2)) else { return };
+                let muzzle = {
+                    let hand = w.resource::<Hand>();
+                    hand.anchors.get("shotgun").map_or(Vec3::new(0.0, 0.0, -1.25), |a| hand.local.transform_point(a.tip))
+                };
+                let along = (next - end).normalize();
+                let look = Transform::default().looking_to(along, Vec3::Y);
+                let eye = end - along * far - look.rotation * Vec3::new(muzzle.x, muzzle.y, 0.0);
+                w.resource_scope(|w, map: Mut<crate::map::Map>| {
+                    let ground = map.ground(eye.x, eye.z, f32::INFINITY);
+                    for mut p in w.query::<&mut Player>().iter_mut(w) {
+                        p.spawn(&map, eye.x, eye.z, Some(eye + along), eye.y - ground);
+                    }
+                });
+            }))),
+        }
+        s.push(Step::Wait(30));
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            w.resource_mut::<Weapons>().log.clear();
+            crate::warm::press(w, 0);
+        })));
+        s.push(Step::Wait(2));
+        s.push(Step::Shot(format!("blast_{i}")));
+        s.push(Step::Do(Box::new(|w: &mut World| crate::warm::release(w, 0))));
+        s.push(Step::Wait(30));
+        s.push(report(format!("shotgun into {what}")));
+    }
+    // Over a head: the eye 6 cm over the top of the young man's, from 0.5 m.
+    for key in ["knife", "bat"] {
+        s.push(reset());
+        s.push(Step::Wait(60));
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            crate::warm::take(w, key);
+            let Some((who, head)) = crate::warm::aim(w, 2, "head", 0.5) else { return };
+            // The top of the head: the scalp, straight down onto it from over the neck. (Its segment's far end is some 20
+            // cm under it: looking 6 cm over that was looking them in the eye.)
+            let top = crate::npc::with(w, who, |n| {
+                let skin = n.surface(head + Vec3::Y * 0.6, Vec3::NEG_Y, 0.6, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin);
+                skin.map(|c| c.point.y)
+            }).flatten().unwrap_or(head.y + 0.25);
+            w.resource_scope(|w, map: Mut<crate::map::Map>| {
+                for mut p in w.query::<&mut Player>().iter_mut(w) {
+                    p.spawn(&map, head.x, head.z + 0.5, Some(Vec3::new(head.x, top + 0.06, head.z)), 1.65);
+                }
+            });
+            crate::scenario::log(w, json!({ "event": "over a head", "what": key, "aimed_over_by": 0.06, "top": top, "neck": head.to_array() }));
+        })));
+        s.push(Step::Wait(40));
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            w.resource_mut::<Weapons>().log.clear();
+            crate::warm::press(w, 0);
+            crate::warm::release(w, 0);
+        })));
+        s.push(Step::Wait(if key == "knife" { 6 } else { 14 }));
+        s.push(Step::Shot(format!("over_{key}")));
+        s.push(Step::Wait(40));
+        s.push(report(format!("{key}: swung with the eye over a head")));
     }
     s.push(Step::Do(Box::new(|w: &mut World| {
         let dir = w.resource::<crate::scenario::Out>().0.clone();
