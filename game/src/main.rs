@@ -15,6 +15,7 @@ mod arm;
 mod arsenal;
 mod behaviour;
 mod blood;
+mod body_scenario;
 mod bones;
 mod bruise;
 mod cut_scenario;
