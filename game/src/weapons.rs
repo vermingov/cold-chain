@@ -2371,7 +2371,8 @@ fn clear_of(ctx: &RapierContext, people: Option<&HashMap<Entity, (Entity, usize)
             .flatten()
             .min_by(|a, b| a.1.time_of_impact.total_cmp(&b.1.time_of_impact));
         let Some((e, h)) = hit else { return (0.0, tilt, None) };
-        if h.time_of_impact > 0.0 || tilt >= 1.2 {
+        // (Against someone it is not turned away: held as far back as it goes, it pushes them; a gun fires into them.)
+        if h.time_of_impact > 0.0 || tilt >= 1.2 || people.is_some_and(|p| p.contains_key(&e)) {
             let point = h.details.map_or(at + ahead * h.time_of_impact, |d| d.witness1);
             return (most - h.time_of_impact, tilt, Some((e, point)));
         }
@@ -2396,7 +2397,10 @@ fn measure(mut hand: ResMut<Hand>, children: Query<&Children>, globals: Query<&G
     let home = hg.affine().inverse();
     let mut found = Vec::new();
     'models: for (&key, &root) in &hand.models {
-        if hand.shapes.contains_key(key) {
+        // (Not before its moving parts are found: the AK's magazine and the shotgun's barrels are cut out of their meshes
+        // first, and a piece just made is at the world's origin until its place is worked out, which made their hulls
+        // metres long and held them turned down at the floor.)
+        if hand.shapes.contains_key(key) || (!parts_of(key).is_empty() && !hand.parts.contains_key(key)) {
             continue;
         }
         let mut points = Vec::new();
