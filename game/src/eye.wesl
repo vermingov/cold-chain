@@ -80,12 +80,42 @@ fn segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     return distance(p, a + ab * t);
 }
 
-// The damage sheet at `uv`: what the TS painted on its canvas, in its order.
-fn damage(uv: vec2<f32>, c: vec2<f32>) -> vec4<f32> {
+// Smooth value noise in the picture's plane, 0 to 1.
+fn hash2(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise2(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    var f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Bloodshot (`red`, 0 to 1): the conjunctiva's vessels dilated, a net of fine red lines on the white that wander and
+// branch, thickest and most out toward the lids and fading toward the cornea (conjunctival injection: unlike the
+// ciliary flush of an inflamed eye, which rings the cornea), over a pink flush of the white itself. The lines are where
+// a warped noise crosses its middle; two sizes of them, the finer ones the branches.
+fn bloodshot(uv: vec2<f32>, rc: f32, red: f32) -> vec4<f32> {
+    let out = mix(0.5, 1.0, smoothstep(eye.sizes.x * 1.1, SCLERA * 0.8, rc));
+    let warp = vec2(noise2(uv * 40.0), noise2(uv * 40.0 + 17.0)) * 2.5;
+    let big = 1.0 - smoothstep(0.0, 0.05, abs(noise2(uv * 70.0 + warp) - 0.5));
+    let fine = 1.0 - smoothstep(0.0, 0.035, abs(noise2(uv * 160.0 + warp * 1.7) - 0.5));
+    let lines = max(big, fine * 0.6 * smoothstep(0.3, 0.8, noise2(uv * 25.0)));
+    let flush = rgba(205.0, 92.0, 86.0, 0.6 * red * out);
+    return over(flush, rgba(150.0, 18.0, 18.0, 0.9 * red * out * lines));
+}
+
+// The damage sheet at `uv`: what the TS painted on its canvas, in its order, over the eye's bloodshot white.
+fn damage(uv: vec2<f32>, c: vec2<f32>, red: f32) -> vec4<f32> {
     var out = vec4(0.0);
     let rc = distance(uv, c);
-    // Blood under the conjunctiva: bright red, flat, sharp-edged, on the white only (the cornea's edge is its limit).
     let white = inside(rc, SCLERA) * (1.0 - inside(rc, eye.sizes.x * 1.03));
+    if red > 0.0 {
+        let b = bloodshot(uv, rc, red);
+        out = over(out, vec4(b.rgb, b.a * white));
+    }
+    // Blood under the conjunctiva: bright red, flat, sharp-edged, on the white only (the cornea's edge is its limit).
     if white > 0.0 {
         for (var i = 0u; i < eye.counts.x; i++) {
             let p = eye.patches[i];
@@ -160,9 +190,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let bl = mix(fresh, clot, s.z) * (0.75 + 0.25 * smoothstep(top - 2.0 * eye.iris.y, top, y));
         albedo = mix(albedo, bl, max(under, s.x) * (1.0 - smoothstep(0.97, 1.03, er)));
     }
-    if eye.counts.x + eye.counts.y > 0u {
-        let ed = damage(uv, c);
+    if eye.counts.x + eye.counts.y > 0u || s.w > 0.0 {
+        let ed = damage(uv, c, s.w);
         albedo = mix(albedo, ed.rgb, ed.a);
+    }
+    // A dead eye drying: the tear film gone, the shine of every lamp in it dulled, the cornea a little hazed over the
+    // iris (clouding proper takes hours).
+    if eye.iris.z > 0.0 {
+        pbr.material.perceptual_roughness = mix(pbr.material.perceptual_roughness, 0.32, eye.iris.z);
+        albedo = mix(albedo, vec3(0.32, 0.31, 0.3), 0.12 * eye.iris.z * (1.0 - smoothstep(0.95, 1.1, er)));
     }
     // An emptied globe: its wall in folds.
     if s.y > 0.01 {

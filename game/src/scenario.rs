@@ -180,6 +180,9 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         // The face, the eyes and the mouth (port/face): face.rs; every pipeline made before play (warm.rs).
         "face" => s = crate::face::scenario(),
         "warm" => s = crate::warm::scenario(),
+        // The mouth filling with blood, the face cut, the skull opened, the eyes hurt (BACKLOG item 7): head_scenario.rs.
+        "head" => s = crate::head_scenario::steps(""),
+        "head-mouth" | "head-face" | "head-skull" | "head-eyes" => s = crate::head_scenario::steps(&name[5..]),
         // The Escape menu and its settings (menu.rs).
         "menu" => s = crate::menu::scenario(),
         _ => return body(name),

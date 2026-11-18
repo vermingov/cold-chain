@@ -52,8 +52,16 @@ const CARTILAGE: f32 = 0.06; // m from the midline a rib is costal cartilage (bo
 
 // The organs that are the cavity's contents: the wall ends where the first of them begins.
 fn cavity(kind: &str) -> bool {
-    ["lung", "heart", "liver", "stomach", "bowel", "colon", "spleen", "gallbladder", "pancreas", "bladder", "muscle", "kidney"].contains(&kind)
+    ["lung", "heart", "liver", "stomach", "bowel", "colon", "spleen", "gallbladder", "pancreas", "bladder", "muscle", "kidney", "brain"].contains(&kind)
 }
+
+// The scalp and the skull's vault, mm: the scalp's skin, the dense fat under it, the galea (its tendon sheet), and under
+// the bone the dura (the scalp 5 to 7 mm in all; the vault 6 to 7 mm of bone, thicker at the back, thinner at the
+// temple: an adult's, Lynnerup 2001).
+const SCALP_FAT: f32 = 3.0;
+const GALEA: f32 = 1.0;
+const VAULT: f32 = 6.5;
+const DURA: f32 = 1.0;
 
 // One column's layers: where each ends, in mm below the skin (dermis, fat, fascia or sheath, three muscles, the zone of
 // the ribs, the lining: its end is the wall's whole depth); which way each muscle's fibres run (rest space); what is in
@@ -83,12 +91,20 @@ pub type WallMaterial = ExtendedMaterial<StandardMaterial, Layers>;
 
 // The layers under `top` (rest space) along `into` (world): measured to the ribs and the cavity, the soft layers laid in
 // at their thicknesses for the site, fat taking up the rest (it is what differs most between men).
-fn column(npc: &mut npc::Npc, owner: usize, top: Vec3, into: Vec3, chest: bool, shoulder: &dyn Fn(f32) -> Vec3) -> Column {
+fn column(npc: &mut npc::Npc, owner: usize, top: Vec3, into: Vec3, place: &str, shoulder: &dyn Fn(f32) -> Vec3) -> Column {
+    let chest = place == "chest";
     let from = npc.world_of(top, owner, None).0;
     let traced = npc.traced.clone();
     let only = |p: &crate::anatomy::TracedPart| cavity(&p.kind) || p.name.contains("rib") || p.name.contains("sternum");
     let (spans, _) = npc.trace(from, into, FAR, 0.0, Some(&only));
     let organ = spans.iter().find(|s| cavity(&traced.parts[s.part].kind));
+    if place == "head" {
+        // The scalp, the vault of bone (drawn as the ribs' bone is), the dura; the brain where the anatomy has it.
+        let deep = organ.map_or(DERMIS + SCALP_FAT + GALEA + VAULT + DURA, |o| o.enter * 1000.0).clamp(10.0, 30.0);
+        let (e1, e2) = (DERMIS + SCALP_FAT, DERMIS + SCALP_FAT + GALEA);
+        let zone_end = (deep - DURA).max(e2 + 2.0);
+        return Column { ends: [DERMIS, e1, e2, e2, e2, e2, zone_end, deep], fibres: [Vec3::ZERO; 3], zone: 1.0, belly: false };
+    }
     let rib = spans.iter().find(|s| {
         let n = &traced.parts[s.part].name;
         (n.contains("rib") || n.contains("sternum")) && organ.is_none_or(|o| s.enter < o.enter + 0.005)
@@ -145,9 +161,9 @@ fn column(npc: &mut npc::Npc, owner: usize, top: Vec3, into: Vec3, chest: bool, 
     Column { ends: [DERMIS, e1, e2, e3, e4, e5, e5, deep], fibres, zone: 0.0, belly: true }
 }
 
-// The wall of opening `o` of person `who` through the chest or the belly, its columns' tops at `edge` (the skin's
+// The wall of opening `o` of person `who` through the chest, the belly or the skull (`place`), its columns' tops at `edge` (the skin's
 // crossings all round its lips, viscera.rs lips; None where none was found).
-pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossing>], chest: bool) -> Option<Entity> {
+pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossing>], place: &str) -> Option<Entity> {
     let ey = o.normal.cross(o.ex);
     let n = edge.len();
     if n != COLUMNS {
@@ -170,7 +186,7 @@ pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossin
     let shoulder = |x: f32| body.bone(&format!("upperarm01.{}", if x > 0.0 { "R" } else { "L" })).head;
     let columns: Vec<Column> = npc::with(world, who, |npc| {
         let into = -npc.world_of(o.at, o.owner, Some(o.normal)).1.unwrap();
-        tops.iter().map(|&top| column(npc, o.owner, top, into, chest, &shoulder)).collect()
+        tops.iter().map(|&top| column(npc, o.owner, top, into, place, &shoulder)).collect()
     })?;
 
     // The ring's corners: down each column into the body along the opening's facing, the cut muscle drawn back across the

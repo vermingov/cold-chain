@@ -61,6 +61,11 @@ pub struct Eye {
     pub pupil: f32,
     // Metres the eye sits back in the socket (a blown-out floor).
     pub sunk: f32,
+    // Bloodshot: how far the conjunctiva's vessels are dilated, 0 to 1, and where that is headed.
+    pub red: f32,
+    pub red_to: f32,
+    // A dead eye's surface dried: its tear film gone, its shine dulled, 0 to 1.
+    pub dry: f32,
     pub t: f32,
 }
 
@@ -124,6 +129,7 @@ impl EyesOf<'_, '_> {
         let d = &mut *self.0.dice;
         let e = self.0.hurt.eyes.eye(s);
         e.t = 0.0;
+        e.red_to = 1.0;
         let text;
         if m.blade {
             // A blade's point: a straight cut as wide as the blade where it went in, along its edge. Aqueous goes at once and
@@ -181,6 +187,9 @@ impl EyesOf<'_, '_> {
             let e = self.0.hurt.eyes.eye(s);
             e.t = 0.0;
             e.clamp = e.clamp.max(0.8 * k);
+            // The struck eye goes bloodshot: its conjunctiva's vessels dilate as it swells (traumatic conjunctivitis),
+            // within the minute.
+            e.red_to = e.red_to.max((0.4 + energy / 40.0).min(1.0) * k);
             // Blood under the conjunctiva, coming up over minutes where the white was pressed.
             if dice.next() < 0.3 + energy / 60.0 {
                 let a = dice.next() * std::f32::consts::TAU;
@@ -218,6 +227,50 @@ impl EyesOf<'_, '_> {
         }
     }
 
+    // A bullet's track passing near an eye, not through it (from `origin` along `dir`, `from` to `to` metres along it):
+    // the orbit's thin walls broken and its fat torn by the cavity the bullet makes. Blood seeps forward under the
+    // conjunctiva from the side the track is on and spreads over the white over minutes, and the eye goes bloodshot;
+    // closer, the shock tears the iris root and blood comes into the front chamber (an indirect, closed-globe injury:
+    // eye-trauma.md sec. 6).
+    pub fn near(&mut self, origin: Vec3, dir: Vec3, from: f32, to: f32, energy: f32) {
+        for s in [Side::L, Side::R] {
+            let bone = self.0.bone_index(if s == Side::L { "eye.L" } else { "eye.R" });
+            let at = self.0.world_of(self.0.body().bones[bone].head, bone, None).0;
+            let along = (at - origin).dot(dir).clamp(from, to);
+            let off = at - (origin + dir * along);
+            let d = off.length();
+            // (Through it: pierced's. Past three centimetres the orbit is not the track's.)
+            if d < 0.011 || d > 0.03 || self.0.hurt.eyes.eye(s).lost > 0.0 {
+                continue;
+            }
+            let k = ((0.03 - d) / 0.019).clamp(0.0, 1.0) * (energy / 400.0).min(1.0);
+            if k < 0.05 {
+                continue;
+            }
+            // Where on the white the blood comes forward: the eye's own corner nearest the place on the globe that faces
+            // the track, brought round toward the front where the white shows.
+            let body = self.0.body();
+            let toward = self.0.rest_to_world(bone).inverse().transform_vector3(-off).normalize_or_zero();
+            let want = body.bones[bone].head + (toward * 0.5 + Vec3::NEG_Z).normalize_or_zero() * 0.012;
+            let uv = body.parts.iter().filter(|p| p.kind == "eyes").flat_map(|p| p.vertex_start..p.vertex_start + p.vertex_count)
+                .filter(|&v| body.bones[body.joints[v][0] as usize].name.ends_with(if s == Side::L { ".L" } else { ".R" }))
+                .min_by(|&a, &b| body.position[a].distance_squared(want).total_cmp(&body.position[b].distance_squared(want)))
+                .map(|v| body.uv[v]);
+            let Some(uv) = uv else { continue };
+            let word = if s == Side::L { "left" } else { "right" };
+            let dice = &mut *self.0.dice;
+            let v = &mut *self.0.vitals;
+            let e = self.0.hurt.eyes.eye(s);
+            e.t = 0.0;
+            e.red_to = e.red_to.max(0.5 + 0.5 * k);
+            e.patches.push(Patch { u: uv.x, v: uv.y, iris: false, r: 0.01, to: 0.08 + 0.12 * k, tau: 40.0, dense: 0.9 });
+            if dice.next() < k {
+                e.blood_to = (e.blood_to + 0.1 + 0.3 * k).min(1.0);
+            }
+            v.injure(format!("Blood under the white of the {word} eye: the orbit broken behind it"), 2.0);
+        }
+    }
+
     fn blinded(&mut self, s: Side, k: f32) {
         let e = self.0.hurt.eyes.eye(s);
         e.blind = true;
@@ -233,6 +286,8 @@ impl EyesOf<'_, '_> {
     // lids let go.
     pub fn update(&mut self, dt: f32) {
         let dead = self.0.vitals.dead;
+        // (Crying reddens the eyes too, a little: the tears' irritation and the rubbing.)
+        let crying = self.0.hurt.crying && !dead;
         for s in [Side::L, Side::R] {
             let e = self.0.hurt.eyes.eye(s);
             e.t += dt;
@@ -252,6 +307,18 @@ impl EyesOf<'_, '_> {
             }
             if e.clamp > 0.0 && dead {
                 e.clamp = 0.0;
+            }
+            if crying {
+                e.red_to = e.red_to.max(0.3);
+            }
+            if e.red_to - e.red > 1e-3 {
+                e.red += (e.red_to - e.red) * (dt / 15.0).min(1.0);
+            }
+            // Dead, nothing blinks: the tear film breaks up within seconds (it does in a living eye held open some ten
+            // seconds) and the cornea starts to dry in about ten minutes, losing its shine; clouded in two or three hours
+            // (the lids shut keep it longer, and this sandbox's minutes never get there: sec. 6).
+            if dead {
+                e.dry += (1.0 - e.dry) * (dt / 600.0).min(1.0);
             }
         }
         // A blown-out floor lets the eye sink back and down a little at once (more as the swelling goes, days later:
@@ -292,7 +359,8 @@ pub struct EyeUniform {
     pub sizes: Vec4,
     pub iris: Vec4,
     // Per eye (A, B): the iris's centre in the world now and the settled blood's height; the haze of blood stirred up,
-    // how far the globe has collapsed, how far the blood has clotted.
+    // how far the globe has collapsed, how far the blood has clotted, how bloodshot it is. (`iris`'s third: how dry the
+    // eyes of the dead have gone.)
     pub world: [Vec4; 2],
     pub state: [Vec4; 2],
     // How many patches and marks.
@@ -447,7 +515,10 @@ fn draw_eyes(
             };
             let layer = if e.blood > 0.95 { 1.05 } else { e.blood * e.settled };
             u.world[k] = w.extend(layer);
-            u.state[k] = Vec4::new(e.blood * (1.0 - e.settled) * 0.85, e.collapse, (e.t / 600.0).min(1.0) * if e.blood > 0.9 { 1.0 } else { 0.3 }, 0.0);
+            u.state[k] = Vec4::new(e.blood * (1.0 - e.settled) * 0.85, e.collapse, (e.t / 600.0).min(1.0) * if e.blood > 0.9 { 1.0 } else { 0.3 },
+                                   (e.red * 64.0).round() / 64.0);
+            // (In 64ths: both change a little every frame for minutes, and a new bind group a frame is not worth it.)
+            u.iris.z = u.iris.z.max((e.dry * 64.0).round() / 64.0);
             let c = ir.centre[s];
             for p in &e.patches {
                 if patches < MOST {

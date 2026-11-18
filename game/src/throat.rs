@@ -67,6 +67,13 @@ pub struct Throat {
     // of the dental arch on the skull at rest and the bone that carries it.
     pub outlets: Vec<Crossing>,
     pub centre: Option<(Vec3, usize)>,
+    // How far ahead of that middle (rest metres, along -Z) the lower central incisors stand, and the bone that carries
+    // the lower teeth (the jaw): the cavity's front, and what opens it.
+    pub incisors: f32,
+    pub jaw: Option<usize>,
+    // Holes torn in the mouth's lining (the palate, the cheeks, the floor of the mouth, the back of the throat): where on
+    // its ellipsoid at rest, which way into the mouth it faces there, the bone that carries it, how big.
+    pub walls: Vec<(Vec3, Vec3, usize, f32)>,
     pub fwd: Vec3,
     pub up: Vec3,
     pub right: Vec3,
@@ -96,12 +103,15 @@ impl Npc<'_> {
         let centre = teeth.iter().map(at).sum::<Vec3>() / teeth.len() as f32;
         let Some(head) = teeth.iter().find(|t| t.upper).map(|t| t.owner) else { return };
         self.hurt.throat.centre = Some((centre, head));
+        self.hurt.throat.jaw = teeth.iter().find(|t| !t.upper).map(|t| t.owner).filter(|&j| j != head);
         let named = |f: &dyn Fn(&str) -> bool| teeth.iter().filter(|t| f(&t.name)).map(at).collect::<Vec<_>>();
         let front = named(&|n| n.starts_with("lower ") && n.ends_with(" central incisor"));
         let canines = named(&|n| n.starts_with("lower ") && n.ends_with(" canine"));
         let mut want = Vec::new();
         if !front.is_empty() {
-            want.push(front.iter().sum::<Vec3>() / front.len() as f32 + Vec3::new(0.0, -0.006, -0.014));
+            let f = front.iter().sum::<Vec3>() / front.len() as f32;
+            self.hurt.throat.incisors = centre.z - f.z;
+            want.push(f + Vec3::new(0.0, -0.006, -0.014));
         }
         for c in canines {
             want.push(c + Vec3::new(c.x.signum() * 0.011, 0.0, -0.006));
@@ -123,6 +133,53 @@ impl Npc<'_> {
             return false;
         }
         (origin + dir * along - c).length_squared() < 0.024 * 0.024
+    }
+
+    // Whether a world point on the person is on the neck: above the collarbones' inner ends, under the lower border of
+    // the mandible in front (the chin and the floor of the mouth above it are the face) and under the skull's base
+    // behind, and no wider than a neck (the shoulders either side are not). The ragdoll's head segment carries the upper
+    // neck and its chest the lower, so a wound there was read as the head's or the chest's: a gunshot "through the head"
+    // bleeding as the scalp does, or one "to the chest".
+    pub fn in_neck(&self, at: Vec3) -> bool {
+        let body = self.body();
+        let (Some(&h), Some(&j), Some(&m)) = (body.by_name.get("head"), body.by_name.get("jaw"), body.by_name.get("neck02")) else {
+            return false;
+        };
+        let p = self.rest_to_world(m).inverse().transform_point3(at);
+        let low = body.by_name.get("clavicle.L").map_or(body.bone("neck01").head.y - 0.06, |&c| body.bones[c].head.y);
+        if p.y < low || p.x.abs() > 0.065 || p.y > body.bones[h].head.y + 0.01 {
+            return false;
+        }
+        // The mandible's lower border, from its angle (some 4.5 cm under the joint) to the chin (+z is back here).
+        let (angle, chin) = (body.bones[j].head - Vec3::Y * 0.045, body.bones[j].tail);
+        let k = ((p.z - chin.z) / (angle.z - chin.z)).clamp(0.0, 1.0);
+        p.z > angle.z || p.y < chin.y + (angle.y - chin.y) * k
+    }
+
+    // A missile's line from `origin` along unit `dir` through the mouth, between `from` and `to` metres along it: where it
+    // goes into the cavity and out of it again it tears the lining (a cheek, the floor of the mouth, the palate, the back
+    // of the throat), as a hole `size` across, a bullet's channel torn wider than itself (twice it: an estimate, as the
+    // tongue's). What bleeds from it is the mouth's bleed (wounds.rs); this is where it is seen.
+    pub fn throat_wall(&mut self, origin: Vec3, dir: Vec3, from: f32, to: f32, size: f32) {
+        let Some((rest, head)) = self.hurt.throat.centre else { return };
+        let (c, r) = cavity(&self.hurt.throat);
+        let to_rest = self.rest_to_world(head).inverse();
+        // In the unit sphere the ellipsoid is a scaling of.
+        let (o, d) = ((to_rest.transform_point3(origin) - rest - c) / r, to_rest.transform_vector3(dir) / r);
+        let (a, b, k) = (d.length_squared(), o.dot(d), o.length_squared() - 1.0);
+        let disc = b * b - a * k;
+        if disc <= 0.0 {
+            return;
+        }
+        for t in [(-b - disc.sqrt()) / a, (-b + disc.sqrt()) / a] {
+            if t < from || t > to || self.hurt.throat.walls.len() >= 8 {
+                continue;
+            }
+            let u = o + d * t;
+            let at = rest + c + u * r;
+            let owner = if lining_holds(u * r + c) > 0.5 { head } else { self.hurt.throat.jaw.unwrap_or(head) };
+            self.hurt.throat.walls.push((at, (-u / r).normalize(), owner, (size * 2.0).max(0.012)));
+        }
     }
 
     // A shot or blade through the tongue (`hit`, its crossing of it): torn open there, its bleeding into the mouth
@@ -491,20 +548,23 @@ impl ThroatOf<'_, '_> {
         t.retch = fold * (0.4 + 0.6 * ramp(awake, 0.1, 0.6));
     }
 
-    // Vomit out of the open mouth: a rope of it as thick as the flow and the gape make it, leaving slower than it looks (the
-    // mouth is wide, and a wide mouth lets it out without speed), with clots in it thrown as lumps; where it lands, it
-    // splashes and pools (blood.rs, floor.rs).
+    // Vomit out of the open mouth: a rope of it as thick as the flow makes it at the speed it leaves at, with clots in it
+    // thrown as lumps; where it lands, it splashes and pools (blood.rs, floor.rs). What drives it is the belly's muscles
+    // and the diaphragm squeezing the stomach (the pressure in the belly reaches 80 to over 100 mmHg straining, against a
+    // few at rest: Cobb et al. 2005, viscera.rs). Most of that is spent in the gullet and the throat, and it leaves the
+    // mouth at a couple of metres a second, out the way the mouth faces (an estimate: no study measures it): a gush as
+    // wide as the gaping mouth lets it be, not a trickle down the chin.
     fn gush(&mut self, ml: f32, dt: f32) {
         let Some((hit, at, out)) = self.lowest() else { return };
-        let speed = 0.8 + 0.7 * self.0.dice.next();
+        let speed = 1.6 + 0.8 * self.0.dice.next();
         let q = (ml * 0.8 * 1e-6) / dt;
-        let r = (q / (std::f32::consts::PI * speed)).sqrt().clamp(0.003, 0.012);
+        let r = (q / (std::f32::consts::PI * speed)).sqrt().clamp(0.004, 0.02);
         let fwd = self.0.hurt.throat.fwd;
-        let way = (fwd * 0.8 + out * 0.4 + Vec3::NEG_Y * 0.3).normalize();
+        let way = (fwd + out * 0.3).normalize();
         let from = at + fwd * 0.01;
         let happened = &mut self.0.hurt.happened;
         happened.push(Happened::Stream { bleed: None, at: from, dir: way, speed, ml: ml * 0.8, r });
-        happened.push(Happened::Spray { at: from, dir: way, speed, ml: ml * 0.2, spread: 0.3, size: 3.0 });
+        happened.push(Happened::Spray { at: from, dir: way, speed: speed * 0.8, ml: ml * 0.2, spread: 0.35, size: 3.5 });
         happened.push(Happened::Runs { hit, ml: ml * 0.04, from: None });
     }
 
@@ -518,40 +578,214 @@ impl ThroatOf<'_, '_> {
     }
 }
 
-// --- the look (throat.ts `_coat`, `_tears`, `_pool`) ------------------------------------------------------------------
+// --- the look (throat.ts `_coat`, `_tears`, `_pool`; the lining is new) -------------------------------------------------
 
-// The mouth's cavity, as an ellipsoid on the skull: its middle from the middle of the dental arch (rest metres: +x the
-// person's right, +y up, +z back here, the TS's -z) and its half-widths. Front to back it runs from the incisors to the
-// oropharynx; side to side and up and down it is a little wider than the mouth is, out into the cheeks and the chin, so
-// that the edge of the surface lies behind them and only the liquid shows through the lips (the bodies have no inside
-// to the mouth to hide it). Filled in proportion to HOLDS.
-const CAVITY_AT: Vec3 = Vec3::new(0.0, -0.004, 0.007);
-const CAVITY_R: Vec3 = Vec3::new(0.026, 0.025, 0.036);
-// What the pool's surface looks like: blood as it comes, frothed from the lungs (pink, the air in it dulls it), and from
-// the stomach (darker: fresh enough to be dark red and clotted, not the coffee grounds of hours in acid).
-const RED: Vec3 = Vec3::new(0.4, 0.03, 0.025);
-const FROTH: Vec3 = Vec3::new(0.5, 0.15, 0.13);
-const GUT: Vec3 = Vec3::new(0.1, 0.009, 0.007);
-// The tongue and teeth coated in it: their own tints (person.rs) and what blood over them makes of them.
+// The mouth's cavity, as an ellipsoid on the skull: its middle and half-widths from the middle of the dental arch (rest
+// metres: +x the person's right, +y up, +z back here, the TS's -z). Front to back it runs from the inside of the lips,
+// 7 mm ahead of the lower incisors, to the back of the throat (the oropharynx, 5 cm behind the arch's middle); side to
+// side from cheek to cheek; up and down from the vault of the palate to the floor of the mouth under the tongue.
+fn cavity(t: &Throat) -> (Vec3, Vec3) {
+    let (front, back) = (-t.incisors - 0.007, 0.05);
+    (Vec3::new(0.0, -0.008, (front + back) / 2.0), Vec3::new(0.025, 0.021, (back - front) / 2.0))
+}
+
+// How much of a place on the cavity's wall (from the arch's middle, at rest) the skull carries, the rest going with the
+// jaw: the palate and the back of the throat with the skull, the floor of the mouth with the jaw, the cheeks stretched
+// between.
+fn lining_holds(p: Vec3) -> f32 {
+    let step = |a: f32, b: f32, x: f32| {
+        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    step(-0.006, 0.004, p.y).max(step(0.02, 0.045, p.z))
+}
+
+// The lining's colour: oral mucosa, a gum's pink-red (CIE L* 55, a* 25, b* 12, an estimate beside a "light red" tongue's
+// measured L* 53, a* 21, b* 8: airway-blood.md), wet. Inside a mouth the lips, cheeks and teeth shade it, and nothing here draws that shade (the
+// fill light reaches everywhere): it is in its corners' colour, darker the deeper into the mouth.
+const MUCOSA: Vec3 = Vec3::new(0.45, 0.17, 0.16);
+// What the pool's surface looks like: blood as it comes, as deep as a pool (fluid.rs DROP: its own diffuse reflectance),
+// frothed from the lungs (the air in it scatters light back before the blood takes it: pink and dull), and from the
+// stomach (darker: fresh enough to be dark red and clotted, not the coffee grounds of hours in acid).
+const RED: Vec3 = Vec3::new(0.075, 0.012, 0.011);
+const FROTH: Vec3 = Vec3::new(0.32, 0.075, 0.07);
+const GUT: Vec3 = Vec3::new(0.035, 0.008, 0.006);
+// The tongue and teeth coated in it: their own tints (person.rs) and what a film of it a few tenths of a millimetre deep
+// over them makes of them (fluid.wesl `blood_over`: the red of what is under it, a third of it, comes through; no green).
 const COATED: [(&str, Vec3, Vec3); 2] = [
-    ("tongue", Vec3::new(0.55, 0.42, 0.42), Vec3::new(0.42, 0.05, 0.04)),
-    ("teeth", Vec3::new(0.93, 0.9, 0.82), Vec3::new(0.6, 0.13, 0.1)),
+    ("tongue", Vec3::new(0.55, 0.42, 0.42), Vec3::new(0.24, 0.05, 0.045)),
+    ("teeth", Vec3::new(0.93, 0.9, 0.82), Vec3::new(0.45, 0.03, 0.025)),
 ];
 
+// The lining of a person's mouth: its corners at rest and how much of each the skull carries (for the pool, worked out
+// where they are now), its triangles, and its material.
+#[derive(Component)]
+pub struct Lining {
+    corners: Vec<(Vec3, f32)>,
+    tris: Vec<[u32; 3]>,
+    entity: Entity,
+    material: Handle<StandardMaterial>,
+}
+
+// The cavity's wall as a mesh seen from inside it (its faces turned in: from outside the head, through the lips, the far
+// side of it is what shows), carried by the skull and the jaw, so that it opens with the mouth. The bodies have no inside
+// to the mouth: without it an open mouth showed the hall through the head.
+fn lining_mesh(t: &Throat, rest: Vec3, head: usize, jaw: usize) -> (Mesh, Vec<(Vec3, f32)>, Vec<[u32; 3]>) {
+    const RINGS: usize = 14;
+    const ROUND: usize = 24;
+    let (c, r) = cavity(t);
+    let (mut pos, mut nor, mut joints, mut weights, mut colour, mut corners) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let back = c.z + r.z;
+    for i in 0..=RINGS {
+        let th = std::f32::consts::PI * i as f32 / RINGS as f32;
+        for j in 0..=ROUND {
+            let ph = std::f32::consts::TAU * j as f32 / ROUND as f32;
+            let u = Vec3::new(th.sin() * ph.cos(), th.cos(), th.sin() * ph.sin());
+            let p = c + u * r;
+            let s = lining_holds(p);
+            pos.push(rest + p);
+            nor.push((-u / r).normalize());
+            joints.push([head as u16, jaw as u16, 0, 0]);
+            weights.push([s, 1.0 - s, 0.0, 0.0]);
+            // (Light comes in only through the lips: a quarter of it reaches the back of the throat, an estimate.)
+            let lit = 0.25 + 0.75 * ((back - p.z) / (2.0 * r.z)).clamp(0.0, 1.0).powf(1.5);
+            colour.push([lit, lit, lit, 1.0]);
+            corners.push((rest + p, s));
+        }
+    }
+    let mut tris = Vec::new();
+    for i in 0..RINGS {
+        for j in 0..ROUND {
+            let (a, b) = ((i * (ROUND + 1) + j) as u32, ((i + 1) * (ROUND + 1) + j) as u32);
+            // (Wound to face inward.)
+            tris.push([a, b, a + 1]);
+            tris.push([a + 1, b, b + 1]);
+        }
+    }
+    let mut mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, nor)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colour)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, bevy::mesh::VertexAttributeValues::Uint16x4(joints))
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights)
+        .with_inserted_indices(bevy::mesh::Indices::U32(tris.iter().flatten().copied().collect()));
+    mesh.generate_skinned_mesh_bounds().ok();
+    (mesh, corners, tris)
+}
+
+// Everyone's mouth lined once their mouth has been found (throat.rs `find_mouth`), beside their skin, on its skeleton.
+#[allow(clippy::type_complexity)]
+fn line_mouths(
+    mut commands: Commands,
+    people: Query<(Entity, &crate::person::Person, &crate::npc::Hurt), Without<Lining>>,
+    skins: Query<(&bevy::mesh::skinning::SkinnedMesh, &ChildOf)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (e, person, hurt) in &people {
+        let t = &hurt.throat;
+        let (Some((rest, head)), Some(jaw)) = (t.centre, t.jaw) else { continue };
+        let Some((skin, space)) = person.parts.first().and_then(|&(_, part)| skins.get(part).ok()) else { continue };
+        let (mesh, corners, tris) = lining_mesh(t, rest, head, jaw);
+        let material = materials.add(StandardMaterial {
+            base_color: Color::linear_rgb(MUCOSA.x, MUCOSA.y, MUCOSA.z),
+            // (Wet with saliva: a sheen, broken up by the mucosa's folds and the tongue's papillae.)
+            perceptual_roughness: 0.3,
+            reflectance: 0.35,
+            ..default()
+        });
+        let entity = commands
+            .spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), skin.clone(), bevy::camera::visibility::DynamicSkinnedMeshBounds,
+                    bevy::light::NotShadowCaster, Name::new("mouth lining"), ChildOf(space.parent())))
+            .id();
+        commands.entity(e).insert(Lining { corners, tris, entity, material });
+    }
+}
+
+// The level surface of `ml` of blood lying in the lining as it is now (its corners in the world, `at`): the height whose
+// share of the lining's room below it is `share`, no higher than `lip` (past the lower lip it pours out), and the
+// outline where that level cuts the lining, in order round it. None if nothing is cut.
+fn level(at: &[Vec3], tris: &[[u32; 3]], share: f32, lip: f32) -> Option<(f32, Vec<Vec3>)> {
+    // The room below height h: the divergence theorem over the wall below it (the flat top adds nothing), each piece of
+    // wall the triangle's part under h.
+    let below = |h: f32| -> f32 {
+        let mut v = 0.0;
+        for t in tris {
+            let p = t.map(|i| at[i as usize]);
+            let mut poly: [Vec3; 4] = [Vec3::ZERO; 4];
+            let mut n = 0;
+            for k in 0..3 {
+                let (a, b) = (p[k], p[(k + 1) % 3]);
+                if a.y <= h {
+                    poly[n] = a;
+                    n += 1;
+                }
+                if (a.y <= h) != (b.y <= h) {
+                    poly[n] = a.lerp(b, (h - a.y) / (b.y - a.y));
+                    n += 1;
+                }
+            }
+            for k in 1..n.saturating_sub(1) {
+                let (a, b, c) = (poly[0], poly[k], poly[k + 1]);
+                v += (b - a).cross(c - a).y * 0.5 * ((a.y + b.y + c.y) / 3.0 - h);
+            }
+        }
+        v.abs()
+    };
+    let (lo, hi) = at.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), p| (lo.min(p.y), hi.max(p.y)));
+    let want = share * below(hi + 1e-4);
+    let (mut a, mut b) = (lo, hi);
+    for _ in 0..16 {
+        let m = (a + b) / 2.0;
+        if below(m) < want { a = m } else { b = m }
+    }
+    let h = ((a + b) / 2.0).min(lip);
+    // Each edge the level crosses once (an edge is in two triangles, the other way round in the other).
+    let mut rim = Vec::new();
+    for t in tris {
+        for k in 0..3 {
+            let (i, j) = (t[k], t[(k + 1) % 3]);
+            let (a, b) = (at[i as usize], at[j as usize]);
+            if i < j && (a.y <= h) != (b.y <= h) {
+                rim.push(a.lerp(b, (h - a.y) / (b.y - a.y)));
+            }
+        }
+    }
+    if rim.len() < 3 {
+        return None;
+    }
+    let mid = rim.iter().sum::<Vec3>() / rim.len() as f32;
+    rim.sort_by(|p, q| (p.z - mid.z).atan2(p.x - mid.x).total_cmp(&(q.z - mid.z).atan2(q.x - mid.x)));
+    Some((h, rim))
+}
+
+#[test]
+fn level_in_a_box() {
+    // A unit cube's six faces (outward), half full: the level at its middle, the outline its four sides.
+    let at: Vec<Vec3> = (0..8).map(|i| Vec3::new((i & 1) as f32, ((i >> 1) & 1) as f32, ((i >> 2) & 1) as f32)).collect();
+    let quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+    let tris: Vec<[u32; 3]> = quads.iter().flat_map(|q| [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]).collect();
+    let (h, rim) = level(&at, &tris, 0.25, 1.0).unwrap();
+    assert!((h - 0.25).abs() < 1e-3, "{h}");
+    assert!(rim.len() >= 4 && rim.iter().all(|p| (p.y - h).abs() < 1e-5));
+    assert!((level(&at, &tris, 0.9, 0.5).unwrap().0 - 0.5).abs() < 1e-6);
+}
+
 // A person's mouth as drawn: the tongue's and teeth's materials made their own once blood first wets them (and how wet
-// they were last drawn), the pool, and the cards of the tears in the tongue.
+// they were last drawn), the pool (its entity, mesh and material, and the colour and froth it was last given), and how
+// many tears in the tongue and holes in the lining are drawn.
 #[derive(Component, Default)]
 pub struct MouthDrawn {
     coated: Vec<Handle<StandardMaterial>>,
     shown: f32,
-    pool: Option<(Entity, Handle<StandardMaterial>, Vec3, f32)>,
+    pool: Option<(Entity, Handle<Mesh>, Handle<StandardMaterial>, Vec3, f32)>,
     tears: usize,
+    walls: usize,
 }
 
-// What the mouth's look shares: the pool's disc, the tear's card and its look.
+// What the mouth's look shares: the tear's card and its look.
 #[derive(Resource)]
 pub struct MouthLooks {
-    disc: Handle<Mesh>,
     card: Handle<Mesh>,
     tear: Handle<StandardMaterial>,
 }
@@ -603,32 +837,37 @@ fn looks(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: R
         ..default()
     });
     commands.insert_resource(MouthLooks {
-        disc: meshes.add(Circle::new(1.0).mesh().resolution(28).build().rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))),
         card: meshes.add(Rectangle::new(1.0, 1.0)),
         tear,
     });
 }
 
-// Blood in the mouth drawn: the tongue and teeth wet red, the tears in the tongue, and the blood lying in the mouth (the
-// cavity's ellipsoid filled from its lowest side as the head lies now, the surface a level disc where the horizontal
-// plane at that height cuts it). The cheeks, palate, tongue and teeth hide what lies behind it; through an open mouth it
-// shows, at the back of the throat on the back, and up to the teeth when full. (A plane cuts an ellipsoid in an
-// ellipse: in the unit sphere the ellipsoid is a scaling of, the plane is still a plane, the cap under it has a volume in
-// closed form and the cut is a circle.)
+// Blood in the mouth drawn: the tongue, teeth and lining wet red, the tears in the tongue and the holes in the lining, and
+// the blood lying in the mouth: the lining as the skull and jaw hold it now, filled from its lowest side as the head lies,
+// the surface level where it reaches (`level`). The lips, cheeks, palate, tongue and teeth hide what lies behind it;
+// through an open mouth it shows, in the throat on the back, and up to the lower lip when full.
 #[allow(clippy::type_complexity)]
 fn draw_mouth(
     mut commands: Commands,
     looks: Option<Res<MouthLooks>>,
-    mut people: Query<(Entity, &crate::person::Person, &Transform, &crate::npc::Hurt, Option<&mut MouthDrawn>)>,
+    seeing: Res<crate::anatomy::Seeing>,
+    mut people: Query<(Entity, &crate::person::Person, &Transform, &crate::npc::Hurt, Option<&Lining>, Option<&mut MouthDrawn>)>,
     parts: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut places: Query<&mut Transform, Without<crate::person::Person>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut shown: Query<&mut Visibility, Without<crate::person::Person>>,
 ) {
     let Some(looks) = looks else { return };
-    for (e, person, root, hurt, drawn) in &mut people {
+    for (e, person, root, hurt, lining, drawn) in &mut people {
         let t = &hurt.throat;
+        // (The x-ray shows what is inside the head, not a red bag round the tongue.)
+        if let Some(l) = lining {
+            if let Ok(mut v) = shown.get_mut(l.entity) {
+                v.set_if_neq(if seeing.0 { Visibility::Hidden } else { Visibility::Inherited });
+            }
+        }
         let tongue = hurt.happened.iter().any(|h| matches!(h, Happened::Tongue { .. }));
-        if drawn.is_none() && t.coat < 0.01 && t.mouth < 2.0 && !tongue {
+        if drawn.is_none() && t.coat < 0.01 && t.mouth < 2.0 && !tongue && t.walls.is_empty() {
             continue;
         }
         let mut fresh = None;
@@ -656,29 +895,50 @@ fn draw_mouth(
                     m.base_color = Color::linear_rgb(c.x, c.y, c.z);
                 }
             }
+            // The lining under the same film: mucosa's red a third through it, over blood's own.
+            if let Some(mut m) = lining.and_then(|l| materials.get_mut(&l.material)) {
+                let c = MUCOSA.lerp(MUCOSA * 0.3 + RED * 0.7, t.coat);
+                m.base_color = Color::linear_rgb(c.x, c.y, c.z);
+            }
         }
         // A shot or blade through the tongue: torn open there, raw red, ragged (a card lying on the tongue, carried by
         // the bone that carries that place of it). A bullet tears muscle wider than itself (twice it across: throat.rs).
+        // And the same where a missile went through the lining: the palate, a cheek, the floor of the mouth, the back of
+        // the throat, seen from inside the mouth.
+        let mut card = |owner: usize, rest: Vec3, n: Vec3, size: f32| {
+            commands.spawn((
+                Mesh3d(looks.card.clone()),
+                MeshMaterial3d(looks.tear.clone()),
+                Transform::from_translation(rest - body.bones[owner].head + n * 0.0005).with_rotation(Quat::from_rotation_arc(Vec3::Z, n)).with_scale(Vec3::splat(size)),
+                bevy::light::NotShadowCaster,
+                ChildOf(person.joints[owner]),
+            ));
+        };
         for h in &hurt.happened {
             let Happened::Tongue { hit, size } = h else { continue };
             if d.tears >= 6 {
                 break;
             }
             d.tears += 1;
-            let n = hit.rest_normal.normalize();
-            let at = hit.rest - body.bones[hit.owner].head + n * 0.0005;
-            commands.spawn((
-                Mesh3d(looks.card.clone()),
-                MeshMaterial3d(looks.tear.clone()),
-                Transform::from_translation(at).with_rotation(Quat::from_rotation_arc(Vec3::Z, n)).with_scale(Vec3::splat(*size)),
-                bevy::light::NotShadowCaster,
-                ChildOf(person.joints[hit.owner]),
-            ));
+            card(hit.owner, hit.rest, hit.rest_normal.normalize(), *size);
         }
-        // The pool. (Under a couple of millilitres, or running out of a mouth turned down or to the side, it is a
-        // wetting, not a pool: the coat on the tongue and teeth.)
-        let show = t.mouth >= 2.0 && t.to_lips <= 0.2;
-        let Some((rest, owner)) = t.centre.filter(|_| show) else {
+        for &(rest, n, owner, size) in &t.walls[d.walls..] {
+            card(owner, rest, n, size);
+        }
+        d.walls = t.walls.len();
+        // The pool. (Under a couple of millilitres it is a wetting, not a pool: the coat on the tongue, teeth and lining.
+        // Turned down or to the side, what is left stands no higher than the lip or the corner it runs out over.)
+        let mut place = None;
+        if let (Some(l), Some((_, head)), true) = (lining, t.centre, t.mouth >= 2.0) {
+            let (mh, mj) = (crate::face::bone_world(person, root, head), crate::face::bone_world(person, root, t.jaw.unwrap_or(head)));
+            let at: Vec<Vec3> = l.corners.iter().map(|&(p, s)| mh.transform_point3(p) * s + mj.transform_point3(p) * (1.0 - s)).collect();
+            let lip = t.outlets.iter().map(|o| crate::face::bone_world(person, root, o.owner).transform_point3(o.rest).y).fold(f32::INFINITY, f32::min);
+            // (The tongue takes up much of the cavity: a full mouth, up to the lower lip upright, fills three quarters of
+            // what the lining holds, and the first few millilitres lie deepest, under and round the tongue; fitted by
+            // eye.)
+            place = level(&at, &l.tris, 0.75 * (t.mouth / HOLDS).min(1.0).powf(1.2), lip + 0.002);
+        }
+        let Some((_, rim)) = place else {
             if let Some((p, ..)) = d.pool {
                 commands.entity(p).insert(Visibility::Hidden);
             }
@@ -687,72 +947,54 @@ fn draw_mouth(
             }
             continue;
         };
-        // The skull's rest frame in the world now, and the ellipsoid in it: its middle and its three half-axes.
-        let m = crate::face::bone_world(person, root, owner);
-        let cw = m.transform_point3(rest + CAVITY_AT);
-        let (ax, ay, az) = (m.transform_vector3(Vec3::X * CAVITY_R.x), m.transform_vector3(Vec3::Y * CAVITY_R.y), m.transform_vector3(Vec3::Z * CAVITY_R.z));
-        // Up, in the unit sphere's frame, and how far along it the surface lies (t, -1 to 1) for the share filled: the cap
-        // under it holds (1 + t)^2 (2 - t) / 4 of the sphere. (The tongue fills most of the ellipsoid, and the rest of it
-        // is out in the cheeks: a full mouth, up to the teeth, fills about two fifths of it, and the first few
-        // millilitres lie deepest, in the throat; fitted by eye to a mouth open on the back.)
-        let g = Vec3::new(ax.y, ay.y, az.y);
-        let n = g.normalize_or(Vec3::Y);
-        let f = 0.4 * (t.mouth / HOLDS).min(1.0).powf(1.2);
-        let (mut lo, mut hi) = (-1.0f32, 1.0f32);
-        for _ in 0..18 {
-            let x = (lo + hi) / 2.0;
-            if (1.0 + x) * (1.0 + x) * (2.0 - x) / 4.0 < f { lo = x } else { hi = x }
-        }
-        let cut = (lo + hi) / 2.0;
-        let rho = (1.0 - cut * cut).max(0.0).sqrt();
-        // Two ways across the cut circle, at right angles to up and each other, carried into the world.
-        let mut u = Vec3::new(-n.y, n.x, 0.0);
-        if n.z.abs() > 0.9 {
-            u = Vec3::new(0.0, -n.z, n.y);
-        }
-        let u = u.normalize();
-        let v = n.cross(u);
-        let world = |p: Vec3| ax * p.x + ay * p.y + az * p.z;
-        let (a, b) = (world(u) * rho, world(v) * rho);
-        let c = cw + world(n * cut);
-        let (p, q) = axes(a, b);
-        let (pl, ql) = (p.length().max(1e-6), q.length().max(1e-6));
-        let x = (p / pl).reject_from(Vec3::Y).normalize_or(Vec3::X);
-        let place = Transform::from_translation(c)
-            .with_rotation(Quat::from_mat3(&Mat3::from_cols(x, Vec3::Y, x.cross(Vec3::Y))))
-            .with_scale(Vec3::new(pl, 1.0, ql));
-        // (Under the person, so it goes with them: in the root's frame, which only turns and moves.)
-        let place = Transform::from_matrix(root.to_matrix().inverse() * place.to_matrix());
+        // The surface, a fan from its middle (the cut of a rounded cavity is near enough convex), under the person so
+        // that it goes with them (in the root's frame, which only turns and moves).
+        let to_root = root.to_matrix().inverse();
+        let mid = rim.iter().sum::<Vec3>() / rim.len() as f32;
+        let mut pos = vec![to_root.transform_point3(mid)];
+        pos.extend(rim.iter().map(|&p| to_root.transform_point3(p)));
+        let n = rim.len() as u32;
+        let index: Vec<u32> = (0..n).flat_map(|k| [0, 1 + (k + 1) % n, 1 + k]).collect();
+        let up = to_root.transform_vector3(Vec3::Y).normalize();
+        let surface = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![up; pos.len()])
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+            .with_inserted_indices(bevy::mesh::Indices::U32(index));
         let (froth, dark) = (t.froth, t.dark * (1.0 - t.froth));
         let colour = RED * (1.0 - froth - dark) + FROTH * froth + GUT * dark;
         match &mut d.pool {
-            Some((p, h, was, shown)) => {
+            Some((p, mesh, h, was, shown)) => {
                 commands.entity(*p).insert(Visibility::Inherited);
-                if let Ok(mut tr) = places.get_mut(*p) {
-                    *tr = place;
+                if let Some(mut m) = meshes.get_mut(&*mesh) {
+                    *m = surface;
                 }
-                if was.distance(colour) > 0.003 || (*shown - froth).abs() > 0.01 {
+                if was.distance(colour) > 0.002 || (*shown - froth).abs() > 0.01 {
                     *was = colour;
                     *shown = froth;
-                    if let Some(mut m) = materials.get_mut(h) {
+                    if let Some(mut m) = materials.get_mut(&*h) {
                         m.base_color = Color::linear_rgb(colour.x, colour.y, colour.z);
-                        m.perceptual_roughness = 0.04 + 0.35 * froth;
+                        m.perceptual_roughness = 0.06 + 0.4 * froth;
                     }
                 }
             }
             None => {
                 // (Seen from whichever side, lit as the side seen: a level surface is looked at from above or, face
-                // down, from below.)
+                // down, from below. Its shine is water's, as every pool's.)
                 let h = materials.add(StandardMaterial {
                     base_color: Color::linear_rgb(colour.x, colour.y, colour.z),
-                    perceptual_roughness: 0.04 + 0.35 * froth,
+                    perceptual_roughness: 0.06 + 0.4 * froth,
+                    reflectance: 0.35,
                     metallic: 0.0,
                     double_sided: true,
                     cull_mode: None,
                     ..default()
                 });
-                let p = commands.spawn((Mesh3d(looks.disc.clone()), MeshMaterial3d(h.clone()), place, bevy::light::NotShadowCaster, Name::new("mouth blood"), ChildOf(e))).id();
-                d.pool = Some((p, h, colour, froth));
+                let mesh = meshes.add(surface);
+                let p = commands
+                    .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(h.clone()), Transform::IDENTITY, bevy::camera::visibility::NoFrustumCulling,
+                            bevy::light::NotShadowCaster, Name::new("mouth blood"), ChildOf(e)))
+                    .id();
+                d.pool = Some((p, mesh, h, colour, froth));
             }
         }
         if let Some(fresh) = fresh {
@@ -761,26 +1003,7 @@ fn draw_mouth(
     }
 }
 
-// An ellipse's own axes from two conjugate half-diameters `a` and `b` (the points a cos t + b sin t): turned by the angle
-// where they come at right angles, they are its longest and shortest.
-fn axes(a: Vec3, b: Vec3) -> (Vec3, Vec3) {
-    let th = 0.5 * (2.0 * a.dot(b)).atan2(a.length_squared() - b.length_squared());
-    (a * th.cos() + b * th.sin(), b * th.cos() - a * th.sin())
-}
-
-#[test]
-fn ellipse_axes() {
-    // The ellipse with half-axes 3 along x and 1 along z, given by two of its conjugate half-diameters.
-    let t = 0.4f32;
-    let at = |t: f32| Vec3::new(3.0 * t.cos(), 0.0, t.sin());
-    let (p, q) = axes(at(t), at(t + std::f32::consts::FRAC_PI_2));
-    assert!(p.dot(q).abs() < 1e-5);
-    let mut l = [p.length(), q.length()];
-    l.sort_by(f32::total_cmp);
-    assert!((l[0] - 1.0).abs() < 1e-5 && (l[1] - 3.0).abs() < 1e-5, "{l:?}");
-}
-
 pub fn plugin(app: &mut App) {
     // (Before what happened is forgotten: a tear made anywhere in the last frame is drawn.)
-    app.add_systems(Startup, looks).add_systems(First, draw_mouth.before(crate::npc::forget));
+    app.add_systems(Startup, looks).add_systems(First, (line_mouths, draw_mouth.before(crate::npc::forget)));
 }

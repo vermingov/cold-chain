@@ -698,6 +698,85 @@ scenario.rs's `Step::Until(f, most)` (a frame at a time until `f` says so, at mo
 cannot be counted in advance).
 tools/port-face.mjs takes the same pictures in the TS game (the waits in each face's own seconds).
 
+## The head, the mouth and the throat (BACKLOG item 7, branch port/item7-head)
+
+What the TS left mid-way (HANDOFF "Stopped mid-way" 1, 4 and 5's eyes), done in throat.rs, eyes.rs and eye.wesl,
+viscera.rs and wall.rs, with small changes in wounds.rs and skin.wesl. The numbers and their sources are in
+dev/research/airway-blood.md ("Drawn") and eye-trauma.md (sec. 6).
+
+### The mouth (throat.rs's look)
+- **A lining** (`Lining`, `lining_mesh`, `line_mouths`): the bodies had no inside to the mouth, so an open mouth showed
+  through the head. Every person with a mouth found gets an ellipsoid over the cavity (from the inside of the lips to
+  the back of the throat, cheek to cheek, palate to floor), its faces turned in so only its far side shows through the
+  lips, skinned to the skull and the jaw (`lining_holds`) beside the skin, wet oral mucosa darker deeper in, NotShadowCaster,
+  hidden in the x-ray. Blood in the mouth wets it as it wets the tongue and teeth (`COATED`, the film's colour from
+  fluid.wesl's `blood_over`).
+- **The pool** (`level`): the blood lying in the mouth is a level surface inside the lining as the skull and jaw hold it
+  this frame (the lining's corners posed on the CPU, two bones each): the height under which the lining's room is the
+  mouth's share of a mouthful, found by halving (the room below a height by the divergence theorem over the triangles
+  cut at it), capped at the lowest way out (the lower lip or a corner: past it, it pours), the outline where that height
+  cuts the lining made into a fan each frame it shows (its own mesh, NoFrustumCulling). Its colour is blood's as deep as a
+  pool (it was five times too bright and drawn as an ellipse that stood out past the lips when the jaw dropped). Test:
+  `level_in_a_box`.
+- **Holes in the lining** (`throat_wall`, called from wounds.rs where a missile goes through the mouth): where its line
+  goes into the cavity and out again, a torn card on the lining (the tongue's tears' look), carried by the skull or the
+  jaw.
+- **The vomit** (`gush`): 1.6 to 2.4 m/s out the way the mouth faces, the rope as thick as the flow at that speed (to
+  4 cm); it was 0.8 to 1.5 m/s and turned down onto the chest, a string.
+- **Neck wounds** (`in_neck`, used by wounds.rs `region_of`, the scalp's bleeding in `pierce`, and `blow`): the head's
+  ragdoll segment carries the upper neck and the chest's the lower, so a wound on the neck was "through the head" with
+  the scalp's 1.2 to 2 ml/s added, or "to the chest", and a bat to the throat concussed. Now: "Gunshot through the
+  neck", no scalp bleeding, a blow to the throat no concussion; the vessels and the windpipe met are routed as before
+  (trachea and the track into the airway, the oesophagus into the stomach). A blade drawn across the face no longer adds
+  the scalp's bleeding for every place it crossed the skin (one per 3 cm of cut).
+
+### The head (viscera.rs, wall.rs, skin.wesl)
+- **What the port did**: nothing opened a skull. viscera.rs opened the belly and chest only, dismember.rs cuts the head
+  off only at the neck (`limb_at`), a rifle's exit was a hole, a contact shotgun's a hole; the brain showed only in the
+  x-ray. So there was no "opened skull" to show a brain in.
+- **Now**: the vault of the skull (`cranium`: above the brows, the temples and the back above the skull's base) is a
+  region an opening can go through. A missile that spends 300 J or more in the head bursts it open where it leaves
+  (`burst_skull`): a contact shotgun's charge (as weapons.rs fires it within a metre) and any bullet over 600 m/s
+  (wounds.rs hands rifles' head shots over as a `Charge` too); a sword's cut deep enough through the scalp and bone
+  (4 cm) cleaves it, barely gaping. Through the gap: the wall's layers (wall.rs `column`, `place` "head": scalp, its
+  fat, the galea, 6.5 mm of vault drawn as the ribs' bone, the dura) and the brain (viscera.rs `shown`, `look("brain")`:
+  grey matter's pinkish beige under the pia's vessels). The hair over the scalp goes with it (skin.wesl: CARRIED parts
+  discarded in skin holes). Injury "Skull opened: the brain showing", the scalp and brain bleeding out of it.
+- **The spike**: not reproduced. The `face` part cuts four faces with a sword (across the eyes, the mouth, the jaw, a
+  slant across cheek and nose) and chops a head off as steep as dismember.rs lets a blade's cut tilt (53 degrees off
+  square, from under the ear): no corner of the face is stretched in any picture. The port's cut reweighs the body's
+  corners off the piece's bones and the piece's off the body's (dismember.rs `split`), cuts the triangles at the plane
+  (flesh.rs) and works the piece's face bones out from where it lies (face.rs `bone_world`); and dismember.rs cuts a head
+  only between neck01 and the head bone, never through the face, so the TS's likely cause (face-bone weights on a
+  piece) has nowhere to act.
+
+### The eyes (eyes.rs, eye.wesl)
+What the port already drew (port/face): blood under the conjunctiva, holes and cuts, hyphaema settling level, a
+collapsed globe, the pupil at any size. Added:
+- **Bloodshot** (`Eye::red`, the uniform's `state.w`, eye.wesl `bloodshot`): a net of red vessels over a pink flush on
+  the white, thicker toward the lids; from a blow near the eye (by its energy), an eye wounded (fully), crying (a
+  little), opening over some 15 s.
+- **A bullet past the eye** (`near`, from wounds.rs `pierce`): a track 1.1 to 3 cm from the eye's middle breaks the
+  orbit: blood under the conjunctiva coming forward from that side, bloodshot, now and then blood in the front chamber.
+- **A blade across an open eye** cuts it (wounds.rs ran the eye only for thrusts: a sword across the eyes left them whole).
+- **Death** (`Eye::dry`, the uniform's `iris.z`): nothing blinks; the shine dulls over about ten minutes (roughness
+  0.04 to 0.32) with a faint haze over the iris. The pupils of the dead were face.rs's already (mid-dilated, fixed).
+
+### The check
+`cargo run -- --scenario head --out <dir>` (head_scenario.rs), or a part: `head-mouth`, `head-face`, `head-skull`,
+`head-eyes` (each about 5 to 15 minutes on lavapipe). Every picture's throat or eyes into the log, every wound's bleeds
+and injuries, the bones' rest places (`rest`).
+- mouth: the groundskeeper's mouth hung open empty, wide open (front and side), with 20 ml, full, spilling; a pistol
+  shot in through the young man's open mouth, then him out cold on his back with 35 ml, and ten seconds on; the old man
+  coughing blood up; the hooded man vomiting; then four neck wounds on fresh people (a bullet through the side of the
+  neck, one through the windpipe, a knife across the throat, a bat into it) and the knife's cut close.
+- face: the four sword cuts and the steep chop, each face front and side, the stump and the head, all two seconds on.
+- skull: a rifle bullet through the old man's head, a shotgun's charge into the groundskeeper's temple, a bat on the
+  young man's crown, a sword across the hooded man's forehead; each opening from 25 and 14 cm; the x-ray.
+- eyes: a punch to the old man's eye, a knife's edge across the groundskeeper's, a bullet across the young man's face
+  under both eyes, a bat into the hooded man's; at two seconds and a minute (the lids held open for the pictures: a hurt
+  eye clamps shut); the old man dead, half a minute and ten minutes on.
+
 ## The warm-up (warm.rs): a list for every job
 Every render pipeline the game will need is made behind a loading screen before play, in the game and in the `warm`
 scenario (other scenarios start as they did: compiling synchronously, they hold a frame up instead, and the rehearsal

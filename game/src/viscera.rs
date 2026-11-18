@@ -48,6 +48,10 @@ pub const WALL: f32 = 0.025;
 // Joules a heavy charge must leave in the trunk to blow a hole through its wall, and kPa of a blast to burst it.
 pub const BLOWN: f32 = 600.0;
 pub const BURST: f32 = 1400.0;
+// Joules a missile must leave in the head to burst the skull open (wounds.rs hands it over), and how deep an edge must
+// cut to go through scalp and skull (an estimate: 5 to 7 mm of scalp, 6 to 7 of bone, and through the dura).
+pub const HEAD_BURSTS: f32 = 300.0;
+const SKULL: f32 = 0.04;
 
 const CLOTHES: f32 = 0.04; // m the clothes stand off the body, which what is out lies on
 const REACH: f32 = 0.2; // m round an opening within which the organs are drawn, and within which they can come out
@@ -96,16 +100,20 @@ fn look(kind: &str) -> ([f32; 3], f32, f32, f32, f32) {
         "oesophagus" => ([190.0, 110.0, 100.0], 0.3, 0.2, 0.0, 0.35),
         "bone" => ([226.0, 214.0, 188.0], 0.05, 0.2, 0.0, 0.45),
         "cartilage" => ([214.0, 218.0, 212.0], 0.0, 0.1, 0.0, 0.3),
+        // Fresh brain: grey matter's pinkish beige under the pia's net of fine red vessels, glistening (the TS showed
+        // none: its list left the skull's contents out).
+        "brain" => ([196.0, 158.0, 146.0], 0.9, 0.3, 0.0, 0.28),
         _ => ([140.0, 30.0, 26.0], 0.1, 0.3, 0.0, 0.35),
     }
 }
 
-// What is drawn through an opening (not the skull's contents, nor the limbs' bones, nor what lies behind the belly's
+// What is drawn through an opening (the brain through an opened skull; not the limbs' bones, nor what lies behind the belly's
 // lining at the back: the kidneys and the glands on them).
 fn shown(kind: &str, name: &str) -> bool {
     match kind {
         "bone" | "cartilage" => ["rib", "sternum", "vertebra", "sacrum", "hip bone", "costal"].iter().any(|w| name.contains(w)),
-        k => ["bowel", "colon", "stomach", "liver", "gallbladder", "spleen", "pancreas", "bladder", "lung", "heart", "muscle", "airway", "oesophagus"].contains(&k),
+        k => ["bowel", "colon", "stomach", "liver", "gallbladder", "spleen", "pancreas", "bladder", "lung", "heart", "muscle", "airway", "oesophagus", "brain"]
+            .contains(&k),
     }
 }
 
@@ -162,14 +170,27 @@ fn box_distance(lo: Vec3, hi: Vec3, p: Vec3) -> f32 {
     (lo - p).max(Vec3::ZERO).max(p - hi).length()
 }
 
-// The trunk region a world point is on: the belly (and pelvis), the chest, or None.
+// The region a world point is on that can be opened: the belly (and pelvis), the chest, the vault of the skull, or None.
 fn region(world: &World, who: Entity, point: Vec3) -> Option<&'static str> {
     let rd = world.get::<Ragdoll>(who)?;
     match rd.segs[rd.nearest(point).0].def.name.as_str() {
         "belly" | "pelvis" => Some("belly"),
         "chest" => Some("chest"),
+        "head" if cranium(world, who, point) => Some("head"),
         _ => None,
     }
+}
+
+// Whether a world point on the head is over the brain: the forehead above the brows, the crown, the temples and the
+// back of the head above the skull's base (not the face, the jaw or the neck, which the head's segment also carries).
+fn cranium(world: &World, who: Entity, point: Vec3) -> bool {
+    let (Some(person), Some(root)) = (world.get::<Person>(who), world.get::<Transform>(who)) else { return false };
+    let b = &person.body;
+    let (Some(&head), Some(&eye)) = (b.by_name.get("head"), b.by_name.get("eye.L")) else { return false };
+    let p = crate::face::bone_world(person, root, head).inverse().transform_point3(point);
+    let (e, base) = (b.bones[eye].head, b.bones[head].head);
+    // (+z is back here.)
+    p.y > e.y + 0.012 || (p.y > base.y + 0.01 && p.z > e.z + 0.025)
 }
 
 // A crossing's point in the world, worked out if it was found at rest.
@@ -188,7 +209,9 @@ pub fn slashed(world: &mut World, who: Entity, hits: &[Crossing], deep: f32) -> 
         return false;
     }
     let placed_hits: Vec<Crossing> = hits.iter().filter(|h| h.kind == Kind::Skin).map(|h| placed(world, who, h)).collect();
-    let skin: Vec<Crossing> = placed_hits.into_iter().filter(|h| region(world, who, h.point).is_some()).collect();
+    // (Through the scalp and the skull's 6 or 7 mm of bone into the brain takes a heavy edge: a sword's cleaves it, as
+    // the cut skulls of old battlefields show; a knife's does not get there.)
+    let skin: Vec<Crossing> = placed_hits.into_iter().filter(|h| region(world, who, h.point).is_some_and(|r| r != "head" || deep >= SKULL)).collect();
     if skin.len() < 2 {
         return false;
     }
@@ -198,20 +221,42 @@ pub fn slashed(world: &mut World, who: Entity, hits: &[Crossing], deep: f32) -> 
     }
     let mid = skin[skin.len() / 2].clone();
     let along = (skin[skin.len() - 1].point - skin[0].point).normalize();
-    // A cut through the wall gapes: the muscles either side pull it open, more the longer it is.
-    open(world, who, &mid, along, length, (0.01 + length * 0.28).min(0.06)).is_some()
+    // A cut through the wall gapes: the muscles either side pull it open, more the longer it is. A cleft in the skull
+    // hardly does (the bone holds; only the scalp over it draws back a little).
+    let gapes = if region(world, who, mid.point) == Some("head") { (0.008 + length * 0.04).min(0.016) } else { (0.01 + length * 0.28).min(0.06) };
+    open(world, who, &mid, along, length, gapes).is_some()
 }
 
 // A heavy charge (a shotgun's at contact range) `calibre` metres across that left `spent` joules in person `who`, in at
 // skin crossing `hit`. The hole it blows through the wall is about as wide as the charge was, wider the more it spent:
 // 2 to 4 cm at contact to 30 cm (DiMaio, dev/research/wounds.md 5.1), the wad and the gas tearing the edge.
 pub fn blown(world: &mut World, who: Entity, hit: &Crossing, spent: f32, calibre: f32) -> bool {
-    if spent < BLOWN * 0.5 || region(world, who, hit.point).is_none() {
+    let Some(at) = region(world, who, hit.point) else { return false };
+    if at == "head" {
+        return burst_skull(world, who, hit, spent);
+    }
+    if spent < BLOWN * 0.5 {
         return false;
     }
     let r = (calibre / 2.0) * (1.0 + 0.6 * (spent / (BLOWN * 2.0)).min(1.0));
     let d = world.resource_scope(|_, mut rng: Mut<Rng>| Vec3::new(rng.next() - 0.5, rng.next() - 0.5, rng.next() - 0.5));
     open(world, who, hit, d, r * 2.0, r * 2.0).is_some()
+}
+
+// The skull is a closed box full of brain and blood, which do not compress: what a missile spends inside it, the
+// cavity its passage opens, has nowhere to go but out through the bone. A pistol bullet leaves a hole in and a hole out
+// with cracks running from them; a rifle bullet's (over 600 m/s) or a contact shotgun's bursts the vault apart from the
+// inside, the scalp torn in flaps and the brain thrown out of the gap (DiMaio, Gunshot Wounds, ch. on the head: the
+// "explosive" wound of high-velocity rifles; contact shotgun wounds of the head "grossly mutilating"). `spent` J left in
+// the head, burst out at skin crossing `hit`: the gap the wider the more it spent (an estimate: 3 cm across for the
+// least that bursts it, up to 9).
+fn burst_skull(world: &mut World, who: Entity, hit: &Crossing, spent: f32) -> bool {
+    if spent < HEAD_BURSTS {
+        return false;
+    }
+    let k = ((spent - HEAD_BURSTS) / 1200.0).clamp(0.0, 1.0);
+    let d = world.resource_scope(|_, mut rng: Mut<Rng>| Vec3::new(rng.next() - 0.5, rng.next() - 0.5, rng.next() - 0.5));
+    open(world, who, hit, d, 0.03 + 0.06 * k, 0.025 + 0.035 * k).is_some()
 }
 
 // A blast whose peak overpressure at person `who`'s belly was `kpa`, from world point `from`: close enough, it tears the
@@ -343,7 +388,8 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
         return None;
     }
     let hit = placed(world, who, hit);
-    let chest = region(world, who, hit.point)? == "chest";
+    let place = region(world, who, hit.point)?;
+    let chest = place == "chest";
     let started = std::time::Instant::now();
     if world.get::<Viscera>(who).is_none() {
         world.entity_mut(who).insert(Viscera::default());
@@ -372,7 +418,7 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
         v.openings.len()
     };
     // The wall's own thickness round it, every layer cut (wall.rs).
-    let wall = crate::wall::build(world, who, &o, &edge, chest);
+    let wall = crate::wall::build(world, who, &o, &edge, place);
     if let Some(e) = wall {
         world.get_mut::<Viscera>(who).unwrap().walls.push(e);
     }
@@ -380,25 +426,33 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
     let at = npc::with(world, who, |npc| {
         let v = &mut *npc.vitals;
         v.pain = (v.pain + 0.5).min(1.0);
-        v.bleed(Bleed::new(if chest { "chest wall" } else { "abdominal wall" }, 0.0008 + length * 0.006).clots(0.006).mark(Some(hit.clone())));
+        if place == "head" {
+            // The torn scalp bleeds as the scalp does (wounds.rs), and the brain under it, out through the gap.
+            v.bleed(Bleed::new("scalp", 0.002 + length * 0.02).clots(0.004).mark(Some(hit.clone())));
+            v.bleed(Bleed::new("brain", 0.001 + length * 0.01).clots(0.004).mark(Some(hit.clone())));
+            v.brain_damage = (v.brain_damage + 0.4).min(1.0);
+            v.injure("Skull opened: the brain showing", 10.0);
+        } else {
+            v.bleed(Bleed::new(if chest { "chest wall" } else { "abdominal wall" }, 0.0008 + length * 0.006).clots(0.006).mark(Some(hit.clone())));
+        }
         if chest {
             // Air drawn in through the hole as the chest rises: the lung on that side falls in (a sucking chest wound).
             // (The person's right is +x at rest.)
             v.lungs.leak(if o.at.x > 0.0 { Side::R } else { Side::L });
             v.injure("Chest wall opened: air sucked in, the lung collapsing", 8.0);
-        } else {
+        } else if place == "belly" {
             v.injure("Belly opened: organs showing", 7.0);
         }
         let at = npc.world_of(o.at, o.owner, None).0;
         npc.sound("wet", Some(at), 0.8);
         at
     })?;
-    if !chest {
+    if place == "belly" {
         behind(world, who, &o);
     }
     if world.contains_resource::<crate::scenario::Log>() {
         let ms = started.elapsed().as_secs_f32() * 1000.0;
-        crate::scenario::log(world, serde_json::json!({ "event": "opened", "chest": chest, "half": half, "openings": v_open, "at": at.to_array(), "ms": ms }));
+        crate::scenario::log(world, serde_json::json!({ "event": "opened", "region": place, "half": half, "openings": v_open, "at": at.to_array(), "ms": ms }));
     }
     Some(o)
 }
