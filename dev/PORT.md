@@ -1374,3 +1374,80 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
   only from the front: a dark ball with a white point. Now a drop's own depth of blood, linear 0.17 red, and lit through
   (`diffuse_transmission` 0.55, red attenuation over 1.5 mm): across or against a lamp they glow red. A rounder sphere
   (12 by 8).
+
+## Knuckle dusters, boxing gloves, the ring and the bout (BACKLOG item 6, branch port/b-six)
+
+### On the fists (worn.rs, fist.rs, bones.rs; dev/research/fist-weapons.md)
+- Two more things to hold, both `Kind::Fists` (weapons.rs ARMS: "Knuckle dusters", "Boxing gloves"): the same punches
+  as the bare fists (fist.rs: left and right, hold to wind up), each landing as what is worn makes it (`worn::wear`:
+  the kg added to each fist, and the tool, bones.rs `tool`):
+  - bare: `Stiff(FIST_GIVES)` (9.5e4 N/m over 30 cm2), as before;
+  - dusters: 0.2 kg, `dusters` (1.6e5 N/m on 6 cm2): about 1.3 times the force on a fifth of the patch; bones.rs scales
+    fracture strength with the patch, bruise.rs's damage peaks 2.6 times as high (skin split over bone), and wounds.rs
+    counts it narrower than the eye's socket;
+  - gloves: 0.4 kg, `glove` (2.2e4 N/m on 70 cm2): about half the peak force, twice the contact time, the same energy
+    and momentum (so concussion and knockout as bare, wounds.rs's head blow being by energy).
+- Built in code (worn.rs), in the closed fist's own frame and laid on each of the player's fists by its four knuckle
+  joints (scaled to their spread), hung from the wrist's bone so they go with the hand:
+  - a 14 oz glove: a padded mitt (a superellipsoid 13 x 11 x 21 cm, 4 cm in front of the knuckles), the thumb sewn
+    to its side, a cuff 11 cm up the forearm and its strap; red leather with a clear coat;
+  - brass knuckles: four rings round the fingers' first bones fused into one plate, the striking bar across their
+    fronts, a grip in the palm joined at either end.
+  The left hand's are the right's mirrored. On the board (arsenal.rs, the bottom row): a pair of each, gloves hung by
+  their cuffs, dusters flat.
+- Not modelled: the wearer's hand (the bare fist's boxer's fracture, the dusters' and gloves' protection of it): the
+  player's hands are not hurt by punching at all yet.
+- Measured (`punches`, `punches-gloves`, `punches-dusters`: the same twelve punches at the line-up each, jabs, half and
+  full wind-ups to heads, chests and bellies; peak force at the bone, N):
+
+  | | jab to a head | full straight to a head | full to a chest | fractures in 12 | skin split | knocked out |
+  |---|---|---|---|---|---|---|
+  | bare | 1565 | 4245-4332 | 2912-2933 | 4 frontal (linear); ribs in 6 of 7 body punches (1 to 4 each); sternum 5 | 1 | 5 of 5 head punches |
+  | gloves | 924 | 2266-2317 | 2178-2195 | 1 frontal (linear); ribs in 6 of 7 (1 or 2 each); sternum 0 | 0 | 3 of 5 (the jabs only dazed) |
+  | dusters | 2082 | 5336-5450 | 3189-3213 | 4 frontal (depressed); ribs in 6 of 7 (2 each); sternum 6; lungs torn 3 | 3 | 5 of 5, an eye burst |
+
+  The bare model's own figures (a jab breaking the 78-year-old's frontal bone, ribs at a jab) are bones.rs's as they
+  were; what is new is the spread either side of them.
+
+### The ring (ring.rs, map.rs)
+- In the south-east of the hall, between the low wall, the high wall and the ledge, out of the line-up's and the
+  board's way: a platform 4.8 m square and 45 cm high (one of map.rs's blocks, `ring`, drawn by ring.rs: stood on,
+  walked onto from its step at the north-west corner, solid to Rapier, landed on by blood), off-white canvas, a dark blue
+  skirt; posts 30 cm in from the edge (4.2 m, 14 ft, between them: the smallest rings are 16 ft, the hall has no room for
+  more), padded red, white, blue, white; four ropes a side at 46, 76, 107 and 137 cm.
+- Each rope side is a rigid body (a 4.5 cm capsule, 3 kg) held where it hangs by springs every physics step (`spring`:
+  2500 N/m out and in, 6000 up and down, 40000 along, damped), so it gives where it is pushed and throws back what
+  leans on it. Ropes meet people (and pieces) and the player's body, not the hall. Ducked (C), the player goes
+  through between them (`duck`: the body's filter drops the ropes' bit), as one bends through a ring's ropes.
+- The `ring` scenario: walking into the north ropes the player's body pushed them out 16 cm and was held there,
+  walking (the feet's grip against the springs), and thrown back 17 cm when they stopped; ducked, they went through and
+  out of the ring. Somebody stood 60 cm from the north ropes and shoved at them at 2.5 m/s: their chest went 13 cm
+  past where the ropes hang, the ropes out 22 cm, and they were thrown back 87 cm into the ring and went down (a wrist
+  broken on the canvas); the ropes swung back to rest within a second.
+
+### The bout (bout.rs) and what the fighting AI will need
+- B puts an opponent in the ring (the line-up's bodies in turn, in the south-east corner facing the middle), one at a
+  time; `Opponent { down }` marks them. Dead, or below a third conscious for a count of ten seconds, they are taken
+  away and the next is put in three seconds later (`Bout`: how many there have been and beaten). K clears them with
+  the room.
+- The player has no health; `Harm` is theirs now: `Harm::struck(mass, speed, head)` takes a blow as wounds.rs gives a
+  person one (concussion from the energy into the head, energy / 160 J; pain from any blow); past 0.8 concussion they
+  are knocked out for 10 to 30 s (held where they are, the eye down at the floor) and groggy (60% pace) for 20 s after.
+  Nothing calls it yet but its test: nothing hits the player. Nothing shows it on the HUD yet either.
+- The `ring` scenario: B put the groundskeeper in the south-east corner; killed, he was taken away and the next was in
+  3.3 s later (`Bout`: 2 opponents, 1 beaten).
+- Not checked: the `warm` scenario (whether the gloves', dusters' and ring's materials are all made in the warm-up: the
+  ring is drawn from the start, the worn things are put on the frame after they are taken, which the warm-up's three
+  frames for each thing held should cover).
+- What the fighting itself needs from the new active-ragdoll controller (behaviour.rs, ragdoll.rs, motor.rs):
+  - a guard held under load: hands up by the jaw, elbows in, chin down, stiff enough that a jab moves it and does not
+    open it, with the controller's balance keeping them on their feet when hit (and stepping, not falling, when shoved);
+  - footwork: stepping toward, away from and round a target point (the player's position) on the canvas, keeping a
+    distance, turning to face it; leaning on the ropes and coming off them;
+  - a punch as an action: a hand segment driven along a path to a world target (the player's head or body) with a
+    wind-up and an extension in about 100 to 150 ms, the arm's other joints following, and the fist's speed and the mass
+    behind it at contact known, so that `Harm::struck` can be called with them when the hand segment's collider meets
+    the player's body (which needs a head sensor on it: the player's body is one capsule, so head or body is by height);
+  - reactions: flinch and cover up at a punch seen coming, stagger, go down, get back up (a get-up from the canvas);
+  - what it reads: where the player's eye and fists are (player.rs, fist.rs), its own vitals (pain, concussion,
+    consciousness) to fight harder or worse.

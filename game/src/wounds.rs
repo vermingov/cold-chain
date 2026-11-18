@@ -799,7 +799,7 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
     // The eye under it: blood under its white, in its front chamber, or burst by something narrower than the socket's
     // rim (eyes.rs; the socket's floor is bones.rs's).
     let narrow = match tool {
-        Some(Tool::Named(t)) => t == "bat" || t == "edge" || t == "hammer",
+        Some(Tool::Named(t)) => t == "bat" || t == "edge" || t == "hammer" || t == "dusters",
         Some(Tool::Stiff(k)) => k > 1e5,
         None => mass < 1.2 && speed > 10.0,
     };

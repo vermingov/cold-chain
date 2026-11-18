@@ -340,6 +340,11 @@ impl Fists {
         arms.l.hold("open");
     }
 
+    // Whether they are up (in the guard, or punching).
+    pub fn is_up(&self) -> bool {
+        self.up
+    }
+
     fn fist(&mut self, side: char) -> Option<&mut Fist> {
         if side == 'R' { self.r.as_mut() } else { self.l.as_mut() }
     }
@@ -428,6 +433,8 @@ pub fn punch(
         eye.rotation = Quat::from_rotation_y(-yaw) * eye.rotation * Quat::from_rotation_z(-roll);
     }
     let eye = *eye;
+    // What the fists wear (worn.rs): what it adds to each, and what lands.
+    let (worn, tool) = crate::worn::wear(weapons.arm().key);
     for side in ['R', 'L'] {
         let f = fists.fist(side).unwrap();
         f.pitch = eye.forward().y.asin();
@@ -467,14 +474,14 @@ pub fn punch(
                     let traced = hurt.traced.clone();
                     let mut npc = Npc { person: p, root: *root, vitals: &mut vitals, hurt: &mut hurt, traced, dice: &mut dice, frame: frame.0 };
                     let Some(c) = crate::weapons::surface(&mut npc, was, dir, far) else { continue };
-                    let force = wounds::blow(&mut npc, c.point, dir, f.mass, f.speed, Some(wounds::Tool::Stiff(FIST_GIVES)));
+                    let force = wounds::blow(&mut npc, c.point, dir, f.mass + worn, f.speed, Some(tool));
                     met = Some((e, p.label.clone(), p.segments[c.segment].name.clone(), c, force));
                     break;
                 }
                 if let Some((_, label, segment, c, force)) = met {
                     weapons.log.push(json!({ "hit": "blow", "person": label, "segment": segment, "point": c.point.to_array(),
-                                             "dir": dir.to_array(), "mass": f.mass, "speed": f.speed, "joules": 0.5 * f.mass * f.speed * f.speed,
-                                             "newtons": force, "charge": (f.speed - JAB.0) / (FULL.0 - JAB.0), "tool": format!("Stiff({FIST_GIVES})"), "with": format!("{side} fist") }));
+                                             "dir": dir.to_array(), "mass": f.mass + worn, "speed": f.speed, "joules": 0.5 * (f.mass + worn) * f.speed * f.speed,
+                                             "newtons": force, "charge": (f.speed - JAB.0) / (FULL.0 - JAB.0), "tool": format!("{tool:?}"), "with": format!("{side} fist") }));
                     sound.play("blunt", Play::at(c.point).gain(0.45 + 0.35 * (f.mass - JAB.1) / (FULL.1 - JAB.1)));
                     f.stop_at(c.point, &eye);
                     f.was = None;
@@ -515,9 +522,18 @@ const PUNCHES: &[(usize, &str, f32, u8, u32)] = &[
     (3, "belly", 0.55, 2, 2),
 ];
 
-pub fn scenario() -> Vec<crate::scenario::Step> {
+// (`key`: what is held, the bare fists or fists in knuckle dusters or boxing gloves, worn.rs; each also seen in the guard.)
+pub fn scenario(key: &'static str) -> Vec<crate::scenario::Step> {
     use crate::scenario::Step;
-    let mut s = vec![Step::Do(Box::new(|w: &mut World| crate::warm::take(w, "fists"))), Step::Wait(30)];
+    let mut s = vec![Step::Do(Box::new(move |w: &mut World| crate::warm::take(w, key))), Step::Wait(30)];
+    s.extend(crate::scenario::view(&format!("{key}_guard"), 0.0, -2.0, [0.0, 1.5, 2.2], 1.65));
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        for mut p in w.query::<&mut Player>().iter_mut(w) {
+            p.pitch = -0.35;
+        }
+    })));
+    s.push(Step::Wait(4));
+    s.push(Step::Shot(format!("{key}_guard_down")));
     for (i, &(n, part, far, button, held)) in PUNCHES.iter().enumerate() {
         if i > 0 && i % 4 == 0 {
             s.push(Step::Do(Box::new(|w: &mut World| {
@@ -552,7 +568,7 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
         s.push(Step::Wait(held));
         s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::release(w, button))));
         s.push(Step::Wait(4));
-        s.push(Step::Shot(format!("punch_{i}_{part}_{}", if button == 0 { "left" } else { "right" })));
+        s.push(Step::Shot(format!("{key}_{i}_{part}_{}", if button == 0 { "left" } else { "right" })));
         s.push(Step::Wait(40));
         s.push(Step::Do(Box::new(move |w: &mut World| {
             let hits = std::mem::take(&mut w.resource_mut::<Weapons>().log);
