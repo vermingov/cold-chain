@@ -1402,9 +1402,9 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
 
   | | jab to a head | full straight to a head | full to a chest | fractures in 12 | skin split | knocked out |
   |---|---|---|---|---|---|---|
-  | bare | 1565 | 4245-4332 | 2912-2933 | 4 frontal (linear), ribs in 7 (3-4 each), sternum 5 | 1 | 5 of 6 head punches |
-  | gloves | 924 | 2266-2317 | 2178-2195 | 1 frontal (linear), ribs in 6 (1 each), sternum 0 | 0 | 4 of 6 (the jabs only dazed) |
-  | dusters | 2082 | 5336-5450 | 3189-3213 | 4 frontal (depressed), ribs in 7 (2 each), sternum 6, lungs torn 3 | 3 | 6 of 6, an eye burst |
+  | bare | 1565 | 4245-4332 | 2912-2933 | 4 frontal (linear); ribs in 6 of 7 body punches (1 to 4 each); sternum 5 | 1 | 5 of 5 head punches |
+  | gloves | 924 | 2266-2317 | 2178-2195 | 1 frontal (linear); ribs in 6 of 7 (1 or 2 each); sternum 0 | 0 | 3 of 5 (the jabs only dazed) |
+  | dusters | 2082 | 5336-5450 | 3189-3213 | 4 frontal (depressed); ribs in 6 of 7 (2 each); sternum 6; lungs torn 3 | 3 | 5 of 5, an eye burst |
 
   The bare model's own figures (a jab breaking the 78-year-old's frontal bone, ribs at a jab) are bones.rs's as they
   were; what is new is the spread either side of them.
