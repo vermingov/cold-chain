@@ -18,6 +18,7 @@ mod blood;
 mod bones;
 mod bruise;
 mod cut_scenario;
+mod head_scenario;
 mod cutface;
 mod dismember;
 mod dressing;

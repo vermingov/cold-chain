@@ -133,3 +133,25 @@ or an intraocular foreign body. EyeWiki *Ruptured Globe* *(read)* uses the same 
 
 What is not modelled: rebleeding of a hyphaema at days 2-5, sympathetic ophthalmia, infection, the slow enophthalmos
 of a blow-out after the swelling goes (days), double vision (nothing in the game sees through their eyes).
+
+## 6. After the injury, and after death (BACKLOG item 7: the TS never drew these)
+
+- **Bloodshot** (conjunctival injection): the conjunctiva's own vessels dilate with irritation, inflammation or a
+  blow, within minutes: a net of fine red vessels on the white, most marked toward the fornices and fading toward the
+  cornea, over a pink flush (unlike the ciliary flush of an inflamed eye, a ring round the cornea) [C]. Crying reddens
+  the eyes a little the same way [C]. eyes.rs: a blow near the eye 0.4 and more by its energy, an eye wounded at once
+  fully, crying 0.3; the vessels open over some 15 s (*estimate*).
+- **A bullet past the eye**: the orbit's walls are thin (sec. 1) and the temporary cavity of a track passing within a
+  few centimetres breaks them and tears the orbital fat; blood seeps forward under the conjunctiva from that side
+  (subconjunctival haemorrhage) and round the lids (the "raccoon eyes" of a fractured anterior skull base come over
+  hours), and the shock alone can tear the iris root: a closed-globe injury with hyphaema [C] (DiMaio ch. on the head;
+  EyeWiki *Ruptured Globe*, *Hyphema*). eyes.rs `near`: a track 1.1 to 3 cm from the eye's middle, by how close and how
+  much energy the missile carried (*estimate*).
+- **Death**: nothing blinks. A living eye held open loses its tear film in about ten seconds (the tear break-up time);
+  a dead eye left open begins to dry within about ten minutes and loses its shine, the cornea clouds in two or three
+  hours (later, up to 15 to 20, with the lids shut), and dark bands (tache noire) form on the exposed white in hours
+  (an ovine study: about four hours, in every open eye; forensic texts: 1 to 12 hours) [C] (Nioi et al. 2024 preprint,
+  preprints.org 202408.1040; forensic study notes). eyes.rs: the shine dulls over about ten minutes (roughness 0.04 to
+  0.32) with a faint haze over the iris; the clouding and tache noire are past the sandbox's minutes and not drawn. The
+  pupils of the dead: face.rs (mid-dilated and fixed, 4 to 6 mm).
+

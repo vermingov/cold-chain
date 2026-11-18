@@ -86,15 +86,38 @@ death of the drunk lying on his back.
 
 ## Drawn
 
-- The blood lying in the mouth is a level liquid surface inside an ellipsoid standing for the oral cavity (throat.ts
-  `_pool`), filled from its lowest side as the head lies: on the back it gathers in the throat and rises over the
-  tongue to the teeth; face down or on the side it runs out and leaves only the tongue and teeth wet red (`_coat`).
-  Lung blood in it is pinker and duller (froth), stomach blood darker. The fill against the ellipsoid was fitted by eye.
-- A vomit comes in a surge (most of it within the first 0.3 s), as a rope as thick as that flow through an open mouth
-  at about 1 m/s, with a fifth of it thrown as clots; where it lands it splashes and pools like any blood.
+- The mouth has an inside (the bodies had none: an open mouth showed through the head): a lining for the cavity, an
+  ellipsoid on the dental arch from the inside of the lips (7 mm ahead of the lower incisors) to the back of the throat
+  (5 cm behind the arch's middle), cheek to cheek, palate to floor, seen only from inside it (its faces turned in). The
+  palate and the back of the throat go with the skull, the floor of the mouth with the jaw, the cheeks stretched between
+  (throat.rs `lining_holds`), so it opens with the mouth. Its colour is oral mucosa's, wet: a gum's pink-red, L* 55,
+  a* 25, b* 12 (*estimate*, beside a "light red" tongue's measured L* 53, a* 21, b* 8: a tongue-colour table of 729
+  people on PubMed Central, seen only in a search result, not read), darker deeper into the mouth (the shade the lips
+  and cheeks cast, which nothing else draws).
+- The blood lying in the mouth is a level liquid surface inside that lining as the skull and jaw hold it now
+  (throat.rs `level`): the height under which its share of the lining's room is the mouth's share of a mouthful
+  (three quarters of the lining at HOLDS: the tongue takes the rest), no higher than the lower lip (past that it pours
+  out), the surface the outline where that height cuts the lining. Upright, the first millilitres lie in the floor of
+  the mouth under the tongue, out of sight, and a full mouth stands at the lower lip; on the back it gathers in the
+  throat and rises over the tongue to the teeth; face down or on the side it runs out and leaves only the tongue, teeth
+  and lining wet red (`_coat`). Its colour is blood's own as deep as a pool (fluid.rs `DROP`, fluid.wesl's diffuse
+  reflectance: about 0.075, 0.012, 0.011), with water's shine; lung blood in it pinker and duller (froth scatters light
+  back before the blood takes it), stomach blood darker. The coat is a film a few tenths of a millimetre deep: a third
+  of the red of what is under it comes through (fluid.wesl `blood_over`), none of the green.
+- A vomit comes in a surge (most of it within the first 0.3 s), as a rope as thick as that flow at the speed it leaves
+  the mouth, with a fifth of it thrown as clots; where it lands it splashes and pools like any blood. The speed: the
+  belly's pressure in a strain reaches 80 to over 100 mmHg (Cobb et al., J Surg Res 2005, viscera.rs), most of it spent
+  in the gullet and the throat; 1.6 to 2.4 m/s out along the way the mouth faces (*estimate*: no study measures it).
+  It was 0.8 to 1.5 m/s and turned down, and fell onto the chest as a string.
 - A wound through the tongue is a torn card on it (the tongue has its own texture, which the skin's wound sheet does
-  not cover); the back of the throat is part of the skin mesh and takes the skin's own wound.
-
+  not cover); where a missile goes into the cavity and out of it again (a cheek, the palate, the floor of the mouth,
+  the back of the throat) the lining is torn the same way, twice the missile across (throat.rs `throat_wall`).
+- Neck wounds: the ragdoll's head segment carries the upper neck and its chest the lower, so a wound on the neck was
+  named as the head's (a gunshot "through the head", the scalp's bleeding of 1.2 to 2 ml/s added to it, a blow to the
+  throat concussing) or the chest's. A place on the neck (throat.rs `in_neck`: above the collarbones' inner ends, under
+  the mandible's lower border in front and the skull's base behind, within 6.5 cm of the midline) is now "the neck":
+  its skin bleeds as skin does, and what lies under it (the carotids, the jugulars, the windpipe) by the vessels met,
+  routed as above.
 ## Not modelled
 
 - Coffee-ground vomit (needs hours in acid) and the colour difference between frothy lung blood and gut blood on the
