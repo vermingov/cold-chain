@@ -1055,16 +1055,26 @@ Tried and dropped: pre-step stops along the true gradient (no better: the solver
 the hinge's child frame with its bend so the twist and side rows lie along the turn (no better), a soft lock (15 and 60
 Hz: as bad as the limit).
 
-What changed: an axis with no range is a lock (ragdoll.rs `shut`), and the elbow's side range is none (the TS's 3 degrees
-were laxity; a real elbow does not bend sideways). A torn or dislocated elbow (`set_range` with a range) opens the lock
-into a limit again. The knee keeps its 3 degrees: locked, four people standing ten seconds crept 11-13 cm against 4-9.
+Tried and not kept: the elbow's side held by a lock instead of a 3-degree limit (an axis with no range locked; commit
+7b60ed6 on this branch). Dragged, the elbow then stayed within 1.8 degrees, and in the crawl its side leak went from 72
+to none; but the leak moved to the next limit along the arm (the elbow's twist, 42-67 in the crawl; with the twist
+locked too, the wrist, 111, and the shoulder, 32 and once 88 at rest), and getting up broke: one man of four failed his
+push-up and lay down for good in two seeds of three, with the side locked or both, against none of three as now. The
+knee locked as well crept 11-13 cm standing ten seconds, against 4-9. The leak is Rapier's limit row; a fix belongs
+there (a limit along `ang_basis`, as the lock does), not in the table.
 
 ### The shoulder's cone
 The port has the TS's capsule (ragdoll.rs `shoulders`: the posterior bound of the arm's direction as a function of its
-elevation, 60 degrees behind hanging, 45 level, 20 overhead, Norkin and White; a stiff damped spring past it). Past it:
-see the numbers below.
+elevation, 60 degrees behind hanging, 45 level, 20 overhead, Norkin and White; a stiff damped spring past it). It holds:
+over every scenario above, three seeds of drag and getup, no arm went more than 3.4 degrees past it (a dead man thrown
+at 5 m/s), getting up 0.9, everywhere else nothing.
 
 ### Bones (bones.rs)
 Checked per bone and load in dev/research/bone-strength.md. Wrong and fixed: the clavicle's force across was its axial
 figure (1480 N; bent across at speed 732-1159 N: now 1100), the kneecap's 6000 N (8.5 kN in flexed-knee impacts: now
 8500). Not used anywhere: `twist` (nothing loads a bone in torsion).
+
+### The K reset
+`khang` (scenario.rs) hurts four people, then presses K: the reset took one frame of 982 ms (dev build, software
+renderer, a loaded machine), the frames either side nothing, no hang. `sandbox::reset` despawns some entities twice
+(Bevy warns, harmlessly). Not looked into further.

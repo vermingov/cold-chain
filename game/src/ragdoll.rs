@@ -128,9 +128,7 @@ pub fn with_mid_bones(mut body: Body) -> Body {
 // 0-145 and a few degrees past straight, the forearm turning 80 either way, all of it at the wrist's joint, knee 0-140
 // and 5 past straight with almost no give sideways, hip 120 forward and 20 back, 45 out and 30 in, ankle 20 up and 50
 // down, the neck 50 forward and 60 back, the lower back 45 forward, 15 back, 15 to the side and 10 round, the upper
-// back 35, 15, 20 and 30. (The TS's notes on why each is so are in ragdoll.ts beside the same table.) An axis with no
-// range is held shut (`shut`): the elbow does not bend sideways at all (the TS gave it 3 degrees). (The knee keeps its
-// 3: held shut, four people standing ten seconds crept 11 to 13 cm, against 4 to 9.)
+// back 35, 15, 20 and 30. (The TS's notes on why each is so are in ragdoll.ts beside the same table.)
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Hinge {
@@ -206,7 +204,7 @@ pub fn table() -> Vec<SegmentDef> {
                 j("chest", X, (k("shoulderFlex"), -60.0, 175.0), (k("shoulderAbduct"), -50.0, 165.0), 85.0, 110.0,
                   vec![(format!("shoulderAbduct{s}"), -36.0), (format!("shoulderFlex{s}"), -26.0)])),
             def(&format!("upperarm2{s}"), &mid_of("upperarm01", s), 0.013, Capsule, lock(&p("upperarm"), X)),
-            def(&format!("forearm{s}"), &b("lowerarm01"), 0.009, Capsule, j(&p("upperarm2"), Elbow, (k("elbow"), -5.0, 145.0), (None, 0.0, 0.0), 5.0, 80.0, vec![])),
+            def(&format!("forearm{s}"), &b("lowerarm01"), 0.009, Capsule, j(&p("upperarm2"), Elbow, (k("elbow"), -5.0, 145.0), (None, -3.0, 3.0), 5.0, 80.0, vec![])),
             def(&format!("forearm2{s}"), &mid_of("lowerarm01", s), 0.008, Capsule, lock(&p("forearm"), Elbow)),
             def(&format!("hand{s}"), &b("wrist"), 0.006, Box, j(&p("forearm2"), Elbow, (k("wrist"), -75.0, 75.0), (None, -25.0, 25.0), 75.0, 25.0, vec![])),
             def(&format!("thigh{s}"), &b("upperleg01"), 0.06, Capsule, j("pelvis", X, (k("hipFlex"), -20.0, 120.0), (k("hipAbduct"), -30.0, 45.0), 40.0, 320.0, vec![])),
@@ -543,14 +541,6 @@ fn rapier_bound(b: f32, others: f32) -> f32 {
     if w2 <= 0.0 { std::f32::consts::PI.copysign(b) } else { 2.0 * c.atan2(w2.sqrt()) }
 }
 
-// Whether a joint's range on an axis is none: the axis is held shut, by a lock, not a limit. (Rapier's lock reads its
-// angle's change the way the joint actually turns, `ang_basis`; its limit pushes along the parent's plain axis, and has
-// no hold on a turn about two axes at once: dragged by the hand, an elbow with 3 degrees of side limit went 50 to 107
-// degrees sideways with the row pushing nothing, and in the crawl 72; with the side locked, none.)
-fn shut(lo: f32, hi: f32) -> bool {
-    hi - lo < 1e-3
-}
-
 // What a muscle is sending its joint's motors now, so that nothing is sent that has not changed.
 #[derive(Clone, Default)]
 struct Motor {
@@ -832,13 +822,7 @@ impl Ragdoll {
         } else {
             (s.hi[0] - 145.0 * crate::person::RAD).max((s.lo[0] + 145.0 * crate::person::RAD).min(0.0))
         };
-        let mut mask = if j.lock { JointAxesMask::all() } else { JointAxesMask::LIN_AXES };
-        for i in 0..3 {
-            if !j.lock && shut(s.lo[i], s.hi[i]) {
-                mask |= ANGULAR[i].into();
-            }
-        }
-        let mut joint = GenericJointBuilder::new(mask)
+        let mut joint = GenericJointBuilder::new(if j.lock { JointAxesMask::all() } else { JointAxesMask::LIN_AXES })
             .local_anchor1(pivot - parent.head)
             .local_basis1(frame * Quat::from_rotation_x(s.zero))
             .local_anchor2(pivot - d.head)
@@ -847,10 +831,7 @@ impl Ragdoll {
         if !j.lock {
             for i in 0..3 {
                 let z = if i == 0 { s.zero } else { 0.0 };
-                if !shut(s.lo[i], s.hi[i]) {
-                    joint = joint.limits(ANGULAR[i], [s.lo[i] - z, s.hi[i] - z]);
-                }
-                joint = joint.motor_model(ANGULAR[i], MotorModel::ForceBased);
+                joint = joint.limits(ANGULAR[i], [s.lo[i] - z, s.hi[i] - z]).motor_model(ANGULAR[i], MotorModel::ForceBased);
             }
         }
         commands.entity(s.entity).insert(ImpulseJoint::new(self.segs[p].entity, joint.build()));
@@ -940,7 +921,7 @@ impl Ragdoll {
             return;
         }
         for i in 0..3 {
-            let t = if shut(s.lo[i], s.hi[i]) { s.lo[i] } else { target[i].clamp(s.lo[i] + 0.02, s.hi[i] - 0.02) };
+            let t = target[i].clamp(s.lo[i] + 0.02, s.hi[i] - 0.02);
             if !((t - m.t[i]).abs() < 0.002) {
                 m.t[i] = t;
                 m.dirty = true;
@@ -994,15 +975,7 @@ impl Ragdoll {
             let g: &mut GenericJoint = j.data.as_mut();
             for i in 0..3 {
                 let z = if i == 0 { s.zero } else { 0.0 };
-                // (An axis held shut opened, a hinge torn or put out of joint: then its range is a limit's.)
-                let axis: JointAxesMask = ANGULAR[i].into();
-                if shut(lo[i], hi[i]) {
-                    g.raw.locked_axes |= axis;
-                    g.raw.limit_axes.remove(axis);
-                } else {
-                    g.raw.locked_axes.remove(axis);
-                    g.set_limits(ANGULAR[i], [lo[i] - z, hi[i] - z]);
-                }
+                g.set_limits(ANGULAR[i], [lo[i] - z, hi[i] - z]);
             }
         }
     }
@@ -1035,17 +1008,14 @@ impl Ragdoll {
             });
             let Ok(j) = joints.get(s.entity) else { continue };
             let g: &GenericJoint = j.data.as_ref();
-            let open = |g: &GenericJoint, i: usize| !g.raw.locked_axes.contains(ANGULAR[i].into());
-            let near = (0..3).all(|i| !open(g, i) || g.raw.limits(ANGULAR[i]).is_some_and(|m| (m.min - want[i][0]).abs() < 0.005 && (m.max - want[i][1]).abs() < 0.005));
+            let near = (0..3).all(|i| g.raw.limits(ANGULAR[i]).is_some_and(|m| (m.min - want[i][0]).abs() < 0.005 && (m.max - want[i][1]).abs() < 0.005));
             if near {
                 continue;
             }
             if let Ok(mut j) = joints.get_mut(s.entity) {
                 let g: &mut GenericJoint = j.data.as_mut();
                 for i in 0..3 {
-                    if open(g, i) {
-                        g.set_limits(ANGULAR[i], want[i]);
-                    }
+                    g.set_limits(ANGULAR[i], want[i]);
                 }
             }
         }
