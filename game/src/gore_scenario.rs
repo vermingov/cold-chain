@@ -161,6 +161,36 @@ pub fn steps(part: &str) -> Vec<Step> {
         s.push(Step::Wait(240));
         s.extend(pictures("head", "4s", 0.3));
     }
+    // A sword's cut across the young man's right forearm, as a player swings it (the right button): how fast the
+    // forearm goes and spins for a second after (each point of the edge in it once gave a whole push a frame).
+    if all || part == "sword" {
+        s.push(act(|w| {
+            let _ = w.run_system_once(crate::sandbox::reset);
+        }));
+        s.push(act(|w| crate::warm::take(w, "sword")));
+        s.push(Step::Wait(90));
+        s.push(act(|w| {
+            crate::warm::aim(w, 2, "forearm2R", 0.8);
+            w.resource_mut::<Weapons>().log.clear();
+        }));
+        s.push(Step::Wait(20));
+        s.push(act(|w| crate::warm::press(w, 2)));
+        s.push(Step::Wait(10));
+        s.push(act(|w| crate::warm::release(w, 2)));
+        for k in 0..30 {
+            s.push(Step::Wait(3));
+            s.push(act(move |w| {
+                let who = person(w, 2);
+                let rd = w.get::<Ragdoll>(who).unwrap();
+                let parts: Vec<Value> = ["forearmR", "forearm2R", "handR"].iter().map(|n| {
+                    let s = &rd.segs[rd.by_name(n)];
+                    json!([n, s.vel.length(), s.spin.length()])
+                }).collect();
+                let hits = if k == 29 { Some(std::mem::take(&mut w.resource_mut::<Weapons>().log)) } else { None };
+                log(w, json!({ "event": "sword", "k": k, "segments": parts, "hits": hits }));
+            }));
+        }
+    }
     // A pistol bullet into the naked man's belly from 2.5 m.
     if all || part == "pistol" {
         s.extend(fire("pistol", 4, "belly", 2.5, "pistol"));

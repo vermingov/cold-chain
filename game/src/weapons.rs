@@ -1294,8 +1294,13 @@ fn sweep(cx: &mut Cx, dt: f32) {
                 return;
             }
             How::Cut => {
-                let m = Missile { name: a.key, energy: if a.key == "sword" { 90.0 } else { 35.0 }, mass: 0.3, calibre: 0.004, channel: a.cut * 0.5, soft: 0.8, hard: 60.0,
-                                  reach: a.cut, blade: true, slash: true, ..M };
+                // The blade's push on someone is given once a swing, with the first of its edge to go in: each point of
+                // the edge crossing the skin in each frame gave a whole missile's push (wounds.rs: its mass times its
+                // speed), up to five of them a frame, and a sword's cut spun a forearm at 800 to 1000 rad/s. What a cut
+                // carries into a limb is the blade's own: 0.3 kg at the speed 90 J gives it (a 1.4 kg forearm a few m/s).
+                let first = !cx.weapons.action.as_ref().is_some_and(|x| x.hits.iter().any(|h| h.0 == who));
+                let m = Missile { name: a.key, energy: if a.key == "sword" { 90.0 } else { 35.0 }, mass: if first { 0.3 } else { 0.0 }, calibre: 0.004,
+                                  channel: a.cut * 0.5, soft: 0.8, hard: 60.0, reach: a.cut, blade: true, slash: true, ..M };
                 let res = pierce(cx, who, was[k], dir, &m, far + a.cut);
                 let (true, Some(enter)) = (res.hit, res.enter) else { continue };
                 // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).

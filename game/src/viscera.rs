@@ -1211,7 +1211,8 @@ pub fn update_system(
                 for i in 0..v.loops[k].count {
                     let at = inv.transform_point3(v.loops[k].p[i]);
                     let mm = v.blood_at(at);
-                    v.loops[k].gore[i] = v.loops[k].gore[i].max(mm);
+                    // (A film where the organ was bled on, in patches: soaked through it reads as red paint.)
+                    v.loops[k].gore[i] = v.loops[k].gore[i].max(mm.min(0.035));
                 }
             }
         }

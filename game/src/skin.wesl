@@ -224,8 +224,8 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     let r = length(qe);
     let dir = qe / max(r, 1e-4);
     // Not a compass circle: its edge a little in and out round it, and finely ragged; a way in again much more so.
-    let uneven = select(0.13, 0.38, s.kind == AGAIN);
-    let rag = select(0.05, 0.14, s.kind == AGAIN);
+    let uneven = select(0.2, 0.38, s.kind == AGAIN);
+    let rag = select(0.11, 0.18, s.kind == AGAIN);
     var edge = r0 * (1.0 + uneven * (noise2(dir * 1.4 + s.seed) - 0.5) * 2.0 + rag * (noise2(dir * 5.0 + s.seed * 1.7) - 0.5) * 2.0 * fine);
     if s.kind == CHARGE {
         // One hole made by many pellets together: its edge a run of their arcs, scalloped (DiMaio).
@@ -240,6 +240,10 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     var h = 0.0;
     if d < 0.0 {
         h = 0.45 + min(-d * 14.0, DEEPEST);
+        // Not a tube to be seen down: skin and fat close back over the track behind a bullet (the permanent cavity is a
+        // collapsed slit, full of blood and torn tissue), so a few millimetres down the hole meets its own floor of
+        // torn, bloody tissue, uneven.
+        h = min(h, 2.6 + 2.2 * noise2(q * 0.6 + s.seed * 1.9) + 1.2 * noise2(q * 1.7 + s.seed));
         if s.kind == CHARGE {
             // A crater, its floor torn tissue a few millimetres down.
             h = min(h, 4.0 + 2.5 * noise2(q * 0.3 + s.seed) + 1.5 * noise2(mat2x2(0.8, 0.6, -0.6, 0.8) * q * 0.7 + s.seed));
@@ -341,7 +345,8 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     var h = mix(-lift, top, smoothstep(0.0, 0.45, inside));
     let torn = smoothstep(-0.3, 1.2, hole);
     h = mix(h, fat + 1.0 + 4.0 * noise2(q * 0.35 + s.seed * 3.0), torn);
-    h += DEEPEST * smoothstep(burst * 0.55, burst * 1.0, hole);
+    // (The track behind it closed over, as at a way in: a darker, deeper pit in the middle, not a tunnel.)
+    h += (4.0 + 2.0 * noise2(q * 0.8 + s.seed * 4.0)) * smoothstep(burst * 0.55, burst * 1.0, hole);
     return vec4(h, inside, torn, lob);
 }
 
@@ -538,7 +543,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         // Down its wall: the skin's cut edge, then the fat, then muscle, darkening to nothing; blood over all of it.
         var wall = mix(dermis, fat, smoothstep(1.8, 2.6, h));
         wall = mix(wall, to_linear(muscle) * 2.2, smoothstep(5.0, 7.0, h));
-        wall = blood_over(to_linear(wall), 0.1 + 0.15 * smoothstep(0.5, 3.0, h), wet);
+        wall = blood_over(to_linear(wall), 0.1 + 0.15 * smoothstep(0.5, 3.0, h) + 0.25 * smoothstep(2.4, 3.6, h), wet);
         if s.kind == CHARGE {
             // The crater's floor: fat and muscle torn together.
             wall = blood_over(to_linear(mix(fat, muscle, smoothstep(0.35, 0.6, noise2(q * 0.5 + s.seed)))), 0.2, wet);

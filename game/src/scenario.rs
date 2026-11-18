@@ -195,7 +195,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "body-push" | "body-press" | "body-melee" | "body-jump" => s = crate::body_scenario::steps(&name[5..]),
         // Gunshot wounds, a belly blown open and the shirt soaked, close up (the play-test's reports): gore_scenario.rs.
         "gore" => s = crate::gore_scenario::steps(""),
-        "gore-belly" | "gore-bare" | "gore-pellets" | "gore-head" | "gore-pistol" => s = crate::gore_scenario::steps(&name[5..]),
+        "gore-belly" | "gore-bare" | "gore-pellets" | "gore-head" | "gore-pistol" | "gore-sword" => s = crate::gore_scenario::steps(&name[5..]),
         _ => return body(name),
     }
     Some(s)
