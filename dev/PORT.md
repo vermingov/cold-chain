@@ -1065,9 +1065,9 @@ there (a limit along `ang_basis`, as the lock does), not in the table.
 
 ### The shoulder's cone
 The port has the TS's capsule (ragdoll.rs `shoulders`: the posterior bound of the arm's direction as a function of its
-elevation, 60 degrees behind hanging, 45 level, 20 overhead, Norkin and White; a stiff damped spring past it). It holds:
-over every scenario above, three seeds of drag and getup, no arm went more than 3.4 degrees past it (a dead man thrown
-at 5 m/s), getting up 0.9, everywhere else nothing.
+elevation, 60 degrees behind hanging, 45 level, 20 overhead, Norkin and White; a stiff damped spring past it). Mostly it
+holds: over every scenario above and three seeds of drag and getup, nothing past it at rest, getting up 0.9 degrees at
+most; only a dead man thrown up and back at 5 m/s takes an arm past it, 3.4 to 12.5 degrees, for a moment.
 
 ### Bones (bones.rs)
 Checked per bone and load in dev/research/bone-strength.md. Wrong and fixed: the clavicle's force across was its axial
