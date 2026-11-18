@@ -1,0 +1,11 @@
+[package]
+name = "ragdoll-replica"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The game's ragdoll in plain Rapier (the same rapier3d as bevy_rapier3d 0.37), for finding out what the physics does
+# with it without the game round it. See src/main.rs.
+[dependencies]
+rapier3d = "=0.36.1"
+serde_json = "1"

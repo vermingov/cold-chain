@@ -1272,6 +1272,43 @@ fn body(name: &str) -> Option<Vec<Step>> {
             }
         }
         // Every joint of the first person: where it is, where its muscle aims, its range, standing a moment.
+        // The groundskeeper's ragdoll as Rapier is given it (port/b-ragdoll), for dev/ragdoll-replica to build again in
+        // plain Rapier: each segment's shape, weight and place, and its joint's frames and range as ragdoll.rs `join`
+        // makes them (the bend's range about its zero, in the motors' measure).
+        "ragdoll" => {
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let e = person_at(w, 2);
+                let (person, rd) = (w.entity(e).get::<Person>().unwrap(), w.entity(e).get::<Ragdoll>().unwrap());
+                let v = |v: Vec3| v.to_array();
+                let segs: Vec<Value> = person.segments.iter().enumerate().map(|(k, d)| {
+                    let s = &rd.segs[k];
+                    let shape = match d.shape {
+                        Shape::Capsule { a, b, r } => json!(["capsule", v(a), v(b), r]),
+                        Shape::Cuboid { centre, half, rotation } => json!(["box", v(centre), v(half), rotation.to_array()]),
+                        Shape::Ball { centre, r } => json!(["ball", v(centre), r]),
+                    };
+                    let mut out = json!({ "k": k, "name": d.name, "parent": d.parent, "mass": d.mass, "shape": shape,
+                        "at": v(d.rest.translation), "turn": d.rest.rotation.to_array() });
+                    if let (Some(p), Some(j)) = (d.parent, &d.joint) {
+                        let pivot = if s.spread.len() > 1 {
+                            s.spread.iter().map(|&b| person.body.bones[b].head).sum::<Vec3>() / s.spread.len() as f32
+                        } else {
+                            d.head
+                        };
+                        let z = s.zero;
+                        out["a1"] = json!(v(pivot - person.segments[p].head));
+                        out["b1"] = json!((s.frame * Quat::from_rotation_x(z)).to_array());
+                        out["a2"] = json!(v(pivot - d.head));
+                        out["b2"] = json!((s.unneutral * s.frame).to_array());
+                        out["lock"] = json!(j.lock);
+                        out["lo"] = json!([s.lo[0] - z, s.lo[1], s.lo[2]]);
+                        out["hi"] = json!([s.hi[0] - z, s.hi[1], s.hi[2]]);
+                    }
+                    out
+                }).collect();
+                log(w, json!({ "event": "ragdoll", "who": person.label, "segments": segs }));
+            })));
+        }
         "joints" => {
             for _ in 0..4 {
                 s.push(Step::Do(Box::new(joints)));
