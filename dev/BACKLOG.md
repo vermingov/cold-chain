@@ -33,3 +33,12 @@ fix the loose ends". Order proposed to them: 4 first (the active ragdoll touches
    - the brain inside the skull, and the face stretched into a spike by a sword cut;
    - joint limits giving under load, the shoulder cone; bone fracture thresholds; the chest wall fit; eyes after an
      injury; the K hang; shovel/sledgehammer rest pose; shins buzzing when standing.
+
+## The user's play-test reports, 2026-11-18 (fix after or with 1-6)
+- X-ray after a dismemberment: the cut limb's bones stretch from the stump to the severed piece (normal view fine).
+  Bandaging a stump does the same (the dressing stretches to the piece). Given to the people/stumps job.
+- Gunshot holes (the shotgun's most of all) are too perfectly round: a clean cylinder through skin, fat and muscle
+  with neat ring layers, a hole straight through the head. Real ones: ragged, everted/inverted edges, abrasion ring,
+  torn tissue, not a drilled tunnel.
+- Intestines poke out of the belly in a weird way: they appear only where there is a hole and clip through the body
+  (a red cone sticking out of a shirt). Not a real evisceration.
