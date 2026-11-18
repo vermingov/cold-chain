@@ -957,7 +957,9 @@ are on any frame here (10 to 30 and 5 to 15).
   them, PostUpdate 17 to 24 ms for a few frames); and, in four of some twenty runs (before and after this work), one frame 1 to 4 after the blast with
   140 to 280 ms of PostUpdate that no row accounts for. Once it came with every PostUpdate system of ours timed but
   person.rs `pose_people` (each in a row of its own for the run) and none of them was over 3 ms: so Bevy's own work,
-  pose_people or Rapier's PostUpdate systems, likely over what the two shins' cuts put in from their thread. Not found.
+  pose_people or Rapier's PostUpdate systems, likely over what the two shins' cuts put in from their thread. Found since
+  (port/b-body, "The PostUpdate stall" below): the main thread waiting, not working, while both compute threads compile
+  render pipelines, which a scenario does on first use and on those threads.
 - Rapier is the biggest steady cost of the game's own: 10 to 15 ms a frame on average here, 30 to 60 in a bad frame
   (two to four 120 Hz steps a frame, four ragdolls with sixteen solver passes).
 - Opening a belly or a chest (viscera.rs `open`: the lips' 40 surface tests and the wall's 40 traces): about 2 ms.
@@ -1191,3 +1193,94 @@ it (`struck` took any cartilage for the head's).
 `stand`'s per-segment spin (the TS's jitter.mjs measure): shins 0.012-0.018 rad/s, the feet 0.024-0.031, the thighs
 0.011-0.012, in three builds; the notes' "feet still buzz about 1 rad/s" is gone. The head is the most, 0.196, ten times
 anything else.
+
+## The player's body, what they hold, jumping (BACKLOG items 1 and 2, branch port/b-body)
+
+### The body (player.rs)
+The player is a body in the physics (`PlayerBody`): 80 kg, a capsule round the eye's line from 40 cm over the feet (what
+is lower, a body lying on the floor, is stepped over) to the crown, 25 cm across the shoulders, rotations locked, no
+gravity of its own. Every physics step (`drive`) its velocity is brought toward the pace the keys ask for (`Player::vel`,
+eased as before) by no more than the feet can give: 0.9 of the weight along the floor (rubber on concrete), so at most
+706 N, and in the air 8% of that. Its height follows the feet's (`Player::height`, still map.rs's ground, stairs and
+falls). The eye is the body's place each frame, carried on by the physics' overstep (so it moves as smoothly as the
+frames come). The hall is still map.rs's (`push`, `ground`): the body meets only people's segments, pieces cut off and
+things thrown or dropped (collision group 6), and a wall push moves the body with the player. Put somewhere (`spawn`,
+every scenario), it goes there still and passes through anyone it lands in until it is clear of them all (`drive`).
+thuds.rs takes it as a person, not a wall (no slam); weapons.rs `take_hold` looks past it.
+
+### Jumping (player.rs)
+Space, on the floor: 2.97 m/s up, a 0.45 m rise (Markovic 2004: 0.4-0.5 m for active young men). Off the floor only
+the air's 8% of the grip steers and nothing slows; Space in the air does nothing; landing sinks the eye with the knees
+(2.5 cm per m/s, at most 12) and is heard as a footfall (`steps`; there is no landing take).
+
+### What is held (weapons.rs `animate`, `clear_of`, `measure`)
+Drawn in the room (held.wesl, the TS's draw-over-the-room, is gone; blades get their own material in `own_blades`).
+Each thing's convex hull in the hand's frame (`measure`, from its meshes) is swept every frame from as far back as the
+arms can take it (12 cm in front of the eye for what is held out, 6 cm for a long gun's stock) to where it is wanted,
+against the room (WORLD) and people's segment colliders: it stops where it first touches, pulled back toward the chest;
+when that is not enough it is turned about the back of its box (a long gun's butt, a pommel), a gun's muzzle down and
+anything else's point up, 0.15 rad at a time to 1.35. It goes in at once and back out over about 0.1 s. Pressed against
+someone it pushes the segment touched with 400 N/m of how far it is pulled back, at most 80 N. During a stab, cut or
+blow it is not bent out of the way: what it meets in a person is `sweep`'s as before (the striking points' paths), and
+if it meets the room's wall the swing stops there (`Action::stopped`, heard: there is no take of steel or wood on
+concrete, so 'bounce-metal', the grenade's, or 'blunt' for the bat) and comes back the way it went.
+Shots are followed from 4 cm inside the barrel (`IN_BARREL`): a muzzle pressed into the give of clothes and skin still
+finds the way in. wounds.rs takes the powder's range from the muzzle (`Missile::muzzle`, the distance the shot has come
+from it): with shots from the muzzle since the hands' port it was counted from a point 45 cm behind it, so a shot from
+1.6 m drew powder and a contact shot's range was -0.44 m. Pellets and a shotgun's charge now leave powder too (only a
+grenade's fragments have none).
+
+### The checks (body_scenario.rs: `body-push`, `body-press`, `body-melee`, `body-jump`; MELEE=sword,bat for some)
+Debug build, lavapipe, one run each unless said.
+- Walking (1.55 m/s) into the groundskeeper standing: the player's pace fell to 0.78 m/s at contact and he went back at
+  0.9 m/s, standing; leaning on into him for 2 s at the full 706 N drove him back 2.1 m at about 1.1 m/s, still standing,
+  until his balance gave and he went over (Fall at 2 s, Down on the floor). Let go, both stop. Running (3.4 m/s) into the
+  young man: 3.4 -> 2.0 m/s for the player, 1.85 m/s for him; he went back 0.6 m and stayed on his feet. The player's
+  line never came nearer his chest's than 0.46 m (the capsule's 0.25 and his chest's): nothing passed through.
+- The pistol walked up to a chest and the look brought down onto the breastbone: the gun pulled back 0.19-0.33 m, its
+  muzzle 3 mm off the chest's collider (8 mm into the skin as medicine draws it), the man pushed back 12 cm by it; fired,
+  the bullet went in 8 mm from the muzzle (range 8 mm for the powder; was -0.44 m, see above) and out of his back.
+  Pressed to the south wall: pulled back 0.26 m, the muzzle 0.7 mm off the wall, the hole where the muzzle was. The
+  rifle walked into the wall: 6 cm back, then the muzzle down 1.2 rad about the butt; backed off, back to rest (0.003).
+- Swung and stabbed at the wall from 45 cm: the deepest any corner of each hull went past the wall's face, knife 0.0,
+  sword 0.0, bat 5.3 cm (the one frame it met it), shovel 1.6, sledge 2.0, hammer 0.0 (14-91 cm before the swings were
+  stopped by it). At the young man's belly from arsenal-use's distances: knife a stab (pelvis), bat, shovel and sledge
+  blows (upper arm, upper arm, pelvis: what the swing came across first), hammer a blow (pelvis) in two runs of three;
+  the sword from 0.9 m, its point past him, now cuts with its edge (head, chest) where it went through him unfelt. 0.6 m
+  beside his head, looking past it: knife, sword, hammer nothing; bat, shovel, sledge his forearm or upper arm, which
+  the swing comes across.
+- Jump on the spot: up 0.425 m in 0.28 s, down 0.58 s after leaving; Space again in the
+  air: nothing (the rise is integrated by the half-step since: 0.45 m, not re-run). Walking at the half-metre crate and jumping: on it (0.5), and off the far side. A body lying on the floor:
+  walked over (the capsule's bottom at the knees), and jumped over.
+
+### Not done
+- The fists are not kept out of anything (a guard held up against someone chest to chest goes into them); a punch
+  stops at the skin as before.
+- The arms are not tested against the room: pulled back with the gun they stay near the body, but an elbow can go into
+  a wall beside the player.
+- The push back from the held thing on the player (at most 80 N against the feet's 706) is not given to the body.
+- A long blade thrust at someone nearer than its length goes through them and cuts with its edge (above); it is not
+  stopped by the body.
+- The player's capsule is one shape: no legs below the knees (things lower are stepped over, not kicked), no arms.
+
+### The PostUpdate stall after some blasts (PORT "What is left")
+Looked at with `perf record -e cpu-clock -k CLOCK_MONOTONIC --call-graph dwarf` (/usr/lib/linux-tools/6.8.0-149-generic/
+perf; the `perf` on the path is a wrapper that does nothing here) on the running game, started by a temporary hook in
+profiler.rs `run_main` at a frame or at "grenade went off", and each PostUpdate's monotonic start and end printed beside
+it, so the samples of the very frames could be cut out (`perf script --time`). Not committed.
+- Four grenade runs of arsenal-use (ARSENAL_USE=grenade): none had the 140-280 ms frame (the worst PostUpdate in the
+  frames after the blast 39 to 65 ms). The same stall is there in every run at the start, though: PostUpdate 650, 190-360,
+  1140-1580 and 100-125 ms in frames 0 to 3 of any scenario.
+- In those frames the main thread is hardly sampled at all (5 samples in 2.3 s of PostUpdate at 100 Hz: it is asleep),
+  and both compute pool threads (this machine's four cores give Bevy's compute pool two) are in wgpu's
+  `create_render_pipeline` (lavapipe compiling: naga to SPIR-V, LLVM), under the render world's PipelineCache in its
+  Render schedule. The main world's PostUpdate systems are tasks on the same pool, and Bevy's executor does not run them
+  on the waiting main thread (`scope_with_executor(false, ..)`): PostUpdate waits until a compute thread is free.
+- A scenario compiles pipelines synchronously, on first use (main.rs: `synchronous_pipeline_compilation` for every
+  run, so that a mesh is not left out of the picture it is wanted in), and skips warm.rs. The blast is the first time a
+  scenario draws thousands of drops, the smoke, the cut faces: its spike in the profile lists 3 pipelines compiled. Only
+  when such a compile lands on the frame's PostUpdate does it show there (four runs in twenty).
+- In the game the pipelines are compiled at load behind the loading screen (warm.rs) and otherwise asynchronously (on
+  the async compute pool, bevy_render `create_pipeline_task`, not these threads), so this stall should not happen there. Not measured on a real machine.
+  Nothing was changed: what the scenario numbers after a blast show as PostUpdate is partly the render world's first-use
+  compiles; read the profile's `compiles` beside it.

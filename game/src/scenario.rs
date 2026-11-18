@@ -185,6 +185,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "head-mouth" | "head-face" | "head-skull" | "head-eyes" => s = crate::head_scenario::steps(&name[5..]),
         // The Escape menu and its settings (menu.rs).
         "menu" => s = crate::menu::scenario(),
+        // The player's body and what they hold in the world, and jumping (BACKLOG items 1 and 2): body_scenario.rs.
+        "body-push" | "body-press" | "body-melee" | "body-jump" => s = crate::body_scenario::steps(&name[5..]),
         _ => return body(name),
     }
     Some(s)
