@@ -13,9 +13,6 @@ use std::collections::HashMap;
 
 use bevy::gltf::{Gltf, GltfMesh, GltfNode};
 use bevy::input::mouse::AccumulatedMouseScroll;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension};
-use bevy::render::render_resource::AsBindGroup;
-use bevy::shader::ShaderRef;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldAssetRoot;
 use bevy_rapier3d::prelude::*;
@@ -74,11 +71,13 @@ pub struct Missile {
     pub across: Option<Vec3>,
     // A gun's pellets a shot (0: one bullet).
     pub pellets: u32,
+    // How far behind where it is followed from its muzzle is (m): for the powder round a hole (wounds.rs `muzzle`).
+    pub muzzle: f32,
 }
 
 const M: Missile = Missile {
     name: "bullet", energy: 0.0, mass: 0.0, calibre: 0.0, channel: 0.0, soft: 0.0, hard: 0.0, reach: 0.0, blade: false, slash: false,
-    edges: 0, taper: 0.0, speed: 0.0, across: None, pellets: 0,
+    edges: 0, taper: 0.0, speed: 0.0, across: None, pellets: 0, muzzle: 0.0,
 };
 
 impl Missile {
@@ -89,7 +88,7 @@ impl Missile {
             energy: self.energy, mass: self.mass, calibre: self.calibre, channel: self.channel, soft: self.soft, hard: self.hard,
             reach: some(self.reach), blade: self.blade, slash: self.slash, name: (self.name != "bullet").then(|| self.name.to_string()),
             speed: some(self.speed), across: self.across, edges: (self.edges > 0).then_some(self.edges), taper: some(self.taper),
-            pellets: (self.pellets > 1).then_some(self.pellets),
+            pellets: (self.pellets > 1).then_some(self.pellets), muzzle: Some(self.muzzle),
         }
     }
 }
@@ -400,6 +399,7 @@ const FILM: f32 = 0.00003;
 const SMEAR: f32 = 0.00001;
 const DRIES: f32 = 300.0; // seconds for blood on the blade to go from wet red to dull brown (a thin film: an estimate)
 const FRAGMENTS: f32 = 1000.0; // an M67's body breaks into roughly this many that can wound
+const IN_BARREL: f32 = 0.04; // m: how far inside the muzzle a shot is followed from (`fire`)
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum How {
@@ -439,6 +439,10 @@ pub struct Action {
     was: Option<Vec<Vec3>>,
     // A cut's crossings of each person's skin, drawn once the swing is through (npc.slash).
     hits: Vec<(Entity, Vec<Vec3>)>,
+    // Met the room's wall (`animate`): the last pose clear of it (a fraction of the swing) and how far through its time
+    // the swing was then; it comes back the way it went from there. And the last pose clear of it so far.
+    stopped: Option<(f32, f32)>,
+    clear: f32,
 }
 
 // What is carried: six at hand (1 to 6), twelve more in the bag. An empty hand is the hands.
@@ -820,6 +824,13 @@ pub struct Hand {
     pub clock: f32,
     // The look's turn as the hands lag it: last yaw and pitch (the TS's signs), and their rates eased.
     pub lag: [f32; 4],
+    // Each thing's hull and box in the hand's frame (`measure`), and how far it is pulled back toward the chest (m) and turned
+    // aside (rad) out of what it is held against (`clear_of`), and what that is and where, if it is someone's segment.
+    pub shapes: HashMap<&'static str, Collider>,
+    pub boxes: HashMap<&'static str, (Vec3, Vec3)>,
+    pub back: f32,
+    pub tilt: f32,
+    pub against: Option<(Entity, Vec3)>,
 }
 
 impl Hand {
@@ -983,8 +994,11 @@ struct Leg {
 }
 
 // shot, its first leg already worked out, or not.
-fn shot_from(cx: &mut Cx, from: Vec3, mut dir: Vec3, m: Missile, skips: f32, mut first: Option<Leg>) {
+fn shot_from(cx: &mut Cx, mut from: Vec3, mut dir: Vec3, m: Missile, skips: f32, mut first: Option<Leg>) {
     let mut origin = from;
+    // (How far it has come from the muzzle before `from`: the legs before a skip off the floor; less than nothing for a
+    // shot followed from inside the barrel, `fire`'s.)
+    let mut gone = m.muzzle;
     let mut energy = m.energy;
     for _ in 0..6 {
         if energy <= 15.0 {
@@ -1011,12 +1025,14 @@ fn shot_from(cx: &mut Cx, from: Vec3, mut dir: Vec3, m: Missile, skips: f32, mut
                 return;
             }
             dir = (dir + w.normal * (into * 1.5)).normalize();
+            gone += w.point.distance(from);
+            from = w.point;
             origin = w.point + w.normal * 0.005;
             energy *= 0.4;
             continue;
         };
         let reach = (3.0f32).min(far - t + 2.0) + t;
-        let res = pierce_with(cx, who, origin, dir, &Missile { energy, ..m }, reach, lines);
+        let res = pierce_with(cx, who, origin, dir, &Missile { energy, muzzle: origin.distance(from) + gone, ..m }, reach, lines);
         if !res.hit {
             origin += dir * (t + 0.3);
             continue;
@@ -1052,7 +1068,10 @@ fn fire(cx: &mut Cx, key: &'static str) {
     *cx.weapons.ammo.get_mut(key).unwrap() -= 1;
     cx.weapons.busy = gun.every;
     cx.weapons.recoil = 1.0;
-    let (from, ahead) = cx.bore(key);
+    let (muzzle, ahead) = cx.bore(key);
+    // (Followed from a few centimetres inside the barrel: a muzzle pressed into someone sinks a little into the give of
+    // their clothes and skin, and the line from it would begin inside them and miss the way in.)
+    let from = cx.before_wall(muzzle - ahead * IN_BARREL);
     // A shotgun's charge flies as one mass for the first metre or so before the pellets part: up to about 1.2 m it makes
     // one round hole 2 to 2.5 cm across and goes in as a single heavy missile, wrecking everything along a wide track
     // (dev/research/wounds.md). Further off, the pellets go their own ways.
@@ -1066,12 +1085,12 @@ fn fire(cx: &mut Cx, key: &'static str) {
             let n = gun.pellets as f32;
             let slug = Missile { name: "charge", energy: gun.m.energy * n * (1.0 - off * 0.1), mass: gun.m.mass * n, calibre: if off < 0.6 { 0.022 } else { 0.026 },
                                  channel: 0.024, soft: 42.0, hard: 120.0, ..gun.m };
-            shot(cx, from, dir, slug, 0.0);
+            shot(cx, from, dir, Missile { muzzle: -IN_BARREL, ..slug }, 0.0);
         }
         _ => {
             for _ in 0..gun.pellets {
                 let dir = jitter(&mut cx.rng, ahead, gun.spread);
-                shot(cx, from, dir, Missile { name: if gun.pellets > 1 { "pellet" } else { "bullet" }, ..gun.m }, gun.skips);
+                shot(cx, from, dir, Missile { name: if gun.pellets > 1 { "pellet" } else { "bullet" }, muzzle: -IN_BARREL, ..gun.m }, gun.skips);
             }
         }
     }
@@ -1152,7 +1171,7 @@ fn swing(cx: &mut Cx, how: How) {
     let a = cx.weapons.arm();
     let length = if how == How::Stab { 0.35 } else { a.swing };
     cx.weapons.busy = length;
-    cx.weapons.action = Some(Action { how, t: 0.0, length, landed: false, was: None, hits: Vec::new() });
+    cx.weapons.action = Some(Action { how, t: 0.0, length, landed: false, was: None, hits: Vec::new(), stopped: None, clear: 0.0 });
     let rate = match a.key {
         "knife" => 1.25,
         "hammer" => 1.2,
@@ -1203,7 +1222,9 @@ fn sweep(cx: &mut Cx, dt: f32) {
     let p = act.t / act.length;
     let how = act.how;
     let Some(tip) = cx.hand.anchors.get(a.key).map(|x| x.tip) else { return };
-    let along: &[f32] = if how == How::Stab { &[1.0] } else { swept(a.key, a.kind) };
+    // (A stab is the point driven in; the rest of the edge meeting someone first, as a long blade thrust from too close
+    // does, draws across them as a cut would.)
+    let along = swept(a.key, a.kind);
     let hand = cx.hand.world(&cx.eye());
     let now: Vec<Vec3> = along.iter().map(|f| hand.transform_point(tip * *f)).collect();
     let act = cx.weapons.action.as_mut().unwrap();
@@ -1214,16 +1235,18 @@ fn sweep(cx: &mut Cx, dt: f32) {
         _ => (0.1, 0.85),
     };
     let Some(was) = was else { return };
-    if p < from || p > to || (act.landed && how != How::Cut) {
+    if p < from || p > to || (act.landed && how != How::Cut) || act.stopped.is_some() {
         return;
     }
-    for k in 0..now.len() {
+    // (The point first: a stab is that, where it goes in.)
+    let order: Vec<usize> = if how == How::Stab { (0..now.len()).rev().collect() } else { (0..now.len()).collect() };
+    for k in order {
         let Some((who, hit, dir)) = meets(cx, was[k], now[k]) else { continue };
         let far = was[k].distance(now[k]);
         // (Which point of the thing met them, and its move this frame: the hit is on that, wherever the eye looks.)
         cx.weapons.log.push(json!({ "swept": [was[k].to_array(), now[k].to_array()], "of_the_way_to_the_tip": along[k], "met": hit.point.to_array() }));
         let label = cx.label(who);
-        match how {
+        match if how == How::Stab && along[k] < 1.0 { How::Cut } else { how } {
             How::Stab => {
                 let stab = a.stab.unwrap();
                 let across = cx.hand.anchors.get(a.key).and_then(|x| x.edge).map(|e| (hand.rotation * e).normalize());
@@ -1324,7 +1347,10 @@ fn take_hold(cx: &mut Cx) {
     }
     // Or a thing.
     let Ok(ctx) = cx.rapier.single() else { return };
-    let Some((e, toi)) = ctx.cast_ray(at, ahead, 3.0, true, QueryFilter::only_dynamic()) else { return };
+    // (Not the player's own body, which the eye is inside.)
+    let mut filter = QueryFilter::only_dynamic();
+    filter.exclude_rigid_body = cx.player.single().ok().and_then(|(p, _)| p.body);
+    let Some((e, toi)) = ctx.cast_ray(at, ahead, 3.0, true, filter) else { return };
     let body = ctx.colliders.collider_parent(ctx.rigidbody_set, e).unwrap_or(e);
     let Ok((t, _)) = cx.bodies.get(body) else { return };
     let point = at + ahead * toi;
@@ -2111,6 +2137,10 @@ pub fn animate(
     players: Query<(&Player, &Transform)>,
     mut transforms: Query<&mut Transform, Without<Player>>,
     mut shown: Query<&mut Visibility>,
+    rapier: ReadRapierContext,
+    mut ragdolls: Query<(Entity, &mut Ragdoll)>,
+    mut segments: Local<HashMap<Entity, (Entity, usize)>>,
+    mut sound: ResMut<Sound>,
 ) {
     let dt = time.delta_secs();
     let a = weapons.arm();
@@ -2138,8 +2168,13 @@ pub fn animate(
     let mut turn = Vec3::ZERO;
     let mut right = h.right;
     let mut left = h.left;
+    let mut swung = 0.0;
     if let (Some(act), Some(keys)) = (&weapons.action, weapons.action.as_ref().and_then(|x| swings(key, x.how))) {
-        let p = (act.t / act.length).min(1.0);
+        let p = match act.stopped {
+            Some((at, when)) => at * (1.0 - ((act.t / act.length - when) / (1.0 - when).max(1e-3)).clamp(0.0, 1.0)),
+            None => (act.t / act.length).min(1.0),
+        };
+        swung = p;
         let t = h.turn.unwrap_or([0.0; 3]);
         let from = [0.0, h.at[0], h.at[1], h.at[2], t[0], t[1], t[2]];
         let mut to = from;
@@ -2222,10 +2257,72 @@ pub fn animate(
         }
     }
 
-    let q = match base {
+    let mut q = match base {
         Some(b) => euler(b),
         None => aim(pos, tip_ts),
     } * euler(turn);
+
+    // Solid where it is drawn: held against a wall or someone it stops there, pulled back toward the chest as far as the
+    // arms can take it and then turned aside (a gun's muzzle down, a blade or a tool's head up), as the hands do when
+    // the body comes up against something. It goes back out as the way clears, a little slower than it came in. A stab, a
+    // cut or a blow is not bent out of the way: what it meets in a person is `sweep`'s, and the room's wall stops it.
+    // A dressing is put on someone. Pressed against someone it pushes them, with what arms holding a thing out give: a
+    // little.
+    let (mut back, mut tilt) = (0.0, 0.0);
+    hand.against = None;
+    let walls = QueryFilter::only_fixed().groups(CollisionGroups::new(Group::ALL, WORLD));
+    let sign = if a.gun.is_some() { 1.0 } else { -1.0 };
+    if let (Some(shape), Some(&bounds), Ok(ctx)) = (hand.shapes.get(key), hand.boxes.get(key), rapier.single()) {
+        // A swing or a stab that meets the room's wall (as drawn, pulled back as far as it still is) stops there, heard,
+        // and comes back the way it went, kept out of the wall on its way.
+        if let Some(act) = weapons.action.as_mut().filter(|x| x.stopped.is_none()) {
+            let (at, turned) = tilted(pos - Vec3::Z * hand.back, q, bounds, sign * hand.tilt);
+            let world = eye.mul_transform(Transform { translation: e(at), rotation: ts_turn(turned), scale: Vec3::ONE });
+            let mut met = false;
+            ctx.intersect_shape(world.translation, world.rotation, shape, walls, |_, _| {
+                met = true;
+                false
+            });
+            if !met {
+                act.clear = swung;
+            } else {
+                act.stopped = Some((act.clear, (act.t / act.length).min(1.0)));
+                let tip = hand.anchors.get(key).map_or(world.translation, |x| world.transform_point(x.tip));
+                // (No take of a tool or blade striking concrete: the grenade's steel on the floor, or the bat's blow.)
+                sound.play(if key == "bat" { "blunt" } else { "bounce-metal" }, Play::at(tip).gain(0.7));
+            }
+        }
+        if weapons.action.as_ref().is_none_or(|x| x.stopped.is_some()) {
+            segments.clear();
+            for (who, rd) in &ragdolls {
+                segments.extend(rd.segs.iter().enumerate().map(|(k, s)| (s.entity, (who, k))));
+            }
+            let people = weapons.action.is_none() && a.kind != Kind::Dress;
+            // (As far back as the arms take it: what is held out in the hands to some 12 cm ahead of the eye, against the
+            // chest; a long gun's stock no further into the shoulder than a few centimetres.)
+            let long = a.gun.is_some() && h.at[2] < 0.4;
+            let most = if long { 0.06 } else { (h.at[2] - 0.12).clamp(0.04, 0.4) };
+            let met;
+            (back, tilt, met) = clear_of(&ctx, people.then_some(&*segments), eye, pos, q, shape, bounds, most, sign);
+            if let Some((e, at)) = met.filter(|_| back > 0.002) {
+                if let Some(&(who, k)) = segments.get(&e) {
+                    hand.against = Some((who, at));
+                    // About 400 N/m of give in the arms, and no more than 80 N (a firm press of a thing held out).
+                    let push = (back * 400.0).min(80.0);
+                    if let Ok((_, mut rd)) = ragdolls.get_mut(who) {
+                        rd.push(k, eye.forward().as_vec3() * push * dt, at);
+                    }
+                }
+            }
+        }
+    }
+    let out = 1.0 - (-dt * 10.0).exp();
+    hand.back = back.max(hand.back + (back - hand.back) * out);
+    hand.tilt = tilt.max(hand.tilt + (tilt - hand.tilt) * out);
+    pos.z -= hand.back;
+    if let Some(&bounds) = hand.boxes.get(key) {
+        (pos, q) = tilted(pos, q, bounds, sign * hand.tilt);
+    }
     hand.local = Transform { translation: e(pos), rotation: ts_turn(q), scale: Vec3::ONE };
     if let Some(he) = hand.entity {
         if let Ok(mut t) = transforms.get_mut(he) {
@@ -2249,6 +2346,75 @@ pub fn animate(
             let m = moves.iter().rev().find(|m| m.part == *name);
             move_part(p, m.and_then(|m| m.by), m.and_then(|m| m.turn), m.is_none_or(|m| m.shown), &mut transforms);
         }
+    }
+}
+
+// How far a thing held at `pos`, turned `q` (the TS's eye frame), with its hull `shape` and box `bounds` in the hand's frame, has to be
+// pulled back toward the eye to be clear of the room and (given their segments' colliders) people, at most `most`
+// metres; past that, how far it is turned as well (`tilted`; `sign`: down, or up). Its box is swept from the most it
+// can be pulled back to where it is wanted, and stopped where it first touches; and what it touched, if anything, and
+// where.
+#[allow(clippy::too_many_arguments)]
+fn clear_of(ctx: &RapierContext, people: Option<&HashMap<Entity, (Entity, usize)>>, eye: &Transform, pos: Vec3, q: Quat, shape: &Collider, bounds: (Vec3, Vec3),
+            most: f32, sign: f32) -> (f32, f32, Option<(Entity, Vec3)>) {
+    let ahead = eye.forward().as_vec3();
+    let walls = QueryFilter::only_fixed().groups(CollisionGroups::new(Group::ALL, WORLD));
+    let opts = ShapeCastOptions { stop_at_penetration: true, ..ShapeCastOptions::with_max_time_of_impact(most) };
+    let mut tilt = 0.0;
+    loop {
+        let (at, turned) = tilted(pos - Vec3::Z * most, q, bounds, sign * tilt);
+        let hand = eye.mul_transform(Transform { translation: e(at), rotation: ts_turn(turned), scale: Vec3::ONE });
+        let (at, turn) = (hand.translation, hand.rotation);
+        let theirs = |e: Entity, _: &bevy_rapier3d::rapier::geometry::Collider| people.is_some_and(|p| p.contains_key(&e));
+        let hit = [ctx.cast_shape(at, turn, ahead, shape, opts, walls), people.and_then(|_| ctx.cast_shape(at, turn, ahead, shape, opts, QueryFilter::only_dynamic().predicate(&theirs)))]
+            .into_iter()
+            .flatten()
+            .min_by(|a, b| a.1.time_of_impact.total_cmp(&b.1.time_of_impact));
+        let Some((e, h)) = hit else { return (0.0, tilt, None) };
+        if h.time_of_impact > 0.0 || tilt >= 1.2 {
+            let point = h.details.map_or(at + ahead * h.time_of_impact, |d| d.witness1);
+            return (most - h.time_of_impact, tilt, Some((e, point)));
+        }
+        tilt += 0.15;
+    }
+}
+
+// A thing held at `pos`, turned `q` (the TS's eye frame), turned `by` more about its width at the back of its box (a long
+// gun's butt in the shoulder, a blade's pommel), muzzle or point down for more than nothing: where its hand is then, and
+// its turn.
+fn tilted(pos: Vec3, q: Quat, (lo, hi): (Vec3, Vec3), by: f32) -> (Vec3, Quat) {
+    let turned = q * euler(Vec3::new(by, 0.0, 0.0));
+    let pivot = e(Vec3::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0, hi.z));
+    (pos + q * pivot - turned * pivot, turned)
+}
+
+// Each held thing's shape in the hand's frame, once its scene is in: the hull round its meshes (what `clear_of` keeps out
+// of walls and people) and its box.
+fn measure(mut hand: ResMut<Hand>, children: Query<&Children>, globals: Query<&GlobalTransform>, mesh3d: Query<&Mesh3d>, meshes: Res<Assets<Mesh>>) {
+    let Some(he) = hand.entity else { return };
+    let Ok(hg) = globals.get(he) else { return };
+    let home = hg.affine().inverse();
+    let mut found = Vec::new();
+    'models: for (&key, &root) in &hand.models {
+        if hand.shapes.contains_key(key) {
+            continue;
+        }
+        let mut points = Vec::new();
+        for d in children.iter_descendants(root) {
+            let (Ok(m), Ok(g)) = (mesh3d.get(d), globals.get(d)) else { continue };
+            let Some(mesh) = meshes.get(&m.0) else { continue 'models };
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(ps)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { continue };
+            let to_hand = home * g.affine();
+            points.extend(ps.iter().map(|p| to_hand.transform_point3(Vec3::from(*p))));
+        }
+        let Some(hull) = Collider::convex_hull(&points) else { continue };
+        let lo = points.iter().fold(Vec3::INFINITY, |a, p| a.min(*p));
+        let hi = points.iter().fold(Vec3::NEG_INFINITY, |a, p| a.max(*p));
+        found.push((key, hull, (lo, hi)));
+    }
+    for (key, hull, bounds) in found {
+        hand.shapes.insert(key, hull);
+        hand.boxes.insert(key, bounds);
     }
 }
 
@@ -2638,63 +2804,30 @@ fn split(mesh: &Mesh, keep: fn(Vec3, Vec3) -> bool) -> Option<(Mesh, Mesh)> {
     Some((a, b))
 }
 
-// What is in the hands and the arms holding it, drawn over the room (held.wesl; the TS's HELD_GROUP): the same material,
-// its depth put in front of anything in the room.
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
-pub struct OverRoom {}
-
-impl MaterialExtension for OverRoom {
-    fn vertex_shader() -> ShaderRef {
-        "embedded://cold_chain/held.wesl".into()
-    }
-}
-
-pub type HeldMaterial = ExtendedMaterial<StandardMaterial, OverRoom>;
-
 // Whether a mesh is a blade's (the knife's blade is a mesh of its own; the estoc is one mesh with its hilt, which would
 // redden too, so its blood is not drawn).
 fn is_blade(e: Entity, names: &Query<&Name>, parents: &Query<&ChildOf>) -> bool {
     names.get(e).is_ok_and(|n| n.contains("blade")) || parents.get(e).is_ok_and(|c| names.get(c.parent()).is_ok_and(|n| n.contains("blade")))
 }
 
-// Every mesh that comes in under the hand or the arms put on its material over the room (a blade's a material of its own,
-// for the blood on it).
-#[allow(clippy::too_many_arguments)]
-fn over_room(
+// A blade's mesh that comes in under the hand is given a material of its own, for the blood on it (`stain`): the model's
+// own is the one on the board too. (What is held is drawn in the room as anything else is, where it is: `clear_of` keeps it
+// out of walls and people. The TS drew it and the arms over the room, depth cleared, as shooters do.)
+fn own_blades(
     mut commands: Commands,
     hand: Res<Hand>,
-    arms: Option<Res<crate::hands::Arms>>,
     added: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Added<MeshMaterial3d<StandardMaterial>>>,
     parents: Query<&ChildOf>,
     names: Query<&Name>,
-    standard: Res<Assets<StandardMaterial>>,
-    mut held: ResMut<Assets<HeldMaterial>>,
-    mut cache: Local<HashMap<AssetId<StandardMaterial>, Handle<HeldMaterial>>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let roots: Vec<Entity> = hand.entity.into_iter().chain(arms.iter().flat_map(|a| [a.r.root, a.l.root])).collect();
+    let Some(root) = hand.entity else { return };
     for (e, m) in &added {
-        let mut at = e;
-        let mut under = false;
-        for _ in 0..16 {
-            if roots.contains(&at) {
-                under = true;
-                break;
-            }
-            match parents.get(at) {
-                Ok(c) => at = c.parent(),
-                Err(_) => break,
-            }
-        }
-        if !under {
+        if !is_blade(e, &names, &parents) || !parents.iter_ancestors(e).any(|a| a == root) {
             continue;
         }
-        let Some(base) = standard.get(&m.0).cloned() else { continue };
-        let h = if is_blade(e, &names, &parents) {
-            held.add(ExtendedMaterial { base, extension: OverRoom {} })
-        } else {
-            cache.entry(m.0.id()).or_insert_with(|| held.add(ExtendedMaterial { base, extension: OverRoom {} })).clone()
-        };
-        commands.entity(e).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(h));
+        let Some(base) = materials.get(&m.0).cloned() else { continue };
+        commands.entity(e).insert(MeshMaterial3d(materials.add(base)));
     }
 }
 
@@ -2706,8 +2839,8 @@ fn stain(
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     names: Query<&Name>,
-    mesh_materials: Query<&MeshMaterial3d<HeldMaterial>>,
-    mut materials: ResMut<Assets<HeldMaterial>>,
+    mesh_materials: Query<&MeshMaterial3d<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut own: Local<HashMap<Entity, (Color, f32, f32)>>,
 ) {
     let key = weapons.arm().key;
@@ -2722,10 +2855,10 @@ fn stain(
         }
         let Ok(mat) = mesh_materials.get(m) else { continue };
         let Some(mut x) = materials.get_mut(&mat.0) else { continue };
-        let (c, metal, rough) = *own.entry(m).or_insert((x.base.base_color, x.base.metallic, x.base.perceptual_roughness));
-        x.base.base_color = c.mix(&blood, cover);
-        x.base.metallic = metal * (1.0 - cover);
-        x.base.perceptual_roughness = rough + (0.15 + 0.55 * dry - rough) * cover;
+        let (c, metal, rough) = *own.entry(m).or_insert((x.base_color, x.metallic, x.perceptual_roughness));
+        x.base_color = c.mix(&blood, cover);
+        x.metallic = metal * (1.0 - cover);
+        x.perceptual_roughness = rough + (0.15 + 0.55 * dry - rough) * cover;
     }
 }
 
@@ -2744,9 +2877,7 @@ fn aside(aside: Res<Aside>, hand: Res<Hand>, mut eye: Query<&mut Transform, With
 }
 
 pub fn plugin(app: &mut App) {
-    bevy::asset::embedded_asset!(app, "held.wesl");
-    app.add_plugins(MaterialPlugin::<HeldMaterial>::default())
-        .init_resource::<Aside>()
+    app.init_resource::<Aside>()
         .add_systems(PostUpdate, aside.before(bevy::transform::TransformSystems::Propagate))
         .init_resource::<Weapons>()
         .init_resource::<WeaponModels>()
@@ -2754,7 +2885,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Holds>()
         .add_systems(Startup, load)
         .add_systems(OnEnter(Loading::Done), spawn_models)
-        .add_systems(Update, (input, timed("weapons", act), timed("weapons: the hand's pose", animate), timed("weapons: sight", sight), flying, find_parts, over_room, stain).chain().after(crate::player::walk).run_if(resource_exists::<crate::muzzle::Muzzle>))
+        .add_systems(Update, (input, timed("weapons", act), timed("weapons: the hand's pose", animate), timed("weapons: sight", sight), flying, find_parts, measure, own_blades, stain).chain().after(crate::player::walk).run_if(resource_exists::<crate::muzzle::Muzzle>))
         .add_systems(FixedUpdate, pull.before(PhysicsSet::SyncBackend));
 }
 
@@ -3223,13 +3354,14 @@ pub fn blasts() -> Vec<crate::scenario::Step> {
             Some((n, part)) => s.push(Step::Do(Box::new(move |w: &mut World| {
                 crate::warm::aim(w, n, part, far);
             }))),
-            // The barrel on the line through the chests of the last two (the hooded man's, the young man's), the eye
+            // The barrel on the line through the chests of the last two (the naked man's, the man in white's), the eye
             // `far` back from the last along it: through him and on into the next. (The barrel is held off the eye's
             // line, some 9 cm right and 6 up of it: side on and close, a look at his chest put the shot beside him; and
             // a fixed point down the room left the line beside him or not as he stood.)
             None => s.push(Step::Do(Box::new(move |w: &mut World| {
                 let chest = |w: &mut World, n| crate::warm::aim(w, n, "chest", 0.0).map(|(_, at)| at);
-                let (Some(end), Some(next)) = (chest(w, 3), chest(w, 2)) else { return };
+                let last = crate::sandbox::BODIES.len() - 1;
+                let (Some(end), Some(next)) = (chest(w, last), chest(w, last - 1)) else { return };
                 let muzzle = {
                     let hand = w.resource::<Hand>();
                     hand.anchors.get("shotgun").map_or(Vec3::new(0.0, 0.0, -1.25), |a| hand.local.transform_point(a.tip))

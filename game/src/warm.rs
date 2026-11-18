@@ -280,7 +280,7 @@ fn rehearse(app: &mut App) {
     // first seen from the far side of the hall would be made then), and then culled again.
     add(app, "the hall", 3, show_all);
     add(app, "the hall", 2, hide_again);
-    // Everything that can be held, in the hand (each its own models and materials, drawn over the room: held.wesl).
+    // Everything that can be held, in the hand (each its own models and materials, drawn in the room as anything else).
     for a in crate::weapons::ARMS.iter().filter(|a| !a.key.is_empty()) {
         let key = a.key;
         add(app, a.name, 3, move |w| {

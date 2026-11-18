@@ -957,7 +957,9 @@ are on any frame here (10 to 30 and 5 to 15).
   them, PostUpdate 17 to 24 ms for a few frames); and, in four of some twenty runs (before and after this work), one frame 1 to 4 after the blast with
   140 to 280 ms of PostUpdate that no row accounts for. Once it came with every PostUpdate system of ours timed but
   person.rs `pose_people` (each in a row of its own for the run) and none of them was over 3 ms: so Bevy's own work,
-  pose_people or Rapier's PostUpdate systems, likely over what the two shins' cuts put in from their thread. Not found.
+  pose_people or Rapier's PostUpdate systems, likely over what the two shins' cuts put in from their thread. Found since
+  (port/b-body, "The PostUpdate stall" below): the main thread waiting, not working, while both compute threads compile
+  render pipelines, which a scenario does on first use and on those threads.
 - Rapier is the biggest steady cost of the game's own: 10 to 15 ms a frame on average here, 30 to 60 in a bad frame
   (two to four 120 Hz steps a frame, four ragdolls with sixteen solver passes).
 - Opening a belly or a chest (viscera.rs `open`: the lips' 40 surface tests and the wall's 40 traces): about 2 ms.
@@ -1191,3 +1193,184 @@ it (`struck` took any cartilage for the head's).
 `stand`'s per-segment spin (the TS's jitter.mjs measure): shins 0.012-0.018 rad/s, the feet 0.024-0.031, the thighs
 0.011-0.012, in three builds; the notes' "feet still buzz about 1 rad/s" is gone. The head is the most, 0.196, ten times
 anything else.
+
+## The player's body, what they hold, jumping (BACKLOG items 1 and 2, branch port/b-body)
+
+### The body (player.rs)
+The player is a body in the physics (`PlayerBody`): 80 kg, a capsule round the eye's line from 40 cm over the feet (what
+is lower, a body lying on the floor, is stepped over) to the crown, 25 cm across the shoulders, rotations locked, no
+gravity of its own. Every physics step (`drive`) its velocity is brought toward the pace the keys ask for (`Player::vel`,
+eased as before) by no more than the feet can give: 0.9 of the weight along the floor (rubber on concrete), so at most
+706 N, and in the air 8% of that. Its height follows the feet's (`Player::height`, still map.rs's ground, stairs and
+falls). The eye is the body's place each frame, carried on by the physics' overstep (so it moves as smoothly as the
+frames come). The hall is still map.rs's (`push`, `ground`): the body meets only people's segments, pieces cut off and
+things thrown or dropped (collision group 6), and a wall push moves the body with the player. Put somewhere (`spawn`,
+every scenario), it goes there still and passes through anyone it lands in until it is clear of them all (`drive`).
+thuds.rs takes it as a person, not a wall (no slam); weapons.rs `take_hold` looks past it.
+
+### Jumping (player.rs)
+Space, on the floor: 2.97 m/s up, a 0.45 m rise (Markovic 2004: 0.4-0.5 m for active young men). Off the floor only
+the air's 8% of the grip steers and nothing slows; Space in the air does nothing; landing sinks the eye with the knees
+(2.5 cm per m/s, at most 12) and is heard as a footfall (`steps`; there is no landing take).
+
+### What is held (weapons.rs `animate`, `clear_of`, `measure`)
+Drawn in the room (held.wesl, the TS's draw-over-the-room, is gone; blades get their own material in `own_blades`).
+Each thing's convex hull in the hand's frame (`measure`, from its meshes) is swept every frame from as far back as the
+arms can take it (12 cm in front of the eye for what is held out, 6 cm for a long gun's stock) to where it is wanted,
+against the room (WORLD) and people's segment colliders: it stops where it first touches, pulled back toward the chest;
+when that is not enough it is turned about the back of its box (a long gun's butt, a pommel), a gun's muzzle down and
+anything else's point up, 0.15 rad at a time to 1.35. It goes in at once and back out over about 0.1 s. Pressed against
+someone it pushes the segment touched with 400 N/m of how far it is pulled back, at most 80 N. During a stab, cut or
+blow it is not bent out of the way: what it meets in a person is `sweep`'s as before (the striking points' paths), and
+if it meets the room's wall the swing stops there (`Action::stopped`, heard: there is no take of steel or wood on
+concrete, so 'bounce-metal', the grenade's, or 'blunt' for the bat) and comes back the way it went.
+Shots are followed from 4 cm inside the barrel (`IN_BARREL`): a muzzle pressed into the give of clothes and skin still
+finds the way in. wounds.rs takes the powder's range from the muzzle (`Missile::muzzle`, the distance the shot has come
+from it): with shots from the muzzle since the hands' port it was counted from a point 45 cm behind it, so a shot from
+1.6 m drew powder and a contact shot's range was -0.44 m. Pellets and a shotgun's charge now leave powder too (only a
+grenade's fragments have none).
+
+### The checks (body_scenario.rs: `body-push`, `body-press`, `body-melee`, `body-jump`; MELEE=sword,bat for some)
+Debug build, lavapipe, one run each unless said.
+- Walking (1.55 m/s) into the groundskeeper standing: the player's pace fell to 0.78 m/s at contact and he went back at
+  0.9 m/s, standing; leaning on into him for 2 s at the full 706 N drove him back 2.1 m at about 1.1 m/s, still standing,
+  until his balance gave and he went over (Fall at 2 s, Down on the floor). Let go, both stop. Running (3.4 m/s) into the
+  young man: 3.4 -> 2.0 m/s for the player, 1.85 m/s for him; he went back 0.6 m and stayed on his feet. The player's
+  line never came nearer his chest's than 0.46 m (the capsule's 0.25 and his chest's): nothing passed through.
+- The pistol walked up to a chest and the look brought down onto the breastbone: the gun pulled back 0.19-0.33 m, its
+  muzzle 3 mm off the chest's collider (8 mm into the skin as medicine draws it), the man pushed back 12 cm by it; fired,
+  the bullet went in 8 mm from the muzzle (range 8 mm for the powder; was -0.44 m, see above) and out of his back.
+  Pressed to the south wall: pulled back 0.26 m, the muzzle 0.7 mm off the wall, the hole where the muzzle was. The
+  rifle walked into the wall: 6 cm back, then the muzzle down 1.2 rad about the butt; backed off, back to rest (0.003).
+- Swung and stabbed at the wall from 45 cm: the deepest any corner of each hull went past the wall's face, knife 0.0,
+  sword 0.0, bat 5.3 cm (the one frame it met it), shovel 1.6, sledge 2.0, hammer 0.0 (14-91 cm before the swings were
+  stopped by it). At the young man's belly from arsenal-use's distances: knife a stab (pelvis), bat, shovel and sledge
+  blows (upper arm, upper arm, pelvis: what the swing came across first), hammer a blow (pelvis) in two runs of three;
+  the sword from 0.9 m, its point past him, now cuts with its edge (head, chest) where it went through him unfelt. 0.6 m
+  beside his head, looking past it: knife, sword, hammer nothing; bat, shovel, sledge his forearm or upper arm, which
+  the swing comes across.
+- Jump on the spot: up 0.425 m in 0.28 s, down 0.58 s after leaving; Space again in the
+  air: nothing (the rise is integrated by the half-step since: 0.45 m, not re-run). Walking at the half-metre crate and jumping: on it (0.5), and off the far side. A body lying on the floor:
+  walked over (the capsule's bottom at the knees), and jumped over.
+
+### Not done
+- The fists are not kept out of anything (a guard held up against someone chest to chest goes into them); a punch
+  stops at the skin as before.
+- The arms are not tested against the room: pulled back with the gun they stay near the body, but an elbow can go into
+  a wall beside the player.
+- The push back from the held thing on the player (at most 80 N against the feet's 706) is not given to the body.
+- A long blade thrust at someone nearer than its length goes through them and cuts with its edge (above); it is not
+  stopped by the body.
+- The player's capsule is one shape: no legs below the knees (things lower are stepped over, not kicked), no arms.
+
+### The PostUpdate stall after some blasts (PORT "What is left")
+Looked at with `perf record -e cpu-clock -k CLOCK_MONOTONIC --call-graph dwarf` (/usr/lib/linux-tools/6.8.0-149-generic/
+perf; the `perf` on the path is a wrapper that does nothing here) on the running game, started by a temporary hook in
+profiler.rs `run_main` at a frame or at "grenade went off", and each PostUpdate's monotonic start and end printed beside
+it, so the samples of the very frames could be cut out (`perf script --time`). Not committed.
+- Four grenade runs of arsenal-use (ARSENAL_USE=grenade): none had the 140-280 ms frame (the worst PostUpdate in the
+  frames after the blast 39 to 65 ms). The same stall is there in every run at the start, though: PostUpdate 650, 190-360,
+  1140-1580 and 100-125 ms in frames 0 to 3 of any scenario.
+- In those frames the main thread is hardly sampled at all (5 samples in 2.3 s of PostUpdate at 100 Hz: it is asleep),
+  and both compute pool threads (this machine's four cores give Bevy's compute pool two) are in wgpu's
+  `create_render_pipeline` (lavapipe compiling: naga to SPIR-V, LLVM), under the render world's PipelineCache in its
+  Render schedule. The main world's PostUpdate systems are tasks on the same pool, and Bevy's executor does not run them
+  on the waiting main thread (`scope_with_executor(false, ..)`): PostUpdate waits until a compute thread is free.
+- A scenario compiles pipelines synchronously, on first use (main.rs: `synchronous_pipeline_compilation` for every
+  run, so that a mesh is not left out of the picture it is wanted in), and skips warm.rs. The blast is the first time a
+  scenario draws thousands of drops, the smoke, the cut faces: its spike in the profile lists 3 pipelines compiled. Only
+  when such a compile lands on the frame's PostUpdate does it show there (four runs in twenty).
+- In the game the pipelines are compiled at load behind the loading screen (warm.rs) and otherwise asynchronously (on
+  the async compute pool, bevy_render `create_pipeline_task`, not these threads), so this stall should not happen there. Not measured on a real machine.
+  Nothing was changed: what the scenario numbers after a blast show as PostUpdate is partly the render world's first-use
+  compiles; read the profile's `compiles` beside it.
+
+## People, stumps and the loose ends (BACKLOG items 5 and 3, item 7's loose ends; branch port/b-people)
+
+### The cast (item 5)
+The man in the hood is gone; in his place two (sandbox.rs `BODIES`, five now, 1.5 m apart as before):
+- **white**, "Man in white": early twenties, MakeHuman's own T-shirt and jeans (`male_casualsuit02`, CC0) recoloured
+  white (people.py `tint`) with its printed MakeHuman logo painted over by the shirt's own cloth (`erase`), shoes04,
+  brows eyebrow008, 76 kg. Cries with the hood's takes (sandbox.rs `voice`: the young, energetic voice).
+- **naked**, "Naked man": forties, nothing on, 81 kg, his head shaved to the stubble his skin paints (no hair proxy:
+  short03 was a bob). His skin is jartur69's CC0 middle-aged man (skins02) with his body hair, beard stubble and
+  genitals painted. MakeHuman dropped its genital proxies (and they were AGPL); its base
+  mesh still carries the male genitals as a CC0 helper (`helper-genital`, 182 quads, penis in front of the scrotum),
+  which people.py `genitals` smooths twice (Catmull-Clark, 2912 quads), weights from the helper's own MakeHuman
+  weights, and lays on the skin picture's genital islands (the shaft unrolled round its axis, the glans round its
+  opening, the scrotum's wrinkled skin); drawn as part of his skin (one part, its corners after the body's). He cries
+  with the groundskeeper's takes: there is no voice of his own (cries are Fish Audio takes, tools/cries.py; making one
+  is a new take, not something to synthesise).
+- Insides (tools/anatomy.py): everyone now has a prostate and seminal vesicles (kinds `prostate`, `gland`); the naked
+  man has the corpora cavernosa, corpus spongiosum and glans (kind `penis`) and the testes with their epididymes
+  (`testis`), the penis carried along his own shaft (the source's lies forward from the pubis; each point past where it
+  leaves the body goes as far along his shaft and as far out from its middle, scaled to its width, the root in the
+  perineum moved with it) and each testis into its half of the scrotum. The x-ray's looks and wounds.rs's bleeding and
+  size have the new kinds.
+- Not modelled, said plainly: pubic and body hair are painted on the skin, not strands; no foreskin or erectile
+  behaviour; the urethra is not a part of its own. No other source for genital geometry under CC0/CC-BY was found
+  (the MakeHuman community packs have skins with genitals painted, no meshes).
+- Every place that named the hood: the scenarios (face.rs, head_scenario.rs, skin.rs, cut_scenario.rs: index 3 is the man
+  in white now), `blasts` (weapons.rs: the line-up's last two by `BODIES.len()`), the people and blood scenarios'
+  positions (they assumed four), sound.rs and face.rs (the voice by `sandbox::voice`).
+
+### Stumps (item 3)
+`stumps` (cut_scenario.rs) cuts every limb at every place (both hands, forearms, upper arms, feet, shins, thighs and the
+head) over the five, then shows each stump and piece from its end and two sides, the same in the x-ray, then dresses each
+stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and the causes:
+- **The x-ray's bones stretched from the stump to the piece** (the user's screenshot: a forearm's radius and ulna a metre
+  long). Each x-ray corner hangs wholly from one bone, by the triangle it was last written for (anatomy.rs `build`): a
+  long bone's two halves (the bone and its mid bone) shared their corners at the middle, and nothing about a cut ever
+  reached the x-ray. A cut now gives the person their own copy of each changed look with every corner on the bone
+  that carries it after the cut (dismember.rs `CutOff::carrier`: on the piece, the piece's; on the body, the body's),
+  and stops drawing the triangles the cut goes through (a corner each side), which the cut faces close (anatomy.rs
+  `cut`). What medicine traces (`Hurt::traced`) is regrouped the same way, so a shot into the piece meets its bones where
+  they lie, and the vessels' points too.
+- **A dressing on a stump stretched into a bar to the piece** (the user's second screenshot). `gauze` laid every dressing
+  on the file's skin with the file's weights, so the skin that went with the piece, still carried by the piece's bones,
+  went into the roll. Now it is laid on the person's own flesh after cuts (flesh.rs `Flesh`: what is still drawn, its
+  weights), never on a triangle a cut runs through; and a wound at a stump's end gets a stump dressing
+  (`Covers::Stump`): the roll wound from the end 10 cm back up the stump and the gauze folded over the end, a low dome
+  shaped by the skin's outline at the cut (`Hurt::stumps`), on the bone the limb hung from; its picture runs from the
+  end's middle out over the rim and up the stump, so the blood spreads from the middle. (dressing.rs said "a stump:
+  phase 3's": nothing had been done for one.)
+- **The trousers' seat went with a thigh** and was stretched into a flap from the piece to the body: `split` put on the
+  piece any corner past the plane with any weight on the limb's bones, or any on the segment's within twice the reach
+  (30 cm for a thigh: the crotch). Now the limb must carry half of a corner, or the limb and the segment together half
+  of it within 1.3 of the reach (`NEAR`); the x-ray's test is the same.
+- Looked at and left: the stump's sleeve or trouser leg ends at the plane a little proud of the cut face (cloth is wider
+  than the limb: it is drawn so); a blade's cut face shows the bones' sections, the muscle compartments and the arteries
+  round, and spurts; the pieces lie and roll as bodies. No hole, stretched skin, spike or floating piece in the 13 cuts'
+  78 pictures and 26 x-ray pictures of the last run (all three fixes in); the overalls' baggy seat still flares a
+  little at the top of the groundskeeper's severed thigh, as the cloth hung there. Some pictures look from inside a
+  body that fell over the stump (the scenario's eye is placed by the cut's own direction, not round what lies there).
+- Dressed stumps (`stumps-dressed`, each stump's bleeding out of its end before and just after, ml/s): hand 13.4 -> 3.0,
+  forearm 28.3 -> 6.4, upper arm 27.7 -> 6.2, foot 19.2 -> 4.3, shin 24.9 -> 5.5, thigh 69.0 -> 15.5, neck 39.9 -> 9.6;
+  ten seconds on, the gauze full (13 to 62 ml) and the rest running out from under it. That is DRESSED's figures
+  (arterial 0.35, venous 0.05): a pressure dressing slows a stump's bleeding and does not stop an artery; a thigh's
+  still bleeds out in a few minutes, as without a tourniquet it would (a tourniquet is not in the game).
+
+### The loose ends (item 7)
+- **The brain like crumpled shards**: tools/anatomy.py thinned the cerebrum's 34 gyri and lobes as one mesh into 8 mm
+  cells, which merged corners of neighbouring gyri across the sulci and turned triangles over (a render of the part
+  from three sides: hundreds facing inward), and its `gyrus$` pattern took two branches of the middle cerebral artery
+  as brain. Now each gyrus is thinned by itself at 4 mm (21 400 corners, 44 500 triangles, was 3 100 and 12 800) and
+  the arteries are left out; organs.wesl folds the brain's surface into gyri a centimetre across with dark sulci
+  (`look.w` 2), the pia's vessels as before. Seen through the rifle's exit: the two occipital lobes and the fissure
+  between them, glistening, with vessels.
+- **Faint bloodshot**: the vessels were where a warped noise crossed its middle, lines a twentieth of a cell wide: under
+  a pixel at any distance, so the white was only pink. Now 24 trunks, 60 branches and 110 fine vessels counted round the
+  eye, winding in from the edges toward the cornea, each at least a pixel wide (eye.wesl `bloodshot`), and a slight
+  redness already shows (`red` to the power 0.6).
+- **Zigzag vomit**: a stream's points were let go along this frame's direction from this frame's mouth: a head turning
+  as it vomited (its mouth moving 1.6 cm a frame) laid each frame's points out as a straight piece of its own, a step
+  from the last, a staircase. Now each point is let go from where the source was at its moment and the way it pointed
+  then (between last frame's and this one's), carrying the source's own speed (blood.rs `stream`); and a vomit leaves
+  at one speed for the whole vomit from the middle of the mouth (throat.rs `gush`: it was drawn afresh every frame from
+  the lowest of the three outlets). Once the steps were gone the rope still had long straight pieces with corners: it
+  was drawn between any two points within 5 cm, across the gaps where points between had broken into drops or landed;
+  now only between points still joined (`Stream::joined`). Arterial jets from a moving limb are the same streams.
+- **Drops as dark balls**: drops in the air were a pool's surface (fluid.rs DROP, sRGB about 77, 28, 27), opaque, lit
+  only from the front: a dark ball with a white point. Now a drop's own depth of blood, linear 0.17 red, and lit through
+  (`diffuse_transmission` 0.55, red attenuation over 1.5 mm): across or against a lamp they glow red. A rounder sphere
+  (12 by 8).

@@ -59,6 +59,7 @@ fn met(
     mut rng: ResMut<Rng>,
     mut heard: MessageWriter<Heard>,
     mut slams: MessageWriter<Slam>,
+    player: Query<(), With<crate::player::PlayerBody>>,
 ) {
     let mut started: Vec<(Entity, Entity)> = Vec::new();
     for e in events.read() {
@@ -90,6 +91,8 @@ fn met(
         let Some(point) = point else { continue };
         for (who, other) in [(a, b), (b, a)] {
             let Some(&(person, k)) = body_of.get(&who) else { continue };
+            // (The player's body gives as a person's does: met, it is heard as one, never slammed into.)
+            let player = player.contains(other);
             let other = body_of.get(&other);
             let rd = people.get(person).unwrap().1;
             // (Not while a person just made settles into their stance: Rapier pushes the upper arms off the belly and the
@@ -116,11 +119,11 @@ fn met(
             // contact's own normal: by the way from the segment's middle to the contact, a hand or a foot, flat boxes,
             // touching the floor at an edge was a slam into a wall, and people lying or getting up broke their wrists,
             // forearms and feet on the floor, the pain sent them down again, and they went up and down.)
-            let side = other.is_none() && normal.y.abs() < 0.6;
+            let side = other.is_none() && !player && normal.y.abs() < 0.6;
             // A head knocks on the floor or a wall (on a person it is a blow); a trunk slams into a wall or falls; a limb
             // slaps (a soft one sometimes only lands), or a fast one hits as hard as a blow.
             let take = if base == "head" {
-                if other.is_some() { "blunt" } else { "head-hit" }
+                if other.is_some() || player { "blunt" } else { "head-hit" }
             } else if trunk {
                 if side { "body-slam" } else { "body-fall" }
             } else if speed > 3.5 {

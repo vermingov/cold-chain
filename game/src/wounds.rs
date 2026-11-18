@@ -41,6 +41,9 @@ pub struct Missile {
     pub taper: Option<f32>,
     // A gun's pellets a shot (the eye's injury says pellet when there are several).
     pub pellets: Option<u32>,
+    // How far behind the line's start the muzzle it came out of is (m): a shot from the hands starts at the muzzle, and
+    // further on through someone it starts where it came out. None: a line followed from the eye (MUZZLE).
+    pub muzzle: Option<f32>,
 }
 
 // A stab's slit gapes as the skin either side pulls it open (dev/research/stab-wounds.md sec. 3, tissue-mechanics.md
@@ -54,8 +57,8 @@ const HELD_OPEN: f32 = 0.6;
 // A straight thrust leaves a slit up to 2 mm shorter than the blade is wide where it reached (the skin draws back:
 // forensicmed.co.uk on stab wounds, Hunt 2003).
 const SHRINKS: f32 = 0.002;
-// shortcut: a shot is followed from the eye, and the muzzle is about this far ahead of it (weapons.ts HELD plus the
-// barrel); pass the muzzle in with the missile if the range of a shot from elsewhere ever matters.
+// A shot followed from the eye with no muzzle given (`Missile::muzzle`): the muzzle about this far ahead of it
+// (weapons.ts HELD plus the barrel).
 const MUZZLE: f32 = 0.45;
 
 // How big an organ is, roughly, through: to say how much of it a path of a given length wrecks.
@@ -70,6 +73,9 @@ fn through(kind: &str) -> f32 {
         "stomach" => 0.1,
         "bowel" => 0.2,
         "colon" => 0.15,
+        "penis" => 0.035,
+        "testis" => 0.03,
+        "prostate" => 0.04,
         _ => 0.08,
     }
 }
@@ -94,6 +100,11 @@ pub fn organ_bleed(kind: &str) -> Option<f32> {
         "airway" => 0.001,
         "oesophagus" => 0.001,
         "brainstem" => 0.001,
+        // The penis's erectile bodies are blood spaces, and the prostate lies in a plexus of veins: both bleed freely.
+        "penis" => 0.003,
+        "prostate" => 0.002,
+        "testis" => 0.001,
+        "gland" => 0.0008,
         _ => return None,
     })
 }
@@ -424,7 +435,8 @@ pub fn pierce_with(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32
     // (No spatter from a blade: a stab or a cut throws nothing out of the wound; what flies comes off the blade, weapons.rs.)
     // (npc.spatter: thrown by blood.rs `take`.)
     if !m.slash && !m.blade {
-        let range = if m.name.is_some() { f32::INFINITY } else { enter_t - MUZZLE };
+        // (Powder and soot come out of any gun's muzzle, a shotgun's with its pellets; a grenade's fragments have none.)
+        let range = if m.name.as_deref().is_some_and(|n| n != "pellet" && n != "charge") { f32::INFINITY } else { enter_t + m.muzzle.unwrap_or(-MUZZLE) };
         npc.hurt.happened.push(Happened::Spatter { enter: enter.clone(), dir, exit: exit_at, energy: m.energy, exited, range });
     }
     // A heavy edge may go right through a limb once the swing is through (npc.slash); a charge that is still one mass

@@ -493,7 +493,7 @@ fn look(
 // it, the clothes over it cut away; and the blood in it shown as it spreads and dries, a few times a second at most.
 fn bandage(
     mut commands: Commands,
-    mut people: Query<(&Person, &mut crate::npc::Hurt, &mut Skin)>,
+    mut people: Query<(&Person, &mut crate::npc::Hurt, &mut Skin, Option<&crate::flesh::Flesh>)>,
     mut flesh: ResMut<Assets<Flesh>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut rng: ResMut<crate::rng::Rng>,
@@ -505,13 +505,13 @@ fn bandage(
     if repaint {
         *every = 0.25;
     }
-    for (person, mut hurt, mut skin) in &mut people {
+    for (person, mut hurt, mut skin, cut) in &mut people {
         let skin = &mut *skin;
         while skin.dressings.len() < hurt.dressings.len() {
             let k = skin.dressings.len();
             let d = &hurt.dressings[k];
             let layer = hurt.dressings[..k].iter().filter(|o| o.covers.covers(d.mark.rest)).count();
-            let built = crate::dressing::gauze(&person.body, d, layer);
+            let built = crate::dressing::gauze(&person.body, d, layer, cut);
             let (Some(g), Some((skinned, space))) = (built, skin.skinned.clone()) else {
                 skin.dressings.push((Entity::PLACEHOLDER, Handle::default(), 0.0, 0.0));
                 continue;
@@ -944,8 +944,8 @@ fn hurt_them(w: &mut World) {
         format!("stab stopped {}", p.stopped)
     });
     log(w, serde_json::json!({ "event": "stab and punch", "result": r }));
-    // The man in the hood shot in the right forearm and bandaged at once; then a bat to his left cheekbone.
-    let who = person_at(w, "hood");
+    // The man in white shot in the right forearm and bandaged at once; then a bat to his left cheekbone.
+    let who = person_at(w, "white");
     let r = with(w, who, |npc| {
         let at = near(npc, "lowerarm01.R", [0.0, -0.06, 0.0]);
         let p = crate::wounds::pierce(npc, at - ahead * 1.5, ahead, &missile("pistol"), 3.0);
@@ -1085,10 +1085,10 @@ pub fn scenario() -> Vec<Step> {
 // what, from how far off the muzzle is.
 const SHOTS: [(&str, &str, &str, [f32; 3], [f32; 3], &str, f32); 9] = [
     ("pistol_face", "buyer", "jaw", [0.0, -0.025, -0.04], [-1.0, 0.0, 0.0], "pistol", 0.2),
-    ("rifle_face", "hood", "jaw", [0.0, -0.025, -0.04], [-1.0, 0.0, 0.0], "rifle", 2.0),
-    ("pistol_neck", "hood", "neck01", [0.025, -0.03, 0.0], [0.0, 0.0, 1.0], "pistol", 2.0),
+    ("rifle_face", "white", "jaw", [0.0, -0.025, -0.04], [-1.0, 0.0, 0.0], "rifle", 2.0),
+    ("pistol_neck", "white", "neck01", [0.025, -0.03, 0.0], [0.0, 0.0, 1.0], "pistol", 2.0),
     ("rifle_chest", "sexton", "spine01", [0.06, -0.02, 0.0], [0.0, 0.0, 1.0], "rifle", 2.0),
-    ("shotgun_chest", "hood", "spine02", [-0.06, 0.0, 0.0], [0.0, 0.0, 1.0], "shotgun", 2.0),
+    ("shotgun_chest", "white", "spine02", [-0.06, 0.0, 0.0], [0.0, 0.0, 1.0], "shotgun", 2.0),
     ("pistol_arm", "oldman", "upperarm01.L", [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], "pistol", 0.2),
     ("rifle_thigh", "buyer", "upperleg01.L", [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], "rifle", 2.0),
     ("shotgun_thigh", "oldman", "upperleg01.R", [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], "shotgun", 0.2),
