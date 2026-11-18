@@ -25,11 +25,17 @@ use bevy::shader::ShaderRef;
 
 use crate::npc::{self, Crossing};
 use crate::person::Person;
-use crate::viscera::{gape, Opening};
+use crate::viscera::Opening;
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 
 const RINGS: usize = 14; // from the skin down to the cavity
 const FAR: f32 = 0.09; // m looked into the anatomy under each column for the cavity
 const COLUMNS: usize = 40; // round the opening (viscera.rs lips)
+const CAVITY: f32 = 1000.0; // the picture's u from here on: the cavity's bottom under the wall (wall.wesl), 0 to 1 to its middle
 
 // Millimetres of each layer, a lean-to-average man (body-wall.md 1.2-1.5): skin, fascia, the muscles, the lining.
 const DERMIS: f32 = 2.0;
@@ -175,19 +181,39 @@ pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossin
         .enumerate()
         .map(|(k, h)| match h {
             Some(h) => h.rest,
-            None => {
-                let a = k as f32 / n as f32 * std::f32::consts::TAU;
-                let x = a.cos() * o.half[0];
-                o.at + o.ex * x + ey * (a.sin().signum() * gape(o.half, x))
-            }
+            None => o.edge(k as f32 / n as f32 * std::f32::consts::TAU),
         })
         .collect();
     let body = world.get::<Person>(who)?.body.clone();
     let shoulder = |x: f32| body.bone(&format!("upperarm01.{}", if x > 0.0 { "R" } else { "L" })).head;
-    let columns: Vec<Column> = npc::with(world, who, |npc| {
+    let mut columns: Vec<Column> = npc::with(world, who, |npc| {
         let into = -npc.world_of(o.at, o.owner, Some(o.normal)).1.unwrap();
         tops.iter().map(|&top| column(npc, o.owner, top, into, place, &shoulder)).collect()
     })?;
+    // Torn, not cut: each layer gave where it was weakest, so no layer ends at one depth all round; a band of each a
+    // third thicker here and thinner there, round the hole.
+    let seed = (o.at.x * 91.3 + o.at.y * 47.9 + o.at.z * 213.1).rem_euclid(1.0) * std::f32::consts::TAU;
+    let wave = |k: usize, j: f32| {
+        let a = k as f32 / COLUMNS as f32 * std::f32::consts::TAU;
+        0.6 * (2.0 * a + seed * j).sin() + 0.4 * (5.0 * a + seed * (j + 1.7)).sin()
+    };
+    if o.torn {
+        for (k, c) in columns.iter_mut().enumerate() {
+            let deep = c.ends[7];
+            let mut at = 0.0;
+            let mut ends = c.ends;
+            for j in 0..7 {
+                let was = c.ends[j] - if j == 0 { 0.0 } else { c.ends[j - 1] };
+                at += was * (1.0 + 0.33 * wave(k, 1.0 + j as f32));
+                ends[j] = at;
+            }
+            let scale = (deep - 0.5) / at.max(1.0);
+            for j in 0..7 {
+                ends[j] = (ends[j] * scale).min(deep - 0.5);
+            }
+            c.ends = ends;
+        }
+    }
 
     // The ring's corners: down each column into the body along the opening's facing, the cut muscle drawn back across the
     // cut as far as its fibres cross it (cut across them it retracts; along them it hardly gapes: 2.1), the fat bulging a
@@ -208,7 +234,18 @@ pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossin
             } else {
                 0.0
             };
-            let p = top + down * (mm / 1000.0) + ey * (across * widen);
+            let mut p = top + down * (mm / 1000.0) + ey * (across * widen);
+            if o.torn {
+                // Burst from inside, the gas or the blast spreads under the skin before it tears through: the fat under
+                // the edge is torn back from it (the edge undermined, hanging over a wider cavity), the muscle under that
+                // ragged, standing in and out by a few millimetres from fibre bundle to bundle (DiMaio: contact wounds'
+                // undermined margins; tissue torn, not cut).
+                let out = (top - o.at - o.normal * (top - o.at).dot(o.normal)).normalize_or_zero();
+                let t = (mm / deep.max(1.0)).clamp(0.0, 1.0);
+                let under = (std::f32::consts::PI * t).sin().powf(0.7) * 0.3 * (top - o.at).length() * (0.8 + 0.3 * wave(k, 7.3));
+                let shred = 0.0035 * wave(k * 3 + r, 11.1) * smoothstep(0.08, 0.3, t);
+                p += out * (under + shred);
+            }
             pos.push(p);
             uv.push([mm, k as f32]);
             colour.push([p.x, p.y, p.z, 0.0]);
@@ -220,6 +257,32 @@ pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossin
         for r in 0..RINGS as u32 - 1 {
             index.extend([a + r, b + r, a + r + 1, b + r, b + r + 1, a + r + 1]);
         }
+    }
+    // The cavity closed under the wall, as far in as what fills it: no seeing through the body to the floor where the
+    // organs drawn near the opening leave a gap. In the head the brain, pulped where the shot went (its look: past the
+    // wall's depth, wall.wesl); in the trunk the dark of the cavity, blood standing in it. A ring drawn in to a point
+    // under the middle, some way behind the wall.
+    let behind = if place == "head" { 0.012 } else { 0.06 };
+    let first = pos.len() as u32;
+    let mut sum = Vec3::ZERO;
+    for (k, c) in columns.iter().enumerate() {
+        let last = pos[k * RINGS + RINGS - 1];
+        let p = o.at + (last - o.at) * 0.55 + down * (c.ends[7] / 1000.0 + behind * 0.6);
+        sum += p;
+        pos.push(p);
+        uv.push([CAVITY, k as f32]);
+        colour.push([p.x, p.y, p.z, 0.0]);
+    }
+    let bottom = sum / n as f32 + down * behind * 0.4;
+    pos.push(bottom);
+    uv.push([CAVITY + 1.0, 0.0]);
+    colour.push([bottom.x, bottom.y, bottom.z, 0.0]);
+    let centre = pos.len() as u32 - 1;
+    for k in 0..n as u32 {
+        let next = (k + 1) % n as u32;
+        let (a, b) = (k * RINGS as u32 + RINGS as u32 - 1, next * RINGS as u32 + RINGS as u32 - 1);
+        index.extend([a, b, first + k, b, first + next, first + k]);
+        index.extend([first + k, first + next, centre]);
     }
     let vertices = pos.len();
     let mid = pos.iter().sum::<Vec3>() / vertices as f32;
@@ -246,8 +309,8 @@ pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossin
         data[k * 5] = Vec4::from_slice(&c.ends[0..4]);
         data[k * 5 + 1] = Vec4::from_slice(&c.ends[4..8]);
         data[k * 5 + 2] = c.fibres[0].extend(c.zone + if c.belly { 4.0 } else { 0.0 });
-        data[k * 5 + 3] = c.fibres[1].extend(0.0);
-        data[k * 5 + 4] = c.fibres[2].extend(0.0);
+        data[k * 5 + 3] = c.fibres[1].extend(if o.torn { 1.0 } else { 0.0 });
+        data[k * 5 + 4] = c.fibres[2].extend(if place == "head" { 1.0 } else { 0.0 });
     }
     let mut state: bevy::ecs::system::SystemState<(Commands, ResMut<Assets<Mesh>>, ResMut<Assets<WallMaterial>>, Query<&Person>, Query<&SkinnedMesh>, Query<&ChildOf>)> =
         bevy::ecs::system::SystemState::new(world);

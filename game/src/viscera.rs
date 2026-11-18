@@ -150,6 +150,50 @@ pub struct Opening {
     pub ex: Vec3,
     pub owner: usize,
     pub half: [f32; 2],
+    // Burst open from inside (a charge's gas, a blast, the skull) rather than cut: its edge torn (`torn`), not a lens.
+    pub torn: bool,
+}
+
+impl Opening {
+    // Where its edge is at `a` radians round it (from `ex` toward the normal crossed with it), in rest space: on the lens
+    // a blade's cut gapes into, or on the torn edge of one burst open.
+    pub fn edge(&self, a: f32) -> Vec3 {
+        let ey = self.normal.cross(self.ex);
+        if self.torn {
+            let r = oval(self.half, a) * torn(self.at, a);
+            return self.at + (self.ex * a.cos() + ey * a.sin()) * r;
+        }
+        let x = a.cos() * self.half[0];
+        self.at + self.ex * x + ey * (a.sin().signum() * gape(self.half, x))
+    }
+}
+
+impl Opening {
+    // Whether a point `x` along it and `y` across it (from its middle, in its plane) is more than `margin` inside its edge.
+    pub fn inside(&self, x: f32, y: f32, margin: f32) -> bool {
+        if self.torn {
+            let a = y.atan2(x);
+            return x.hypot(y) < oval(self.half, a) * torn(self.at, a) - margin;
+        }
+        y.abs() < gape(self.half, x) - margin
+    }
+}
+
+// The radius of an oval `half` across at `a` radians from its long way.
+pub fn oval(half: [f32; 2], a: f32) -> f32 {
+    1.0 / ((a.cos() / half[0]).powi(2) + (a.sin() / half[1]).powi(2)).sqrt()
+}
+
+// How far out the edge of a wound burst open from inside reaches at `a` radians round it, over its oval, the opening
+// at rest point `at`. Skin burst by gas or a blast does not part along a line: it splits where it is stretched most,
+// into a ragged, scalloped hole with short tears running out of it, the larger over bone (DiMaio: contact shotgun
+// wounds' seared, ragged edges; the stellate splits of contact wounds over the skull). A few lobes, each its own size,
+// and three or four tears, from a seed of where it is. skin.wesl `torn` is this, to the digit: the skin's hole and the
+// wall's edge (wall.rs) are the same line.
+pub fn torn(at: Vec3, a: f32) -> f32 {
+    let s = (at.x * 137.1 + at.y * 311.7 + at.z * 74.7).rem_euclid(1.0) * std::f32::consts::TAU;
+    let tear = (4.0 * a + 3.3 * s).sin().max(0.0).powi(6) + 0.6 * (3.0 * a + 5.1 * s).sin().max(0.0).powi(8);
+    1.0 + 0.14 * (3.0 * a + s).sin() + 0.09 * (5.0 * a + 2.3 * s).sin() + 0.06 * (8.0 * a + 4.1 * s).sin() + 0.04 * (13.0 * a + 1.7 * s).sin() + 0.45 * tear
 }
 
 // Half the width of an opening `half` metres ([half its length, half its width at most]) at `x` metres along it from
@@ -225,7 +269,7 @@ pub fn slashed(world: &mut World, who: Entity, hits: &[Crossing], deep: f32) -> 
     // A cut through the wall gapes: the muscles either side pull it open, more the longer it is. A cleft in the skull
     // hardly does (the bone holds; only the scalp over it draws back a little).
     let gapes = if region(world, who, mid.point) == Some("head") { (0.008 + length * 0.04).min(0.016) } else { (0.01 + length * 0.28).min(0.06) };
-    open(world, who, &mid, along, length, gapes).is_some()
+    open(world, who, &mid, along, length, gapes, false).is_some()
 }
 
 // A heavy charge (a shotgun's at contact range) `calibre` metres across that left `spent` joules in person `who`, in at
@@ -241,7 +285,7 @@ pub fn blown(world: &mut World, who: Entity, hit: &Crossing, spent: f32, calibre
     }
     let r = (calibre / 2.0) * (1.0 + 0.6 * (spent / (BLOWN * 2.0)).min(1.0));
     let d = world.resource_scope(|_, mut rng: Mut<Rng>| Vec3::new(rng.next() - 0.5, rng.next() - 0.5, rng.next() - 0.5));
-    open(world, who, hit, d, r * 2.0, r * 2.0).is_some()
+    open(world, who, hit, d, r * 2.0, r * 2.0, true).is_some()
 }
 
 // The skull is a closed box full of brain and blood, which do not compress: what a missile spends inside it, the
@@ -257,7 +301,7 @@ fn burst_skull(world: &mut World, who: Entity, hit: &Crossing, spent: f32) -> bo
     }
     let k = ((spent - HEAD_BURSTS) / 1200.0).clamp(0.0, 1.0);
     let d = world.resource_scope(|_, mut rng: Mut<Rng>| Vec3::new(rng.next() - 0.5, rng.next() - 0.5, rng.next() - 0.5));
-    open(world, who, hit, d, 0.03 + 0.06 * k, 0.025 + 0.035 * k).is_some()
+    open(world, who, hit, d, 0.03 + 0.06 * k, 0.025 + 0.035 * k, true).is_some()
 }
 
 // A blast whose peak overpressure at person `who`'s belly was `kpa`, from world point `from`: close enough, it tears the
@@ -270,7 +314,7 @@ pub fn burst(world: &mut World, who: Entity, from: Vec3, kpa: f32) -> bool {
     let dir = (at - from).normalize();
     let Some(hit) = npc::with(world, who, |npc| npc.surface(at - dir * 0.4, dir, 0.5, false).into_iter().find(|h| h.kind == Kind::Skin)).flatten() else { return false };
     let k = (kpa / BURST).min(1.6);
-    open(world, who, &hit, Vec3::Y, 0.12 * k, 0.07 * k).is_some()
+    open(world, who, &hit, Vec3::Y, 0.12 * k, 0.07 * k, true).is_some()
 }
 
 // An organ `part` (the file's) wounded at world point `at` by a missile `wide` metres across its channel: blood on it
@@ -384,7 +428,7 @@ impl Viscera {
 
 // An opening through the wall of person `who`'s belly or chest at skin crossing `hit`, running along world direction
 // `along`, `length` by `width` metres. None if `hit` is not on the trunk.
-pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length: f32, width: f32) -> Option<Opening> {
+pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length: f32, width: f32, torn: bool) -> Option<Opening> {
     if hit.kind != Kind::Skin {
         return None;
     }
@@ -402,13 +446,20 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
     ex -= n * ex.dot(n);
     ex = if ex.length_squared() > 1e-8 { ex.normalize() } else { tangent(n) };
     let half = [(length / 2.0).max(width / 2.0), width / 2.0];
-    let o = Opening { at: hit.rest, normal: n, ex, owner: hit.owner, half };
+    let o = Opening { at: hit.rest, normal: n, ex, owner: hit.owner, half, torn };
     // The wall: no skin there, nor the clothes over it, which are torn a little wider; the skin under the clothes shown
     // round it; seen through, the body's inside (skin.rs's hider).
     if let Some(mut sk) = world.get_mut::<crate::skin::Skin>(who) {
         use crate::hider::Opening as Hole;
-        sk.skin_hole(&Hole { at: o.at, ex, ey: n, half });
-        sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.1 + 0.005, half[1] * 1.15 + 0.004] });
+        // (A torn one's width given as less than nothing: skin.wesl draws its edge as `torn`; the cloth over it a frayed
+        // round hole as wide.)
+        if torn {
+            sk.skin_hole(&Hole { at: o.at, ex, ey: n, half: [half[0], -half[1]] });
+            sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.25 + 0.006, -1.0] });
+        } else {
+            sk.skin_hole(&Hole { at: o.at, ex, ey: n, half });
+            sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.1 + 0.005, half[1] * 1.15 + 0.004] });
+        }
         sk.window(o.at, n, half[0] + 0.015, 0.05);
     }
     let edge = lips(world, who, &o);
@@ -463,13 +514,10 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
 // the skin by a line in from outside along the skin's facing: the edge laid flat across a curved belly stands off it,
 // nearer the clothes than the skin, and the nearest point then finds cloth.)
 fn lips(world: &mut World, who: Entity, o: &Opening) -> Vec<Option<Crossing>> {
-    let ey = o.normal.cross(o.ex);
     let all: Vec<Option<Crossing>> = npc::with(world, who, |npc| {
         (0..40)
             .map(|k| {
-                let a = k as f32 / 40.0 * std::f32::consts::TAU;
-                let x = a.cos() * o.half[0];
-                let rest = o.at + o.ex * x + ey * (a.sin().signum() * gape(o.half, x));
+                let rest = o.edge(k as f32 / 40.0 * std::f32::consts::TAU);
                 let (w, n) = npc.world_of(rest, o.owner, Some(o.normal));
                 let n = n.unwrap();
                 npc.surface(w + n * 0.1, -n, 0.2, false).into_iter().find(|h| h.kind == Kind::Skin)
@@ -481,7 +529,10 @@ fn lips(world: &mut World, who: Entity, o: &Opening) -> Vec<Option<Crossing>> {
     if edge.len() > 2 {
         world.resource_scope(|world, mut rng: Mut<Rng>| {
             if let Some(mut sk) = world.get_mut::<crate::skin::Skin>(who) {
-                sk.lip(&edge, (0.006 + o.half[1] * 0.25).min(0.015), 0.014, &mut rng);
+                // (Burst from inside, the skin is torn back to its edge, the wall undermined under it, not cut down
+                // through in a slope: no band of the layers round it, only the raw edge.)
+                let wide = if o.torn { 0.0025 } else { (0.006 + o.half[1] * 0.25).min(0.015) };
+                sk.lip(&edge, wide, 0.014, &mut rng);
             }
         });
     }
@@ -543,6 +594,10 @@ pub struct Loop {
     q: Vec<Vec3>,
     pub out: Vec<bool>,
     pub passing: Vec<bool>,
+    // Where it can be seen: out, in the opening, or behind it within sight through it. The rest of it is drawn as
+    // nothing: it lies in the cavity, which is drawn rounder than the belly (its capsules), and stood out through the
+    // flank and the shirt where the skin is nearer.
+    seen: Vec<bool>,
     // Millimetres of blood on it, at each point: none until it comes through the wound.
     gore: Vec<f32>,
     pub came: bool,
@@ -578,7 +633,7 @@ impl Loop {
             })
             .collect();
         Loop {
-            o: *o, kind, r: spec.r, tether: spec.tether, ends: [a, b], count: n, rest, q: p.clone(), p, out: vec![false; n], passing: vec![false; n],
+            o: *o, kind, r: spec.r, tether: spec.tether, ends: [a, b], count: n, rest, q: p.clone(), p, out: vec![false; n], passing: vec![false; n], seen: vec![false; n],
             gore: vec![0.0; n], came: false, hold: None, reach, bloody: true, drawn: vec![Vec3::NAN; n],
             // (The picture's length runs 0.12 to a step of a small bowel's points: the same size on a wider one.)
             along: 0.12 * (rest / 0.015) * (0.014 / spec.r), mesh: None,
@@ -700,7 +755,7 @@ impl Loop {
             for i in 1..n - 1 {
                 let d = self.p[i] - f;
                 let (hn, x, yy) = (d.dot(nn), d.dot(e), d.dot(y));
-                let through = yy.abs() < gape(o.half, x) - squeeze;
+                let through = o.inside(x, yy, squeeze);
                 let held = self.hold.is_some_and(|h| h.0 == i);
                 self.passing[i] = through && hn > -(WALL + r * 3.0) && hn < r * 2.0;
                 if !self.out[i] {
@@ -773,6 +828,12 @@ impl Loop {
                 }
             }
         }
+        let wide = o.half[0].max(o.half[1]) * 1.3 + 0.01;
+        for i in 0..n {
+            let d = self.p[i] - f;
+            let behind = -d.dot(nn);
+            self.seen[i] = self.out[i] || self.passing[i] || (d + nn * behind).length() < wide + behind.max(0.0) * 0.5;
+        }
         // Out for good once a part of it is clear of the wall.
         if !self.came {
             self.came = (1..n - 1).any(|i| self.out[i] && (self.p[i] - f).dot(nn) > r * 2.5);
@@ -834,7 +895,8 @@ impl Loop {
             // Wider and narrower along its length, as a bowel with its contents in it is.
             let fi = i as f32 / SPLIT as f32;
             let along = fi * self.along;
-            let rr = r * (0.88 + 0.16 * (fi * 1.7 + 0.6).sin() * (fi * 0.53 + 1.3).sin());
+            let shown = if self.seen[(i + SPLIT / 2) / SPLIT] { 1.0 } else { 0.0 };
+            let rr = r * (0.88 + 0.16 * (fi * 1.7 + 0.6).sin() * (fi * 0.53 + 1.3).sin()) * shown;
             // The colon gathered into haustra between creases (six to its picture's length, where it paints them).
             let haustra = if self.kind == "colon" { 0.84 + 0.16 * (std::f32::consts::PI * ((along * 6.0) % 1.0)).sin().max(0.0).powf(0.6) } else { 1.0 };
             for s in 0..SIDES {
@@ -946,7 +1008,16 @@ fn organs(v: &mut Viscera, person: &Person, hurt: &Hurt, anatomy: &Anatomy, comm
             continue;
         }
         for c in &part.clusters {
-            if !v.openings.iter().any(|o| box_distance(c.lo, c.hi, o.at) < REACH) {
+            // Only what lies behind an opening, where it can be seen through it: in the cone from its edge inward. (All
+            // within reach round it, the organs' flat clusters to the side, each on one bone while the skin bends between
+            // two, stood out through the flank and the shirt as red shards.)
+            let seen = |o: &Opening| {
+                let d = (c.lo + c.hi) * 0.5 - o.at;
+                let behind = -d.dot(o.normal);
+                let aside = (d + o.normal * behind).length();
+                behind > 0.0 && behind < REACH && aside < o.half[0] * 1.6 + behind * 0.8 + 0.01
+            };
+            if !v.openings.iter().any(|o| box_distance(c.lo, c.hi, o.at) < REACH && seen(o)) {
                 continue;
             }
             match groups.iter_mut().find(|g| g.0 == part.kind) {

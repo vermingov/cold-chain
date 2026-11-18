@@ -110,29 +110,42 @@ fn soak_read(field: texture_3d<f32>, s: sampler, u: vec3<f32>) -> vec4<f32> {
             mix(textureSampleLevel(field, s, vec3(a.x, b.y, b.z), 0.0), textureSampleLevel(field, s, vec3(b.x, b.y, b.z), 0.0), g1.x), g1.y), g1.z);
 }
 
-// Cloth of colour `albedo` at `rest` with the blood the field holds there (hider.ts HIDER_SOAK): a stain whose edge is
-// the weave's, red where a little has wicked in and dark where the cloth is full, wet-dark and with a sheen where blood
-// stands on it, drying brown with a darker tide line at its edge. The new colour, and how much it shines (0 to 1).
+// Cloth of colour `albedo` at `rest` with the blood the field holds there (hider.ts HIDER_SOAK, redone after the
+// play-test's "one dark blob with a hard, jagged edge"). Blood soaks into a weave and spreads along its threads, so a
+// stain is not one colour cut out of the cloth: where it came in the cloth is full, wet and nearly black-red; out from
+// there each fibre carries less, and the stain thins through dark red to a pale, pinkish edge that creeps along the warp
+// and the weft in fine fingers, a damp, darker halo of the serum just ahead of the red (it wicks further than the cells:
+// the chromatographic ring of blood on fabric). Drying, the edge goes darker than the middle (a tide line: the
+// coffee-ring effect), and all of it browns. The new colour, and how much it shines (0 to 1).
 fn stained(albedo: vec3<f32>, rest: vec3<f32>, field: texture_3d<f32>, s: sampler, origin: vec3<f32>, scale: vec3<f32>) -> vec4<f32> {
     // The grid is 8 mm: read it a little off where this point is, by a smooth noise, so that a stain's edge wanders as
     // the weave makes it and does not follow the grid.
     let sp = rest + (vec3(noise3(rest * 55.0), noise3(rest * 55.0 + 17.0), noise3(rest * 55.0 + 31.0)) - 0.5) * 0.014;
     let sk = soak_read(field, s, (sp - origin) * scale);
     let full = sk.r * sk.r * 1.3;
-    if full <= 0.002 {
+    if full <= 0.001 {
         return vec4(albedo, 0.0);
     }
     let n1 = noise3(rest * 160.0);
     let n2 = noise3(rest * 420.0);
-    // Where the cloth has drunk blood its fibres are full of it; past its edge they are dry. A little that reached a dry
-    // patch (a mist, a fleck) shows as specks where fibres caught it.
-    var cover = smoothstep(0.14, 0.26, full + (n1 - 0.5) * 0.16 + (n2 - 0.5) * 0.06);
-    cover = max(cover, step(1.0 - full * 3.0, n2) * smoothstep(0.004, 0.03, full));
+    // The threads: across (x) and up the body (y) at rest, as a shirt's or trousers' run; the front reaches further along
+    // a thread than between them.
+    let warp = noise3(rest * vec3(70.0, 900.0, 70.0));
+    let weft = noise3(rest * vec3(900.0, 70.0, 70.0) + 9.0);
+    let fingers = max(warp, weft) - 0.5;
+    let front = full + (n1 - 0.5) * 0.09 + fingers * 0.12 + (n2 - 0.5) * 0.04;
+    // How much of the cloth here has blood in it: a soft edge some millimetres wide, not a cut-out.
+    var cover = smoothstep(0.015, 0.2, front);
+    cover = max(cover, step(1.0 - full * 3.0, n2) * smoothstep(0.004, 0.03, full) * 0.6);
     let wet = sk.g;
-    let mm = clamp(full, 0.15, 1.0) * 0.55 * (0.8 + 0.4 * n1);
-    var c = blood_over(albedo * mix(1.0, 0.8, wet), mm, wet);
+    // The serum's halo: damp cloth ahead of the red, darker, no colour of its own; gone once it dries.
+    let damp = smoothstep(0.0, 0.02, front) * (1.0 - cover) * wet;
+    // How much blood each fibre holds: a film thin at the edge, deep where the cloth is full and blood stands on it.
+    let mm = (0.02 + 0.6 * smoothstep(0.03, 0.85, full)) * (0.85 + 0.3 * n1);
+    var c = blood_over(albedo * mix(1.0, 0.75, wet), mm, wet);
     // Drying, blood is drawn to the edge of the stain and leaves it darker there (a tide line).
-    let rim = smoothstep(0.14, 0.2, full) * (1.0 - smoothstep(0.22, 0.4, full)) * (1.0 - wet);
-    c = mix(c, blood_over(albedo, mm + 0.3, 0.0), rim * 0.7);
-    return vec4(mix(albedo, c, cover), cover * smoothstep(1.0, 1.25, full) * wet);
+    let rim = smoothstep(0.03, 0.09, front) * (1.0 - smoothstep(0.12, 0.3, front)) * (1.0 - wet);
+    c = mix(c, blood_over(albedo, mm + 0.3, 0.0), rim * 0.6);
+    let cloth = albedo * (1.0 - 0.22 * damp);
+    return vec4(mix(cloth, c, cover), cover * smoothstep(0.9, 1.25, full) * wet);
 }

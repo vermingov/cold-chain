@@ -58,6 +58,30 @@ fn linear(c: vec3<f32>) -> vec3<f32> {
     return pow(c, vec3(2.2));
 }
 
+// The cavity's bottom under the wall (wall.rs `CAVITY`): in the head the brain, its folds pulped where the shot went,
+// grey-pink under blood; in the trunk the dark of the cavity with blood standing in it, darker toward its middle.
+fn cavity(in: VertexOutput, is_front: bool, p: vec3<f32>, px: f32, head: bool) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    let t = clamp(in.uv.x - 1000.0, 0.0, 1.0);
+    let n1 = mix(0.5, wall_noise(p * 160.0 + 13.0), fade(160.0, px));
+    let n2 = mix(0.5, wall_noise(p * 520.0 + 5.0), fade(520.0, px));
+    var c: vec3<f32>;
+    var mm: f32;
+    if head {
+        c = mix(vec3(0.70, 0.56, 0.52), vec3(0.82, 0.70, 0.66), n2);
+        mm = 0.03 + 0.4 * smoothstep(0.4, 0.75, n1);
+    } else {
+        c = vec3(0.30, 0.10, 0.09);
+        mm = 0.3 + 0.6 * t;
+    }
+    pbr_input.material.base_color = vec4(blood_over(linear(c) * (1.0 - 0.6 * t), mm, 1.0), 1.0);
+    pbr_input.material.perceptual_roughness = mix(0.45, 0.2, clamp(mm, 0.0, 1.0));
+    var out: FragmentOutput;
+    out.color = apply_pbr_lighting(pbr_input);
+    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    return out;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -71,8 +95,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let f3 = columns[k + 4u].xyz;
     let wz = columns[k + 2u].w;
     let px = max(length(dpdx(p)), length(dpdy(p)));
-    // Each boundary wanders by a millimetre or two along the face, as real layers do.
-    let d = in.uv.x + ((wall_noise(p * 160.0) - 0.5) * 2.4 + (mix(0.5, wall_noise(p * 650.0), fade(650.0, px)) - 0.5) * 0.6) * clamp(in.uv.x / 3.0, 0.0, 1.0);
+    // Burst open rather than cut (wall.rs: the columns' fourth's w), and the head (the fifth's).
+    let torn = columns[k + 3u].w > 0.5;
+    let head = columns[k + 4u].w > 0.5;
+    if in.uv.x >= 999.0 {
+        return cavity(in, is_front, p, px, head);
+    }
+    // Each boundary wanders by a millimetre or two along the face, as real layers do; torn, by several, and the
+    // layers' faces are shredded, not sliced.
+    var wander = (wall_noise(p * 160.0) - 0.5) * 2.4 + (mix(0.5, wall_noise(p * 650.0), fade(650.0, px)) - 0.5) * 0.6;
+    if torn {
+        wander += (wall_noise(p * 55.0 + 11.0) - 0.5) * 7.0 + (mix(0.5, wall_noise(p * 300.0 + 3.0), fade(300.0, px)) - 0.5) * 2.5;
+    }
+    let d = in.uv.x + wander * clamp(in.uv.x / 3.0, 0.0, 1.0);
     let deep = wb.w;
     let belly = wz > 3.5;
     var zone = wz;
@@ -158,7 +193,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // read, and thick only where it collects at the bottom.)
     let blotch = mix(0.5, wall_noise(p * 110.0 + 3.0), fade(110.0, px));
     let in_fat = step(wa.x, d) * step(d, wa.y);
-    let mm = 0.006 + 0.035 * oozes * (0.3 + blotch) + 0.3 * smoothstep(0.75, 1.0, in.uv.x / max(deep, 1.0)) * blotch + (1.0 - smoothstep(0.25, 0.42, lob)) * 0.05 * in_fat;
+    var mm = 0.006 + 0.035 * oozes * (0.3 + blotch) + 0.3 * smoothstep(0.75, 1.0, in.uv.x / max(deep, 1.0)) * blotch + (1.0 - smoothstep(0.25, 0.42, lob)) * 0.05 * in_fat;
+    if torn {
+        // Torn tissue bleeds from every face and the blast drives blood into it: most of it under a film of blood and
+        // clot, the pale fat and the white of fascia showing through in tags and patches.
+        let clot = mix(0.5, wall_noise(p * 70.0 + 21.0) * 0.6 + wall_noise(p * 240.0 + 2.0) * 0.4, fade(240.0, px));
+        mm += 0.02 + 0.25 * smoothstep(0.35, 0.75, clot) + 0.04 * oozes;
+    }
     pbr_input.material.base_color = vec4(blood_over(wall, mm, 1.0), 1.0);
     let wall_gloss = mix(gloss, 0.75, clamp(mm * 10.0, 0.0, 1.0));
     pbr_input.material.perceptual_roughness = 1.0 - wall_gloss;
@@ -166,6 +207,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var h = lift;
     if oozes > 0.5 {
         h += 0.0004 * mix(0.5, wall_noise(p * 650.0), fade(650.0, px));
+    }
+    if torn {
+        // Shreds and tags of tissue standing off the torn faces.
+        h += 0.0015 * mix(0.5, wall_noise(p * 180.0 + 4.0), fade(180.0, px)) + 0.0006 * mix(0.5, wall_noise(p * 520.0 + 8.0), fade(520.0, px));
     }
     let world = in.world_position.xyz;
     let dpx = dpdx(world);

@@ -616,6 +616,17 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
 
 // --- what is not drawn (hider.ts) -------------------------------------------------------------------------------------
 
+// viscera.rs `oval` and `torn`, to the digit.
+fn torn_oval(h0: f32, h1: f32, a: f32) -> f32 {
+    return 1.0 / sqrt(pow(cos(a) / h0, 2.0) + pow(sin(a) / h1, 2.0));
+}
+
+fn torn(at: vec3<f32>, a: f32) -> f32 {
+    let s = fract(at.x * 137.1 + at.y * 311.7 + at.z * 74.7) * 6.2831853;
+    let tear = pow(max(sin(4.0 * a + 3.3 * s), 0.0), 6.0) + 0.6 * pow(max(sin(3.0 * a + 5.1 * s), 0.0), 8.0);
+    return 1.0 + 0.14 * sin(3.0 * a + s) + 0.09 * sin(5.0 * a + 2.3 * s) + 0.06 * sin(8.0 * a + 4.1 * s) + 0.04 * sin(13.0 * a + 1.7 * s) + 0.45 * tear;
+}
+
 // Openings in `row` (the clothes' holes and slits, or the skin's torn openings): a slot a.w long either way and b.w wide
 // (a lens: the skin either side pulled apart by its tension, round when as wide as long), or a round hole with a frayed
 // edge (b.w below nothing).
@@ -630,7 +641,16 @@ fn holed(rest: vec3<f32>, row: u32, count: u32) -> bool {
         }
         let across = cross(b.xyz, c.xyz);
         let on = vec2(dot(d, b.xyz), dot(d, across));
-        if b.w < 0.0 {
+        if b.w < 0.0 && row == 2u {
+            // Skin burst open from inside: its edge torn, ragged with short splits (viscera.rs `torn`, the same line),
+            // and finer still where it parted (in the skin's own rest frame: viscera.rs's `normal` crossed with `ex`
+            // is this `across` turned round).
+            let ang = atan2(-on.y, on.x);
+            let r = torn_oval(a.w, -b.w, ang) * torn(a.xyz, ang) * (0.97 + 0.06 * noise3(rest * 1100.0, HIDER));
+            if length(on) < r {
+                return true;
+            }
+        } else if b.w < 0.0 {
             // (frayed: the edge of a hole in cloth wanders with the weave, not in a pattern)
             if length(on) < a.w * (0.7 + 0.45 * noise3(rest * 900.0, HIDER) + 0.15 * noise3(rest * 3000.0, HIDER)) {
                 return true;

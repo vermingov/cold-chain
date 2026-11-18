@@ -2,7 +2,7 @@
 // (the shotgun and the pistol fired from the hands at the line-up) and from where a player looks at them after: in
 // front of the wound, from the side of the body lying on its back, and from above. The play-test's reports: holes like a
 // drilled tube in rings, bowel poking out as a cone and as flat shards, the shirt's stain one hard-edged blob.
-// `gore-belly`, `gore-pellets`, `gore-head`, `gore-pistol` run a part each.
+// `gore-belly`, `gore-bare`, `gore-pellets`, `gore-head`, `gore-pistol` run a part each.
 
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 use crate::head_scenario::{hide_hud, look, Lamp, LAMP};
 use crate::person::Person;
+use crate::player::Player;
 use crate::ragdoll::Ragdoll;
 use crate::scenario::{log, Step};
 use crate::weapons::Weapons;
@@ -40,10 +41,26 @@ fn fire(name: &'static str, n: usize, part: &'static str, far: f32, weapon: &'st
         act(move |w| crate::warm::take(w, weapon)),
         Step::Wait(90),
         act(move |w| {
-            crate::warm::aim(w, n, part, far);
+            // (Then the eye moved so that the bore, which is held some 9 cm right of it and 12 below, runs through the
+            // part rather than the eye's line: close up, that is the difference between the belly and the flank.)
+            let Some((_, at)) = crate::warm::aim(w, n, part, far) else { return };
+            for mut p in w.query::<&mut Player>().iter_mut(w) {
+                p.pos.x -= 0.09;
+                p.stand += 0.12;
+                let eye = p.eye().translation;
+                let d = at - eye;
+                p.yaw = (-d.x).atan2(-d.z);
+                p.pitch = d.y.atan2(d.x.hypot(d.z));
+            }
         }),
         Step::Wait(20),
         act(|w| {
+            let h = w.resource::<crate::weapons::Hand>();
+            let (back, tilt, against) = (h.back, h.tilt, h.against.map(|a| a.1.to_array()));
+            let wp = w.resource::<Weapons>();
+            let state = json!({ "slot": wp.slots[wp.slot], "reloading": wp.reloading, "busy": wp.busy });
+            eprintln!("GORE aimed back {back} tilt {tilt} against {against:?} {state} boxes {:?}", w.resource::<crate::weapons::Hand>().boxes);
+            log(w, json!({ "event": "aimed", "back": back, "tilt": tilt, "against": against, "weapons": state }));
             w.resource_mut::<Weapons>().log.clear();
             crate::warm::press(w, 0);
         }),
@@ -63,7 +80,17 @@ fn fire(name: &'static str, n: usize, part: &'static str, far: f32, weapon: &'st
                 let local = rd.segs[k].now.compute_affine().inverse().transform_point3(at);
                 w.resource_mut::<Marked>().0.push((name.into(), who, k, local));
             }
+            eprintln!("GORE fired {name} {}", json!(hits));
             log(w, json!({ "event": "fired", "what": name, "ms": ms, "hits": hits }));
+        }),
+        // Knocked out a moment after, so that the hands that go to the wound do not cover it in the pictures (alive and
+        // bleeding: the clothes soak as they would).
+        Step::Wait(40),
+        act(move |w| {
+            let who = person(w, n);
+            if let Some(mut v) = w.get_mut::<crate::vitals::Vitals>(who) {
+                v.out = 600.0;
+            }
         }),
     ]
 }
@@ -109,13 +136,20 @@ pub fn steps(part: &str) -> Vec<Step> {
         s.push(Step::Wait(240));
         s.extend(pictures("belly", "4s", 0.35));
         s.extend(pictures("belly", "4s_wide", 0.8));
-        s.push(Step::Wait(1500));
+        s.push(Step::Wait(if std::env::var("GORE_QUICK").is_ok() { 30 } else { 1500 }));
         s.extend(pictures("belly", "30s", 0.35));
         s.extend(pictures("belly", "30s_wide", 0.8));
     }
-    // From 3 m, the pellets parted.
+    // The same into the naked man's belly: the wound on bare skin.
+    if all || part == "bare" {
+        s.extend(fire("bare", 4, "belly", 1.6, "shotgun"));
+        s.push(Step::Wait(240));
+        s.extend(pictures("bare", "4s", 0.3));
+        s.extend(pictures("bare", "4s_close", 0.16));
+    }
+    // From 3 m into the naked man's belly, the pellets parted.
     if all || part == "pellets" {
-        s.extend(fire("pellets", 2, "belly", 3.0, "shotgun"));
+        s.extend(fire("pellets", 4, "belly", 3.0, "shotgun"));
         s.push(Step::Wait(240));
         s.extend(pictures("pellets", "4s", 0.3));
         s.extend(pictures("pellets", "4s_wide", 0.7));
@@ -126,9 +160,9 @@ pub fn steps(part: &str) -> Vec<Step> {
         s.push(Step::Wait(240));
         s.extend(pictures("head", "4s", 0.3));
     }
-    // A pistol bullet into the young man's bare forearm from 2 m.
+    // A pistol bullet into the naked man's belly from 2.5 m.
     if all || part == "pistol" {
-        s.extend(fire("pistol", 2, "forearmL", 2.0, "pistol"));
+        s.extend(fire("pistol", 4, "belly", 2.5, "pistol"));
         s.push(Step::Wait(240));
         s.extend(pictures("pistol", "4s", 0.15));
     }
