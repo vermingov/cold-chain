@@ -1397,6 +1397,17 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
   their cuffs, dusters flat.
 - Not modelled: the wearer's hand (the bare fist's boxer's fracture, the dusters' and gloves' protection of it): the
   player's hands are not hurt by punching at all yet.
+- Measured (`punches`, `punches-gloves`, `punches-dusters`: the same twelve punches at the line-up each, jabs, half and
+  full wind-ups to heads, chests and bellies; peak force at the bone, N):
+
+  | | jab to a head | full straight to a head | full to a chest | fractures in 12 | skin split | knocked out |
+  |---|---|---|---|---|---|---|
+  | bare | 1565 | 4245-4332 | 2912-2933 | 4 frontal (linear), ribs in 7 (3-4 each), sternum 5 | 1 | 5 of 6 head punches |
+  | gloves | 924 | 2266-2317 | 2178-2195 | 1 frontal (linear), ribs in 6 (1 each), sternum 0 | 0 | 4 of 6 (the jabs only dazed) |
+  | dusters | 2082 | 5336-5450 | 3189-3213 | 4 frontal (depressed), ribs in 7 (2 each), sternum 6, lungs torn 3 | 3 | 6 of 6, an eye burst |
+
+  The bare model's own figures (a jab breaking the 78-year-old's frontal bone, ribs at a jab) are bones.rs's as they
+  were; what is new is the spread either side of them.
 
 ### The ring (ring.rs, map.rs)
 - In the south-east of the hall, between the low wall, the high wall and the ledge, out of the line-up's and the
@@ -1410,7 +1421,9 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
   through between them (`duck`: the body's filter drops the ropes' bit), as one bends through a ring's ropes.
 - The `ring` scenario: walking into the north ropes the player's body pushed them out 16 cm and was held there,
   walking (the feet's grip against the springs), and thrown back 17 cm when they stopped; ducked, they went through and
-  out of the ring. (Numbers for a person shoved at them below.)
+  out of the ring. Somebody stood 60 cm from the north ropes and shoved at them at 2.5 m/s: their chest went 13 cm
+  past where the ropes hang, the ropes out 22 cm, and they were thrown back 87 cm into the ring and went down (a wrist
+  broken on the canvas); the ropes swung back to rest within a second.
 
 ### The bout (bout.rs) and what the fighting AI will need
 - B puts an opponent in the ring (the line-up's bodies in turn, in the south-east corner facing the middle), one at a
@@ -1420,7 +1433,12 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
 - The player has no health; `Harm` is theirs now: `Harm::struck(mass, speed, head)` takes a blow as wounds.rs gives a
   person one (concussion from the energy into the head, energy / 160 J; pain from any blow); past 0.8 concussion they
   are knocked out for 10 to 30 s (held where they are, the eye down at the floor) and groggy (60% pace) for 20 s after.
-  Nothing calls it yet but its test: nothing hits the player.
+  Nothing calls it yet but its test: nothing hits the player. Nothing shows it on the HUD yet either.
+- The `ring` scenario: B put the groundskeeper in the south-east corner; killed, he was taken away and the next was in
+  3.3 s later (`Bout`: 2 opponents, 1 beaten).
+- Not checked: the `warm` scenario (whether the gloves', dusters' and ring's materials are all made in the warm-up: the
+  ring is drawn from the start, the worn things are put on the frame after they are taken, which the warm-up's three
+  frames for each thing held should cover).
 - What the fighting itself needs from the new active-ragdoll controller (behaviour.rs, ragdoll.rs, motor.rs):
   - a guard held under load: hands up by the jaw, elbows in, chin down, stiff enough that a jab moves it and does not
     open it, with the controller's balance keeping them on their feet when hit (and stepping, not falling, when shoved);
