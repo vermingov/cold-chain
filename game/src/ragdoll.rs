@@ -760,9 +760,11 @@ impl Ragdoll {
         self.segs.iter().position(|s| s.def.name == name).unwrap_or_else(|| panic!("no segment {name}"))
     }
 
-    // Every entity of the ragdoll's own (bodies, joints), for when the person goes.
+    // What to despawn when the person goes: the segments' bodies. (Every joint entity, the friction's and a piece's held
+    // apart, is a child of one and goes with it. Despawned again on its own, each was a failed command whose warning
+    // took a backtrace, some 10 ms apiece in a dev build: K took 982 ms, 27 without them.)
     pub fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.segs.iter().flat_map(|s| [Some(s.entity), s.friction]).flatten().chain(self.apart.iter().copied())
+        self.segs.iter().map(|s| s.entity)
     }
 
     // The joint between a segment and its parent, at the segment's bone head, with its range read off the skeleton.
