@@ -847,8 +847,12 @@ fn body(name: &str) -> Option<Vec<Step>> {
                 }
             })));
             s.push(Step::Wait(120));
-            // (`everyone` sorts by entity, which puts the line-up the other way round: the groundskeeper is its third.)
-            s.push(situation("dragged by the hand", |i, t, _, _| i == 2 && (2..=8).contains(&t)));
+            // (The groundskeeper's place among `everyone`, which sorts by entity.)
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let held = person_at(w, 1);
+                let i = everyone(w).iter().position(|&e| e == held).unwrap();
+                push_front(w, VecDeque::from([situation("dragged by the hand", move |p, t, _, _| p == i && (2..=8).contains(&t))]));
+            })));
         }
         // Dead (the heart stopped) and down: lying dead and still.
         "dead" => {
@@ -1282,7 +1286,7 @@ fn body(name: &str) -> Option<Vec<Step>> {
         // makes them (the bend's range about its zero, in the motors' measure).
         "ragdoll" => {
             s.push(Step::Do(Box::new(|w: &mut World| {
-                let e = person_at(w, 2);
+                let e = person_at(w, 1);
                 let (person, rd) = (w.entity(e).get::<Person>().unwrap(), w.entity(e).get::<Ragdoll>().unwrap());
                 let v = |v: Vec3| v.to_array();
                 let segs: Vec<Value> = person.segments.iter().enumerate().map(|(k, d)| {
