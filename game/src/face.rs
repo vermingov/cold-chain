@@ -989,13 +989,13 @@ mod tests {
 use crate::scenario::{log, Step};
 use serde_json::json;
 
-fn who(w: &mut World, body: &str) -> Entity {
+pub(crate) fn who(w: &mut World, body: &str) -> Entity {
     let mut q = w.query::<(Entity, &Person)>();
     q.iter(w).find(|(_, p)| p.body.name == body).map(|(e, _)| e).expect("the line-up")
 }
 
 // The middle of the eyes and which way the face looks, now.
-fn face_at(w: &mut World, e: Entity) -> (Vec3, Vec3) {
+pub(crate) fn face_at(w: &mut World, e: Entity) -> (Vec3, Vec3) {
     let mut q = w.query::<(&Person, &Transform, Option<&Ragdoll>)>();
     let (p, root, rd) = q.get(w, e).unwrap();
     let eyes = [p.body.by_name["eye.L"], p.body.by_name["eye.R"]].map(|b| bone_world(p, root, b).transform_point3(p.body.bones[b].head));
@@ -1005,7 +1005,7 @@ fn face_at(w: &mut World, e: Entity) -> (Vec3, Vec3) {
 
 // The player's eye `far` from `body`'s face, `turn` degrees round from straight in front of it, looking at it; a few
 // frames; a picture, and the face as it was into the log.
-fn close(name: &'static str, body: &'static str, turn: f32, far: f32) -> Vec<Step> {
+pub(crate) fn close(name: &'static str, body: &'static str, turn: f32, far: f32) -> Vec<Step> {
     vec![
         Step::Do(Box::new(move |w: &mut World| {
             // (Nothing of the HUD over the pictures, and nothing in the hands.)
@@ -1044,7 +1044,7 @@ fn close(name: &'static str, body: &'static str, turn: f32, far: f32) -> Vec<Ste
 }
 
 // So many frames gone by with nothing drawn (on a software renderer a long wait is otherwise most of a run).
-fn dark(frames: u32) -> [Step; 3] {
+pub(crate) fn dark(frames: u32) -> [Step; 3] {
     let cameras = |on: bool| Step::Do(Box::new(move |w: &mut World| {
         for mut c in w.query::<&mut Camera>().iter_mut(w) {
             c.is_active = on;

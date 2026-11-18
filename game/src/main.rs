@@ -31,6 +31,7 @@ mod fluid;
 mod graphics;
 mod hider;
 mod hands;
+mod head_scenario;
 mod hud;
 mod map;
 mod marks;

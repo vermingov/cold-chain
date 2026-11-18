@@ -298,16 +298,20 @@ pub fn pierce_with(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32
     }
     // Each eye it went through, hurt as an eye: through and through if the path went on well past it. What runs out of
     // the one it went in by runs from that lower lid.
+    // (A blade drawn across an open eye cuts it as its point would: the TS left slashes out, and a sword across the eyes
+    // left them whole.)
     let mut lid: Option<Crossing> = None;
-    if !m.slash {
-        for h in &eyes {
-            if h.t < stop_at {
-                let out = npc.eyes().pierced(h, m, dir, stop_at.min(far) - h.t, stop_at > h.t + 0.04);
-                if via_eye.as_ref().is_some_and(|ve| ve.t == h.t && ve.t < enter_t) {
-                    lid = out;
-                }
+    for h in &eyes {
+        if h.t < stop_at {
+            let out = npc.eyes().pierced(h, m, dir, stop_at.min(far) - h.t, stop_at > h.t + 0.04);
+            if via_eye.as_ref().is_some_and(|ve| ve.t == h.t && ve.t < enter_t) {
+                lid = out;
             }
         }
+    }
+    // A bullet's track past an eye breaks the orbit round it (eyes.rs).
+    if !m.blade {
+        npc.eyes().near(origin, dir, enter_t, stop_at.min(far), m.energy);
     }
     // In through an open mouth the way in is the back of the throat, and it bleeds into the mouth.
     let in_mouth = npc.throat_crossed(origin, dir, enter_t - 0.08, enter_t - 0.035);
@@ -321,6 +325,7 @@ pub fn pierce_with(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32
     if npc.throat_crossed(origin, dir, enter_t - 0.08, stop_at.min(far)) {
         npc.vitals.bleed(Bleed::new("mouth", 0.0009 * (m.channel / 0.006).min(2.0)).internal(true).clots(0.005).into(Into::Mouth));
         npc.vitals.injure("Wound through the mouth", 4.0);
+        npc.throat_wall(origin, dir, enter_t - 0.08, stop_at.min(far), m.calibre);
     }
     for h in &surface {
         if h.kind == Kind::Tongue && h.t < stop_at.min(far) {
@@ -367,9 +372,12 @@ pub fn pierce_with(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32
     let enter = skins[0].clone();
     // The scalp and face are full of small vessels and bleed far more than a wound anywhere else of the same size. The
     // neck (on the head's segment too) is not: its skin bleeds as skin, and what lies under it by the vessels met.
-    let face = |npc: &Npc, h: Option<&Crossing>| h.is_some_and(|h| !npc.body().bones[h.owner].name.starts_with("neck"));
+    let face = |npc: &Npc, h: Option<&Crossing>| h.is_some_and(|h| !npc.body().bones[h.owner].name.starts_with("neck") && !npc.in_neck(h.point));
     if npc.nearest_name(enter.point) == Some("head") && lid.is_none() {
-        if face(npc, Some(&enter)) && !in_mouth {
+        // (A blade drawn across the face crosses the skin every centimetre or so: a cut bleeds as the scalp does for each
+        // few centimetres of it, not for each place it was found.)
+        let cut_there = m.slash && npc.vitals.bleeds.iter().any(|b| b.name == "scalp" && b.source.mark.as_ref().is_some_and(|k| k.rest.distance(enter.rest) < 0.03));
+        if face(npc, Some(&enter)) && !in_mouth && !cut_there {
             npc.vitals.bleed(Bleed::new("scalp", 0.0012 * if m.blade { 1.5 } else { 1.0 }).clots(0.003).mark(Some(enter.clone())));
         }
         if face(npc, exit.as_ref()) {
@@ -426,6 +434,10 @@ pub fn pierce_with(npc: &mut Npc, origin: Vec3, dir: Vec3, m: &Missile, far: f32
         npc.hurt.happened.push(Happened::Edge { energy: m.energy, at: enter.point, dir });
     } else if m.channel >= 0.015 && !m.blade {
         npc.hurt.happened.push(Happened::Charge { energy: m.energy - if exited { energy } else { 0.0 }, at: enter.point, dir, hit: enter.clone(), calibre: m.calibre });
+    } else if !m.blade && m.speed.unwrap_or(0.0) > 600.0 && npc.nearest_name(enter.point) == Some("head") {
+        // A rifle's bullet through the head: what it spent there may burst the skull open where it left (viscera.rs).
+        let out = exit.clone().unwrap_or_else(|| enter.clone());
+        npc.hurt.happened.push(Happened::Charge { energy: m.energy - if exited { energy } else { 0.0 }, at: out.point, dir, hit: out, calibre: m.calibre });
     }
     Pierced {
         stopped: !exited,
@@ -682,6 +694,7 @@ pub fn region_of(npc: &Npc, point: Vec3) -> String {
     let side = if seg.ends_with('L') { "left " } else if seg.ends_with('R') { "right " } else { "" };
     let base = base_of(seg);
     let word = match base {
+        "head" | "chest" if npc.in_neck(point) => "neck",
         "head" => "head",
         "chest" => "chest",
         "belly" => "abdomen",
@@ -739,7 +752,11 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
     if let Some(k) = seg {
         npc.bones().impact(k, point, dir, mass, speed, tool);
     }
-    if base == "head" {
+    // (A blow to the throat is not one to the head: no concussion, nor the scalp's bleeding. What it breaks there, the
+    // larynx, is bones.rs's.)
+    if base == "head" && npc.in_neck(point) {
+        npc.vitals.injure("Blow to the throat", 3.0);
+    } else if base == "head" {
         let c = (npc.vitals.concussion() + energy / 160.0).min(1.0);
         npc.vitals.concuss(c, npc.dice);
         if energy > 90.0 {

@@ -810,12 +810,12 @@ fn fragment(in: Out, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     let head = texel(0u, 0u);
     let counts = texel(0u, 1u);
     let rest = in.rest;
-    // What is not there: holes in the clothes, the skin torn open, and the skin under the clothes but where a hole
-    // shows it.
+    // What is not there: holes in the clothes, the skin torn open (and the hair on it, where the scalp is), and the skin
+    // under the clothes but where a hole shows it.
     if mode == CLOTH && holed(rest, 1u, u32(head.z)) {
         discard;
     }
-    if (mode == SKIN || mode == UNDER) && holed(rest, 2u, u32(head.w)) {
+    if (mode == SKIN || mode == UNDER || mode == CARRIED) && holed(rest, 2u, u32(head.w)) {
         discard;
     }
     if mode == UNDER && is_front {
