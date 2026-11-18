@@ -1084,6 +1084,29 @@ the leak along the arm. Next to look at: the row's bias, capped at `max_correcti
 back only so fast), and the muscle motors on the same axes (finalised in a block of their own, so nothing keeps them off
 the limit row's direction).
 
+### The limit leak: not the bias cap, the motors or the passes
+Each tried alone against the build as it is (1082a5b, measured again: the bevy-port merge moved some numbers), drag
+seeds 1 and 3 and the crawl first, the rest only where those were better. The elbow is `forearm`'s joint; s side, t
+twist, degrees past the range at worst; hf the mean high-frequency spin, rad/s.
+
+| | as now | bias cap 30 (from 3) | elbow's side and twist motors off | 48 passes (from 16) |
+|---|---|---|---|---|
+| drag s1: elbow; worst else; hf | s 62.7; shin 21.2; 0.985 | s 40.6; 0.4; 1.153 | t 136; shin 12.2; 1.313 | s 35.7; hand 28.2; 1.019 |
+| drag s3 | s 70.3; hand 18.2; 0.859 | s 76.8; 0.9; 0.890 | t 132; elbowL t 18.7; 1.236 | s 85.1; hand 34.8; 0.932 |
+| crawl: elbows; worst else; hf | 94.4 (and t 42); hand 61.7; 0.763 | 41.5, 31.3; 1.1; 1.119 | 171, 123; hand 77.8; 1.205 | 42.0, 36.2; 12.3; 0.796 |
+| getup s1-3: all four up | yes, yes, yes | yes, yes, yes | | |
+| dead lying still, hf | 0.014 | 0.027 | | |
+| stand: hf; creep (cm) | 0.024; 4.4-9.3 | 0.024; 6.9-7.9 | | |
+| physics ms/step | 2.3 | 2.3 | 2.4 | 6.8 |
+
+None kept. The cap (`normalized_max_corrective_velocity`, which Rapier's angular limit rows share with the contacts;
+the joints' own softness is its default, effectively rigid, so 60 per second of error up to the cap) settles the
+other joints (the shins and hands to a degree or less) and halves the crawl's elbows, but not the drag's (one seed
+better, one worse), and it doubles the dead man's spin and raises every moving case's jitter. With the elbow's side and
+twist motors off its side stays in, but its twist, held by nothing but its limit, goes 130-170 past: the motors hold
+the elbow, they do not push it out. 48 passes helps the crawl but not the drag, puts the hand out further and costs
+three times the physics. Softening the joint (a soft lock, 15 and 60 Hz) was as bad as the limit (above).
+
 ### Rapier's NaN rollback
 Rapier (0.36's quarantine) rolled back and disabled two bodies over a NaN in one khang run of four, and in every
 arsenal-use run: Young man (7)'s chest and right hand at the knife's cut (frame 241), the man limp from then on.
