@@ -8,6 +8,9 @@ finished on the Babylon version, and then do the rest of what I asked". So, in t
 then item 7 (what was stopped mid-way in the TS). Items 1-6 wait: the user said (2026-11-16) not to start them right
 away, only to finish the port and item 7.
 
+The user said go on 1-6 (2026-11-18), with item 7's loose ends (HANDOFF.md top): "Start working on that, and also
+fix the loose ends". Order proposed to them: 4 first (the active ragdoll touches the rest), then 1, 3, 5, 6, 2.
+
 1. **The viewmodel and the player's body in the 3D world.** "The viewmodel should actually be in the 3D world, same
    with my character, like I should be able to push the NPCs with my body, and I should be able to put my gun up
    against the NPCs so it isn't just my view but actually where it is and where it will function."
