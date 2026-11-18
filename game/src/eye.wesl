@@ -106,16 +106,16 @@ fn bloodshot(uv: vec2<f32>, c: vec2<f32>, rc: f32, red: f32) -> vec4<f32> {
     var lines = 0.0;
     for (var k = 0; k < 3; k++) {
         let f = f32(k);
-        // 24 trunks round the eye, 60 branches, 110 fine ones; each line's width a share of the gap between them (a
-        // swollen trunk some 0.15 mm on a 24 mm eye), and never under about a pixel: thinner, it shimmered away to
+        // 24 trunks round the eye, 60 branches, 110 fine ones, winding; each line's width a share of the gap between
+        // them (a swollen trunk some 0.1 mm on a 24 mm eye), and never under about a pixel: thinner, it shimmered away to
         // nothing, as the TS's net did at any distance past a hand's breadth.
         let count = select(select(110.0, 60.0, k == 1), 24.0, k == 0);
-        let wander = (noise2(vec2(cos(a) * 2.5 + f * 11.0, sin(a) * 2.5 + r * (4.0 + f * 3.0))) - 0.5) * (0.9 + f * 0.6);
+        let wander = (noise2(vec2(cos(a) * 2.5 + f * 11.0, sin(a) * 2.5 + r * (9.0 + f * 6.0))) - 0.5) * (1.2 + f * 0.8);
         let u = a / 6.2831853 * count + wander;
         let which = hash2(vec2(floor(u), f * 7.0));
         // (Each vessel reaches in its own way: trunks to near the limbus, the finer ones less far.)
         let reach = 0.1 + 0.55 * which + f * 0.1;
-        let width = (0.2 - f * 0.06) * mix(0.5, 1.0, r);
+        let width = (0.12 - f * 0.035) * mix(0.5, 1.0, r);
         let px = fwidth(u);
         let line = (1.0 - smoothstep(width * 0.5, width * 0.5 + px, abs(fract(u) - 0.5))) * min(1.0, width / max(px, 1e-5));
         lines = max(lines, line * smoothstep(reach - 0.1, reach + 0.15, r) * (0.6 + 0.4 * which) * (1.0 - f * 0.2));
@@ -124,9 +124,11 @@ fn bloodshot(uv: vec2<f32>, c: vec2<f32>, rc: f32, red: f32) -> vec4<f32> {
     let warp = vec2(noise2(uv * 40.0), noise2(uv * 40.0 + 17.0)) * 2.5;
     let fine = 1.0 - smoothstep(0.0, 0.035, abs(noise2(uv * 160.0 + warp * 1.7) - 0.5));
     lines = max(lines, fine * 0.5 * smoothstep(0.2, 0.7, r) * smoothstep(0.3, 0.8, noise2(uv * 25.0)));
+    // (A slight redness already shows: the eye reads a few red vessels long before the whole white is pink.)
+    let k = pow(red, 0.6);
     let near = smoothstep(0.0, 0.35, r);
-    let flush = rgba(222.0, 120.0, 112.0, min(1.0, 0.75 * red * near * corners));
-    return over(flush, rgba(168.0, 16.0, 20.0, min(1.0, 1.15 * red * lines * corners)));
+    let flush = rgba(222.0, 120.0, 112.0, min(1.0, 0.65 * k * near * corners));
+    return over(flush, rgba(165.0, 14.0, 20.0, min(1.0, 1.4 * k * lines * corners)));
 }
 
 // The damage sheet at `uv`: what the TS painted on its canvas, in its order, over the eye's bloodshot white.
