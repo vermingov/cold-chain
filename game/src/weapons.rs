@@ -3193,9 +3193,9 @@ pub fn viewmodel() -> Vec<crate::scenario::Step> {
 
 // --- the `blasts` scenario ----------------------------------------------------------------------------------------------
 //
-// The shotgun's cost (the TS spent 110 to 360 ms of JS on one blast): fired into a person from 0.8 m (the charge still one
-// mass), from 2.5 m (nine pellets), and along the line-up from its end, from 1.9 m and from 1 m, so that what goes through
-// one goes on into the next. Each blast's own time (`fire`'s "ms") and the hits into the log; with --profile, the
+// The shotgun's cost (the TS spent 110 to 360 ms of JS on one blast): fired into a person with the muzzle 0.35 m off (the
+// charge still one mass) and 1.75 m off (nine pellets), and along the line-up from its end the same, so that what goes
+// through one goes on into the next. Each blast's own time (`fire`'s "ms") and the hits into the log; with --profile, the
 // "weapons" row of the profiler holds the blast's whole frame. Then the same with a stab and a blow from just over a head:
 // the eye looking past the top of it, what is in the hand going where it goes.
 pub fn blasts() -> Vec<crate::scenario::Step> {
@@ -3206,10 +3206,17 @@ pub fn blasts() -> Vec<crate::scenario::Step> {
     }));
     let mut s = vec![Step::Do(Box::new(|w: &mut World| crate::warm::take(w, "shotgun"))), Step::Wait(30)];
     // (who, the part, how far; or None: from the line-up's end, along it, this far from the first)
-    let blasts: [(&str, Option<(usize, &str)>, f32); 4] = [("a person, 0.8 m", Some((1, "chest")), 0.8), ("a person, 2.5 m", Some((2, "belly")), 2.5),
-                                                          ("the line-up from its end, 1.9 m", None, 1.9), ("the line-up from its end, 1 m", None, 1.0)];
+    // (Metres from the eye: the shotgun's muzzle is some 1.25 m ahead of it, so at 1.6 m the charge goes in as one, at 3 m
+    // the pellets have parted.)
+    let blasts: [(&str, Option<(usize, &str)>, f32); 4] = [
+        ("a person, the muzzle 0.35 m off", Some((1, "chest")), 1.6),
+        ("a person, the muzzle 1.75 m off", Some((2, "belly")), 3.0),
+        ("the line-up from its end, the muzzle 1.75 m off", None, 3.0),
+        ("the line-up from its end, the muzzle 0.35 m off", None, 1.6),
+    ];
     for (i, (what, at, far)) in blasts.into_iter().enumerate() {
         s.push(reset());
+        s.push(Step::Do(Box::new(|w: &mut World| crate::warm::take(w, "shotgun"))));
         s.push(Step::Wait(60));
         match at {
             Some((n, part)) => s.push(Step::Do(Box::new(move |w: &mut World| {
