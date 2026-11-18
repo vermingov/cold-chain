@@ -430,9 +430,12 @@ pub fn steps(part: &str) -> Vec<Step> {
         s.push(bleeds("sword across the forehead", "white"));
         s.push(taken());
         s.push(Step::Wait(30));
+        // (Nothing in the hand: the gun stood in front of the openings.)
+        s.push(act(|w| crate::warm::take(w, "hands")));
         for (name, body) in [("skull_rifle", "oldman"), ("skull_shotgun", "sexton"), ("skull_sword", "white")] {
             s.extend(opening(name, body, 0.25));
             s.extend(opening(Box::leak(format!("{name}_close").into_boxed_str()), body, 0.14));
+            s.extend(opening(Box::leak(format!("{name}_near").into_boxed_str()), body, 0.08));
         }
         for (name, body, turn) in [("skull_rifle_front", "oldman", 0.0), ("skull_bat", "buyer", 0.0)] {
             s.extend(face(name, body, turn, 0.4));

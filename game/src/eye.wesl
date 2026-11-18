@@ -106,15 +106,19 @@ fn bloodshot(uv: vec2<f32>, c: vec2<f32>, rc: f32, red: f32) -> vec4<f32> {
     var lines = 0.0;
     for (var k = 0; k < 3; k++) {
         let f = f32(k);
-        let many = 7.0 + f * 9.0;
-        let wander = (noise2(vec2(cos(a) * 2.5 + f * 11.0, sin(a) * 2.5 + r * (4.0 + f * 3.0))) - 0.5) * (0.9 + f * 0.4);
-        let u = a / 6.2831853 * round(many * 6.0) + wander;
+        // 24 trunks round the eye, 60 branches, 110 fine ones; each line's width a share of the gap between them (a
+        // swollen trunk some 0.15 mm on a 24 mm eye), and never under about a pixel: thinner, it shimmered away to
+        // nothing, as the TS's net did at any distance past a hand's breadth.
+        let count = select(select(110.0, 60.0, k == 1), 24.0, k == 0);
+        let wander = (noise2(vec2(cos(a) * 2.5 + f * 11.0, sin(a) * 2.5 + r * (4.0 + f * 3.0))) - 0.5) * (0.9 + f * 0.6);
+        let u = a / 6.2831853 * count + wander;
         let which = hash2(vec2(floor(u), f * 7.0));
         // (Each vessel reaches in its own way: trunks to near the limbus, the finer ones less far.)
-        let reach = 0.15 + 0.6 * which + f * 0.12;
-        let width = (0.07 - f * 0.018) * mix(0.45, 1.0, r);
-        let line = 1.0 - smoothstep(width * 0.5, width, abs(fract(u) - 0.5));
-        lines = max(lines, line * smoothstep(reach - 0.1, reach + 0.15, r) * (0.55 + 0.45 * which) * (1.0 - f * 0.18));
+        let reach = 0.1 + 0.55 * which + f * 0.1;
+        let width = (0.2 - f * 0.06) * mix(0.5, 1.0, r);
+        let px = fwidth(u);
+        let line = (1.0 - smoothstep(width * 0.5, width * 0.5 + px, abs(fract(u) - 0.5))) * min(1.0, width / max(px, 1e-5));
+        lines = max(lines, line * smoothstep(reach - 0.1, reach + 0.15, r) * (0.6 + 0.4 * which) * (1.0 - f * 0.2));
     }
     // And the fine net between them.
     let warp = vec2(noise2(uv * 40.0), noise2(uv * 40.0 + 17.0)) * 2.5;

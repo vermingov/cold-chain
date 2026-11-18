@@ -982,11 +982,18 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
          mut stains: ResMut<Assets<ExtendedMaterial<StandardMaterial, Stain>>>, hall: Res<crate::wet::Hall>) {
     let [hall0, hall1, hall2, hall3, hall4, hall5] = hall.faces.clone();
     let mut blood = Blood::new();
-    // Blood in the air: dark red, glossy (fluid.rs DROP).
+    // Blood in the air: glossy, and as a drop is a millimetre or a few of it, not a pool's depth, the light that goes into
+    // it comes back out red, much of it round its far side: lit from behind or across it glows (a spray against a lamp is
+    // a cloud of red beads). Drawn as a pool's surface (fluid.rs DROP), opaque and lit only from its front, each was a
+    // dark ball with a white point on it.
     let air = materials.add(StandardMaterial {
-        base_color: crate::fluid::DROP,
+        base_color: Color::linear_rgb(0.17, 0.011, 0.01),
         perceptual_roughness: 0.06,
         reflectance: 0.35,
+        diffuse_transmission: 0.55,
+        thickness: 0.002,
+        attenuation_distance: 0.0015,
+        attenuation_color: Color::linear_rgb(0.9, 0.04, 0.03),
         ..default()
     });
     let mut pool = |mesh: Mesh, count: usize, name: &'static str| -> Vec<Entity> {
@@ -995,7 +1002,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
             .map(|_| commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(air.clone()), Transform::default(), Visibility::Hidden, NotShadowCaster, Name::new(name))).id())
             .collect()
     };
-    let drops = pool(Sphere::new(0.5).mesh().uv(8, 5), MOST, "drop");
+    let drops = pool(Sphere::new(0.5).mesh().uv(12, 8), MOST, "drop");
     let ropes = pool(Cylinder::new(0.5, 1.0).mesh().resolution(7).build(), ROPES, "stream");
     let sheet = images.add(splash_sheet(&mut blood.rng));
     let material = stains.add(ExtendedMaterial {

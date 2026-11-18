@@ -1191,3 +1191,56 @@ it (`struck` took any cartilage for the head's).
 `stand`'s per-segment spin (the TS's jitter.mjs measure): shins 0.012-0.018 rad/s, the feet 0.024-0.031, the thighs
 0.011-0.012, in three builds; the notes' "feet still buzz about 1 rad/s" is gone. The head is the most, 0.196, ten times
 anything else.
+
+## People, stumps and the loose ends (BACKLOG items 5 and 3, item 7's loose ends; branch port/b-people)
+
+### The cast (item 5)
+The man in the hood is gone; in his place two (sandbox.rs `BODIES`, five now, 1.5 m apart as before):
+- **white**, "Man in white": early twenties, MakeHuman's own T-shirt and jeans (`male_casualsuit02`, CC0) recoloured
+  white (people.py `tint`) with its printed MakeHuman logo painted over by the shirt's own cloth (`erase`), shoes04,
+  brows eyebrow008, 76 kg. Cries with the hood's takes (sandbox.rs `voice`: the young, energetic voice).
+- **naked**, "Naked man": forties, nothing on, 81 kg. His skin is jartur69's CC0 middle-aged man (skins02) with his
+  body hair, beard stubble and genitals painted. MakeHuman dropped its genital proxies (and they were AGPL); its base
+  mesh still carries the male genitals as a CC0 helper (`helper-genital`, 182 quads, penis in front of the scrotum),
+  which people.py `genitals` smooths twice (Catmull-Clark, 2912 quads), weights from the helper's own MakeHuman
+  weights, and lays on the skin picture's genital islands (the shaft unrolled round its axis, the glans round its
+  opening, the scrotum's wrinkled skin); drawn as part of his skin (one part, its corners after the body's). He cries
+  with the groundskeeper's takes: there is no voice of his own (cries are Fish Audio takes, tools/cries.py; making one
+  is a new take, not something to synthesise).
+- Insides (tools/anatomy.py): everyone now has a prostate and seminal vesicles (kinds `prostate`, `gland`); the naked
+  man has the corpora cavernosa, corpus spongiosum and glans (kind `penis`) and the testes with their epididymes
+  (`testis`), the penis carried along his own shaft (the source's lies forward from the pubis; each point past where it
+  leaves the body goes as far along his shaft and as far out from its middle, scaled to its width, the root in the
+  perineum moved with it) and each testis into its half of the scrotum. The x-ray's looks and wounds.rs's bleeding and
+  size have the new kinds.
+- Not modelled, said plainly: pubic and body hair are painted on the skin, not strands; no foreskin or erectile
+  behaviour; the urethra is not a part of its own. No other source for genital geometry under CC0/CC-BY was found
+  (the MakeHuman community packs have skins with genitals painted, no meshes).
+- Every place that named the hood: the scenarios (face.rs, head_scenario.rs, skin.rs, cut_scenario.rs: index 3 is the man
+  in white now), `blasts` (weapons.rs: the line-up's last two by `BODIES.len()`), the people and blood scenarios'
+  positions (they assumed four), sound.rs and face.rs (the voice by `sandbox::voice`).
+
+### Stumps (item 3)
+`stumps` (cut_scenario.rs) cuts every limb at every place (both hands, forearms, upper arms, feet, shins, thighs and the
+head) over the five, then shows each stump and piece from its end and two sides, the same in the x-ray, then dresses each
+stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and the causes:
+- **The x-ray's bones stretched from the stump to the piece** (the user's screenshot: a forearm's radius and ulna a metre
+  long). Each x-ray corner hangs wholly from one bone, by the triangle it was last written for (anatomy.rs `build`): a
+  long bone's two halves (the bone and its mid bone) shared their corners at the middle, and nothing about a cut ever
+  reached the x-ray. A cut now gives the person their own copy of each changed look with every corner on the bone
+  that carries it after the cut (dismember.rs `CutOff::carrier`: on the piece, the piece's; on the body, the body's),
+  and stops drawing the triangles the cut goes through (a corner each side), which the cut faces close (anatomy.rs
+  `cut`). What medicine traces (`Hurt::traced`) is regrouped the same way, so a shot into the piece meets its bones where
+  they lie, and the vessels' points too.
+- **A dressing on a stump stretched into a bar to the piece** (the user's second screenshot). `gauze` laid every dressing
+  on the file's skin with the file's weights, so the skin that went with the piece, still carried by the piece's bones,
+  went into the roll. Now it is laid on the person's own flesh after cuts (flesh.rs `Flesh`: what is still drawn, its
+  weights), never on a triangle a cut runs through; and a wound at a stump's end gets a stump dressing
+  (`Covers::Stump`): the roll wound from the end 10 cm back up the stump and the gauze folded over the end, a low dome
+  shaped by the skin's outline at the cut (`Hurt::stumps`), on the bone the limb hung from; its picture runs from the
+  end's middle out over the rim and up the stump, so the blood spreads from the middle. (dressing.rs said "a stump:
+  phase 3's": nothing had been done for one.)
+- **The trousers' seat went with a thigh** and was stretched into a flap from the piece to the body: `split` put on the
+  piece any corner past the plane with any weight on the limb's bones, or any on the segment's within twice the reach
+  (30 cm for a thigh: the crotch). Now the limb must carry half of a corner, or the limb and the segment together half
+  of it within 1.3 of the reach (`NEAR`); the x-ray's test is the same.

@@ -1266,3 +1266,28 @@ pub fn end_world(world: &mut World, who: Entity, k: usize, piece: bool) -> Optio
 
 #[allow(dead_code)]
 fn _unused(_: Indices, _: PrimitiveTopology, _: VertexAttributeValues, _: RenderAssetUsages, _: Extent3d, _: TextureDimension, _: TextureFormat) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Bones 0 (the body), 1 (the segment the cut is in), 2 (the piece's first) and 3 (below it); the cut at x = 0 facing +X.
+    fn cut() -> CutOff {
+        CutOff {
+            limb: Limb::Forearm, side: "R".into(), how: How::Blade, root: 0, segs: Vec::new(), root_bone: 2, spread: Vec::new(), prox: 1, tip: 2,
+            c: Vec3::ZERO, n: Vec3::X, drains: 0.0, entities: Vec::new(), gone: vec![false, false, true, true], near: vec![false, true, false, false], reach: 0.1,
+        }
+    }
+
+    // Each side's points end up on that side's bones, whichever bone carried them before; the body's far from the cut stay.
+    #[test]
+    fn carried_by_their_side() {
+        let c = cut();
+        assert_eq!(c.carrier(Vec3::new(-0.02, 0.0, 0.0), 3), 1);
+        assert_eq!(c.carrier(Vec3::new(0.02, 0.0, 0.0), 1), 2);
+        assert_eq!(c.carrier(Vec3::new(0.02, 0.0, 0.0), 3), 3);
+        assert_eq!(c.carrier(Vec3::new(-0.02, 0.0, 0.0), 1), 1);
+        assert_eq!(c.carrier(Vec3::new(0.5, 0.0, 0.0), 1), 1);
+        assert_eq!(c.carrier(Vec3::new(0.5, 0.0, 0.0), 0), 0);
+    }
+}

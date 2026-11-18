@@ -148,6 +148,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
                 s.push(only(Some(body)));
                 s.extend(view(&format!("people_{body}_front"), x, z - 2.1, [x, 0.95, z], 1.0));
                 s.extend(view(&format!("people_{body}_side"), x + 2.1, z, [x, 0.95, z], 1.0));
+                s.extend(view(&format!("people_{body}_hips"), x + 0.25, z - 0.75, [x, 0.85, z], 0.95));
                 s.push(Step::Do(Box::new(move |w: &mut World| {
                     let mut q = w.query::<&Person>();
                     let h = q.iter(w).find(|p| p.body.name == body).unwrap().height;

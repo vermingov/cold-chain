@@ -6,8 +6,8 @@
 // heart's grooves and on the colon, and a fine unevenness that catches the light. Blood lying on it is laid over the
 // organ's colour as a film of blood is (fluid.ts's Beer-Lambert colour): a thin film reddens, a thick one is dark.
 //
-// `wet.look.w` says what is drawn: 1 an organ, 0 a rope of bowel out of the belly (its picture its own, its blood the
-// corners' alpha).
+// `wet.look.w` says what is drawn: 1 an organ, 2 the brain (an organ with its folds), 0 a rope of bowel out of the belly
+// (its picture its own, its blood the corners' alpha).
 
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -81,7 +81,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         albedo = mix(albedo, vec3(0.62, 0.36, 0.09), fatty);
         albedo = mix(albedo, vec3(0.2, 0.012, 0.01), clamp(vessel, 0.0, 0.85));
         // A fine unevenness (and the vessels standing a little proud) bending the light: a few tenths of a millimetre.
-        let h = (mid * 0.6 + fine * 0.25 + vessel * 0.4 + fatty * 0.6) * 0.0003;
+        var h = (mid * 0.6 + fine * 0.25 + vessel * 0.4 + fatty * 0.6) * 0.0003;
+        if wet.look.w > 1.5 {
+            // The brain's surface folded into gyri, each a centimetre or so across, winding, with the sulci between them
+            // narrow, dark and deep, the pia's larger vessels lying along them (the anatomy's cerebrum is only its lobes,
+            // smooth: the folds are drawn here, a relief of two millimetres bending the light).
+            let warp = vec3(wet_noise(p * 25.0), wet_noise(p * 25.0 + 4.3), wet_noise(p * 25.0 + 9.1)) * 0.9;
+            let fold = abs(wet_noise(p * 55.0 + warp) * 2.0 - 1.0) * fade(110.0, px) + 0.5 * (1.0 - fade(110.0, px));
+            let groove = 1.0 - smoothstep(0.03, 0.2, fold);
+            albedo = mix(albedo, albedo * vec3(0.45, 0.3, 0.3), groove * 0.85);
+            albedo = mix(albedo, vec3(0.3, 0.02, 0.02), smoothstep(0.0, 0.05, 0.05 - fold) * 0.6);
+            h += smoothstep(0.0, 0.35, fold) * 0.002;
+        }
         pbr_input.material.base_color = vec4(blood_over(albedo, mm, 1.0), 1.0);
         pbr_input.N = bent(pbr_input.N, in.world_position.xyz, h);
     }

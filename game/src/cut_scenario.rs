@@ -197,6 +197,7 @@ pub fn stumps(views: bool) -> Vec<Step> {
                 Some(format!("{:?}", npc.hurt.dressings[d].covers).split_whitespace().next().unwrap_or("").to_string())
             }).flatten();
             let after = flow(w);
+            info!("dressed {name}: {kind:?}, {:.2} -> {:.2} ml/s", before * 1000.0, after * 1000.0);
             log(w, json!({ "event": "dressed", "stump": name, "covers": kind, "flow_ml_s_before": before * 1000.0, "flow_ml_s_after": after * 1000.0 }));
         }
     })));
@@ -215,6 +216,7 @@ pub fn stumps(views: bool) -> Vec<Step> {
                 let held: f32 = npc.hurt.dressings.iter().filter(|d| d.mark.rest.distance(end) < 0.08).map(|d| d.held).sum();
                 (flow, held)
             }).unwrap_or((0.0, 0.0));
+            info!("ten seconds dressed {name}: {:.2} ml/s, {held:.0} ml in the gauze", flow * 1000.0);
             log(w, json!({ "event": "ten seconds dressed", "stump": name, "flow_ml_s": flow * 1000.0, "gauze_ml": held }));
         }
     })));

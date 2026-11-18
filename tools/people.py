@@ -76,12 +76,13 @@ CAST = {
         'erase': {'male_casualsuit02': [{'box': [0.49, 0.1, 0.63, 0.235], 'by': 0.14}]},
     },
     # A man in his forties with nothing on. The skin is jartur69's middle-aged man painted with his body hair, beard
-    # stubble and genitals (skins02, CC0); the genitals' shape is MakeHuman's own genital helper on its base mesh
-    # (CC0), smoothed (`genitals`), and wears the picture's genital islands.
+    # stubble and genitals (skins02, CC0), and his head shaved to the stubble it paints (no hair over it); the genitals'
+    # shape is MakeHuman's own genital helper on its base mesh (CC0), smoothed (`genitals`), and wears the picture's
+    # genital islands.
     'naked': {
         'body': {'gender': 1.0, 'age': 0.6, 'muscle': 0.52, 'weight': 0.58, 'height': 0.5},
         'skin': 'jartur69_middleage_slavic_male_with_genitals_and_beard', 'eyes': 'bluegreen', 'brows': 'eyebrow003',
-        'lashes': 'eyelashes01', 'hair': 'short03', 'wears': [], 'genitals': True,
+        'lashes': 'eyelashes01', 'hair': None, 'wears': [], 'genitals': True,
     },
 }
 
@@ -582,6 +583,8 @@ def genitals(body, faces, weights, bones):
     for _ in range(2):
         step, quads = catmull_clark(mix.shape[0], quads)
         mix = step @ mix
+    # (Each step makes four of each quad, and every new corner a mix of old ones that comes to one.)
+    assert len(quads) == len(helper) * 16 and np.allclose(mix.sum(axis=1), 1.0)
     pos = mix @ body[ids]
     dense = np.zeros((len(ids), bones))
     for i, v in enumerate(ids):
