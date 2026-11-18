@@ -515,6 +515,26 @@ impl<'a> Npc<'a> {
         (best, d)
     }
 
+    // The segment a bone's flesh moves with: its own, or the nearest one it hangs from (ragdoll.rs `segments`).
+    pub fn segment_of_bone(&self, bone: usize) -> Option<usize> {
+        let bones = &self.person.body.bones;
+        let mut at = Some(bone);
+        while let Some(b) = at {
+            if let Some(k) = self.person.segments.iter().position(|s| s.bone == b) {
+                return Some(k);
+            }
+            at = bones[b].parent;
+        }
+        None
+    }
+
+    // The part a blow at `point` going `dir` struck: the one the skin there moves with, not the nearest shape (a chin is
+    // nearer the chest's box than the head's ball); the nearest if no skin is found there.
+    pub fn struck(&mut self, point: Vec3, dir: Vec3) -> Option<usize> {
+        let skin = self.surface(point - dir * 0.25, dir, 0.5, false).into_iter().find(|h| h.kind == Kind::Skin);
+        skin.and_then(|s| self.segment_of_bone(s.owner)).or(self.nearest(point).0)
+    }
+
     pub fn nearest_name(&self, at: Vec3) -> Option<&str> {
         self.nearest(at).0.map(|k| self.person.segments[k].name.as_str())
     }

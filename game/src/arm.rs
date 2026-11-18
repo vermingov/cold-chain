@@ -30,7 +30,7 @@ use crate::rng::Rng;
 use crate::weapons::e;
 
 // Where the shoulder is from the eye, in metres: out to its own side, down, and forward (the TS's eye frame).
-const SHOULDER: [f32; 3] = [0.17, 0.24, -0.02];
+pub const SHOULDER: [f32; 3] = [0.17, 0.24, -0.02];
 // The elbow hangs down and out from the line between shoulder and wrist: out, down, forward.
 const ELBOW_HANGS: [f32; 3] = [0.5, 1.0, -0.3];
 // Where the elbow goes round the line from shoulder to wrist is wherever leaves the wrist straightest: the forearm comes

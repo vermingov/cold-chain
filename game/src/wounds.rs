@@ -744,9 +744,9 @@ pub enum Tool {
 pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) -> f32 {
     let pain = npc.vitals.pain;
     let first = npc.vitals.bleeds.len();
-    let seg = npc.nearest(point).0;
-    let name = seg.map_or("chest".to_string(), |k| npc.person.segments[k].name.clone());
+    let seg = npc.struck(point, dir);
     let skin = npc.surface(point - dir * 0.25, dir, 0.5, false).into_iter().find(|h| h.kind == Kind::Skin);
+    let name = seg.map_or("chest".to_string(), |k| npc.person.segments[k].name.clone());
     let energy = 0.5 * mass * speed * speed;
     let base = base_of(&name).to_string();
     // The bone first in its way takes the force the flesh over it lets through (bones.rs); the soft parts take the energy.

@@ -738,7 +738,8 @@ pub struct Crossing {
 // The first skin or clothes of `npc` the line from `o` along `d` crosses within `far` (npc.surface).
 pub fn surface(npc: &mut Npc, o: Vec3, d: Vec3, far: f32) -> Option<Crossing> {
     let c = npc.surface(o, d, far, false).into_iter().find(|h| matches!(h.kind, npc::Kind::Skin | npc::Kind::Cloth))?;
-    Some(Crossing { point: c.point, t: c.t, segment: npc.nearest(c.point).0.unwrap_or(0) })
+    let segment = npc.struck(c.point, d).unwrap_or(0);
+    Some(Crossing { point: c.point, t: c.t, segment })
 }
 
 // What a missile did (wounds.rs Pierced): whether it went in, stopped in there, where it ended or came out, with what
@@ -781,7 +782,7 @@ fn pierce_with(cx: &mut Cx, who: Entity, origin: Vec3, dir: Vec3, m: &Missile, f
 fn blow(cx: &mut Cx, who: Entity, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: Option<Tool>) {
     let (force, seg) = cx.npc(who, |n| {
         let force = wounds::blow(n, point, dir, mass, speed, tool.map(Tool::wounds));
-        (force, n.nearest(point).0.map(|k| n.person.segments[k].name.clone()))
+        (force, n.struck(point, dir).map(|k| n.person.segments[k].name.clone()))
     }).unzip();
     let label = cx.label(who);
     cx.weapons.log.push(json!({ "hit": "blow", "person": label, "segment": seg.flatten(), "point": point.to_array(), "dir": dir.to_array(), "mass": mass,
@@ -3222,7 +3223,27 @@ pub fn blasts() -> Vec<crate::scenario::Step> {
             Some((n, part)) => s.push(Step::Do(Box::new(move |w: &mut World| {
                 crate::warm::aim(w, n, part, far);
             }))),
-            None => s.push(stand(2.25 + far, 2.2, [-3.0, 1.3, 2.2], 1.65)),
+            // The barrel on the line through the chests of the last two (the hooded man's, the young man's), the eye
+            // `far` back from the last along it: through him and on into the next. (The barrel is held off the eye's
+            // line, some 9 cm right and 6 up of it: side on and close, a look at his chest put the shot beside him; and
+            // a fixed point down the room left the line beside him or not as he stood.)
+            None => s.push(Step::Do(Box::new(move |w: &mut World| {
+                let chest = |w: &mut World, n| crate::warm::aim(w, n, "chest", 0.0).map(|(_, at)| at);
+                let (Some(end), Some(next)) = (chest(w, 3), chest(w, 2)) else { return };
+                let muzzle = {
+                    let hand = w.resource::<Hand>();
+                    hand.anchors.get("shotgun").map_or(Vec3::new(0.0, 0.0, -1.25), |a| hand.local.transform_point(a.tip))
+                };
+                let along = (next - end).normalize();
+                let look = Transform::default().looking_to(along, Vec3::Y);
+                let eye = end - along * far - look.rotation * Vec3::new(muzzle.x, muzzle.y, 0.0);
+                w.resource_scope(|w, map: Mut<crate::map::Map>| {
+                    let ground = map.ground(eye.x, eye.z, f32::INFINITY);
+                    for mut p in w.query::<&mut Player>().iter_mut(w) {
+                        p.spawn(&map, eye.x, eye.z, Some(eye + along), eye.y - ground);
+                    }
+                });
+            }))),
         }
         s.push(Step::Wait(30));
         s.push(Step::Do(Box::new(|w: &mut World| {
@@ -3242,17 +3263,18 @@ pub fn blasts() -> Vec<crate::scenario::Step> {
         s.push(Step::Do(Box::new(move |w: &mut World| {
             crate::warm::take(w, key);
             let Some((who, head)) = crate::warm::aim(w, 2, "head", 0.5) else { return };
-            // The top of the head: its segment's far end, the cap's radius over it.
-            let top = w.get::<crate::ragdoll::Ragdoll>(who).and_then(|rd| {
-                let k = rd.segs.iter().position(|s| s.def.name == "head")?;
-                Some(rd.segment_ends(k)[1].y)
-            }).unwrap_or(head.y + 0.12);
+            // The top of the head: the scalp, straight down onto it from over the neck. (Its segment's far end is some 20
+            // cm under it: looking 6 cm over that was looking them in the eye.)
+            let top = crate::npc::with(w, who, |n| {
+                let skin = n.surface(head + Vec3::Y * 0.6, Vec3::NEG_Y, 0.6, false).into_iter().find(|h| h.kind == crate::npc::Kind::Skin);
+                skin.map(|c| c.point.y)
+            }).flatten().unwrap_or(head.y + 0.25);
             w.resource_scope(|w, map: Mut<crate::map::Map>| {
                 for mut p in w.query::<&mut Player>().iter_mut(w) {
                     p.spawn(&map, head.x, head.z + 0.5, Some(Vec3::new(head.x, top + 0.06, head.z)), 1.65);
                 }
             });
-            crate::scenario::log(w, json!({ "event": "over a head", "what": key, "aimed_over_by": 0.06, "top": top }));
+            crate::scenario::log(w, json!({ "event": "over a head", "what": key, "aimed_over_by": 0.06, "top": top, "neck": head.to_array() }));
         })));
         s.push(Step::Wait(40));
         s.push(Step::Do(Box::new(|w: &mut World| {
