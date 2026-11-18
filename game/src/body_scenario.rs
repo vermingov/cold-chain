@@ -94,8 +94,8 @@ fn watch(s: &mut Vec<Step>, tag: &'static str, n: usize, frames: u32, every: u32
     }
 }
 
-// The muzzle (or point) of what is held in the world, the way it points, and the first skin of anyone along it from 30 cm
-// behind the muzzle: how far the muzzle is off that skin (less than nothing: in it).
+// The muzzle (or point) of what is held in the world, the way it points, and the first skin of anyone along it from a
+// metre behind the muzzle: how far the muzzle is off that skin (less than nothing: in it).
 fn muzzle(w: &mut World, tag: &str) {
     let key = w.resource::<Weapons>().arm().key;
     let eye = *w.query_filtered::<&Transform, With<Player>>().iter(w).next().unwrap();
@@ -107,13 +107,22 @@ fn muzzle(w: &mut World, tag: &str) {
     let mut skin: Option<(f32, String)> = None;
     for e in people(w) {
         let label = w.get::<Person>(e).unwrap().label.clone();
-        if let Some(c) = crate::npc::with(w, e, |n| crate::weapons::surface(n, at - dir * 0.3, dir, 1.0)).flatten() {
-            if skin.as_ref().is_none_or(|s| c.t - 0.3 < s.0) {
-                skin = Some((c.t - 0.3, label));
+        if let Some(c) = crate::npc::with(w, e, |n| crate::weapons::surface(n, at - dir * 1.0, dir, 2.0)).flatten() {
+            if skin.as_ref().is_none_or(|s| c.t - 1.0 < s.0) {
+                skin = Some((c.t - 1.0, label));
             }
         }
     }
-    log(w, json!({ "event": "muzzle", "tag": tag, "key": key, "at": at.to_array(), "dir": dir.to_array(), "skin_ahead": skin.map(|s| json!([s.0, s.1])),
+    // (And how far the muzzle is outside the nearest segment's collider, of whom: the shapes it is kept out of.)
+    let mut outside: Option<(f32, String)> = None;
+    for e in people(w) {
+        let Some(rd) = w.get::<Ragdoll>(e) else { continue };
+        let (k, d) = rd.nearest(at);
+        if outside.as_ref().is_none_or(|o| d < o.0) {
+            outside = Some((d, rd.segs[k].def.name.clone()));
+        }
+    }
+    log(w, json!({ "event": "muzzle", "tag": tag, "key": key, "at": at.to_array(), "dir": dir.to_array(), "skin_ahead": skin.map(|s| json!([s.0, s.1])), "outside": outside.map(|o| json!([o.0, o.1])),
                     "back": back, "tilt": tilt }));
 }
 
@@ -136,7 +145,7 @@ fn act(a: Act) -> Step {
 fn side(s: &mut Vec<Step>, name: String) {
     let off = Transform::from_xyz(0.7, 0.0, -0.25).looking_at(Vec3::new(0.0, -0.15, -0.55), Vec3::Y);
     s.push(Step::Do(Box::new(move |w: &mut World| w.resource_mut::<crate::weapons::Aside>().0 = Some(off))));
-    s.push(Step::Wait(1));
+    s.push(Step::Wait(3));
     s.push(Step::Shot(name));
     s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::weapons::Aside>().0 = None)));
 }
@@ -183,7 +192,7 @@ pub fn steps(name: &str) -> Vec<Step> {
                 let off = Transform::from_xyz(1.6, 0.0, 0.6).looking_at(Vec3::new(0.0, -0.6, -0.6), Vec3::Y);
                 w.resource_mut::<crate::weapons::Aside>().0 = Some(off);
             })));
-            s.push(Step::Wait(1));
+            s.push(Step::Wait(3));
             s.push(Step::Shot("push_side".into()));
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<crate::weapons::Aside>().0 = None)));
             s.push(keys(&[], &[W]));
@@ -202,16 +211,29 @@ pub fn steps(name: &str) -> Vec<Step> {
                 s.push(Step::Do(Box::new(|w: &mut World| muzzle(w, "chest: walking in"))));
             }
             s.push(keys(&[], &[W]));
-            s.push(Step::Wait(10));
+            // Looked down at his breastbone, as a player pressing a gun to a chest would (the gun is aimed where the eye
+            // looks): the bore comes down onto it.
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let who = people(w)[1];
+                let rd = w.get::<Ragdoll>(who).unwrap();
+                let chest = rd.middle(rd.by_name("chest"));
+                for mut p in w.query::<&mut Player>().iter_mut(w) {
+                    let eye = p.eye().translation;
+                    let d = chest - eye;
+                    p.pitch = d.y.atan2(d.x.hypot(d.z));
+                }
+            })));
+            s.push(Step::Wait(30));
             s.push(Step::Do(Box::new(|w: &mut World| muzzle(w, "chest: pressed"))));
             s.push(note("chest: pressed", 1));
             s.push(Step::Shot("press_chest".into()));
             side(&mut s, "press_chest_side".into());
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Weapons>().log.clear())));
+            s.push(Step::Wait(1));
             s.push(act(Act::Press(0)));
             s.push(Step::Wait(1));
             s.push(act(Act::Release(0)));
-            s.push(Step::Do(Box::new(|w: &mut World| muzzle(w, "chest: fired"))));
+            s.push(Step::Wait(3));
             s.push(hits("chest: fired"));
             s.push(Step::Wait(20));
             s.push(Step::Shot("press_chest_fired".into()));
@@ -229,9 +251,11 @@ pub fn steps(name: &str) -> Vec<Step> {
             s.push(Step::Shot("press_wall".into()));
             side(&mut s, "press_wall_side".into());
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Weapons>().log.clear())));
+            s.push(Step::Wait(1));
             s.push(act(Act::Press(0)));
             s.push(Step::Wait(1));
             s.push(act(Act::Release(0)));
+            s.push(Step::Wait(3));
             s.push(hits("wall: fired"));
             s.push(Step::Wait(20));
             // The rifle walked into the wall: pulled back, then the muzzle down.

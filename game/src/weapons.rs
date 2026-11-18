@@ -399,6 +399,7 @@ const FILM: f32 = 0.00003;
 const SMEAR: f32 = 0.00001;
 const DRIES: f32 = 300.0; // seconds for blood on the blade to go from wet red to dull brown (a thin film: an estimate)
 const FRAGMENTS: f32 = 1000.0; // an M67's body breaks into roughly this many that can wound
+const IN_BARREL: f32 = 0.04; // m: how far inside the muzzle a shot is followed from (`fire`)
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum How {
@@ -819,8 +820,9 @@ pub struct Hand {
     pub clock: f32,
     // The look's turn as the hands lag it: last yaw and pitch (the TS's signs), and their rates eased.
     pub lag: [f32; 4],
-    // Each thing's box in the hand's frame (`measure`), and how far it is pulled back toward the chest (m) and turned
+    // Each thing's hull and box in the hand's frame (`measure`), and how far it is pulled back toward the chest (m) and turned
     // aside (rad) out of what it is held against (`clear_of`), and what that is and where, if it is someone's segment.
+    pub shapes: HashMap<&'static str, Collider>,
     pub boxes: HashMap<&'static str, (Vec3, Vec3)>,
     pub back: f32,
     pub tilt: f32,
@@ -990,8 +992,9 @@ struct Leg {
 // shot, its first leg already worked out, or not.
 fn shot_from(cx: &mut Cx, mut from: Vec3, mut dir: Vec3, m: Missile, skips: f32, mut first: Option<Leg>) {
     let mut origin = from;
-    // (How far it has come from the muzzle before `from`: the legs before a skip off the floor.)
-    let mut gone = 0.0;
+    // (How far it has come from the muzzle before `from`: the legs before a skip off the floor; less than nothing for a
+    // shot followed from inside the barrel, `fire`'s.)
+    let mut gone = m.muzzle;
     let mut energy = m.energy;
     for _ in 0..6 {
         if energy <= 15.0 {
@@ -1061,7 +1064,10 @@ fn fire(cx: &mut Cx, key: &'static str) {
     *cx.weapons.ammo.get_mut(key).unwrap() -= 1;
     cx.weapons.busy = gun.every;
     cx.weapons.recoil = 1.0;
-    let (from, ahead) = cx.bore(key);
+    let (muzzle, ahead) = cx.bore(key);
+    // (Followed from a few centimetres inside the barrel: a muzzle pressed into someone sinks a little into the give of
+    // their clothes and skin, and the line from it would begin inside them and miss the way in.)
+    let from = cx.before_wall(muzzle - ahead * IN_BARREL);
     // A shotgun's charge flies as one mass for the first metre or so before the pellets part: up to about 1.2 m it makes
     // one round hole 2 to 2.5 cm across and goes in as a single heavy missile, wrecking everything along a wide track
     // (dev/research/wounds.md). Further off, the pellets go their own ways.
@@ -1075,12 +1081,12 @@ fn fire(cx: &mut Cx, key: &'static str) {
             let n = gun.pellets as f32;
             let slug = Missile { name: "charge", energy: gun.m.energy * n * (1.0 - off * 0.1), mass: gun.m.mass * n, calibre: if off < 0.6 { 0.022 } else { 0.026 },
                                  channel: 0.024, soft: 42.0, hard: 120.0, ..gun.m };
-            shot(cx, from, dir, slug, 0.0);
+            shot(cx, from, dir, Missile { muzzle: -IN_BARREL, ..slug }, 0.0);
         }
         _ => {
             for _ in 0..gun.pellets {
                 let dir = jitter(&mut cx.rng, ahead, gun.spread);
-                shot(cx, from, dir, Missile { name: if gun.pellets > 1 { "pellet" } else { "bullet" }, ..gun.m }, gun.skips);
+                shot(cx, from, dir, Missile { name: if gun.pellets > 1 { "pellet" } else { "bullet" }, muzzle: -IN_BARREL, ..gun.m }, gun.skips);
             }
         }
     }
@@ -2249,17 +2255,19 @@ pub fn animate(
     // someone. Pressed against someone it pushes them, with what arms holding a thing out give: a little.
     let (mut back, mut tilt) = (0.0, 0.0);
     hand.against = None;
-    if let (Some(&bounds), Ok(ctx)) = (hand.boxes.get(key), rapier.single()) {
+    if let (Some(shape), Some(&bounds), Ok(ctx)) = (hand.shapes.get(key), hand.boxes.get(key), rapier.single()) {
         segments.clear();
         for (who, rd) in &ragdolls {
             segments.extend(rd.segs.iter().enumerate().map(|(k, s)| (s.entity, (who, k))));
         }
         let people = weapons.action.is_none() && a.kind != Kind::Dress;
-        // (As far back as the arms take it: a handgun held out to the chest, a long gun's stock no further into the shoulder.)
-        let most = (h.at[2] - 0.26).clamp(0.04, 0.24);
+        // (As far back as the arms take it: what is held out in the hands to some 12 cm ahead of the eye, against the chest;
+        // a long gun's stock no further into the shoulder than a few centimetres.)
+        let long = a.gun.is_some() && h.at[2] < 0.4;
+        let most = if long { 0.06 } else { (h.at[2] - 0.12).clamp(0.04, 0.4) };
         let sign = if a.gun.is_some() { 1.0 } else { -1.0 };
         let met;
-        (back, tilt, met) = clear_of(&ctx, people.then_some(&*segments), eye, pos, q, bounds, most, sign);
+        (back, tilt, met) = clear_of(&ctx, people.then_some(&*segments), eye, pos, q, shape, bounds, most, sign);
         if let Some((e, at)) = met.filter(|_| back > 0.002) {
             if let Some(&(who, k)) = segments.get(&e) {
                 hand.against = Some((who, at));
@@ -2275,7 +2283,9 @@ pub fn animate(
     hand.back = back.max(hand.back + (back - hand.back) * out);
     hand.tilt = tilt.max(hand.tilt + (tilt - hand.tilt) * out);
     pos.z -= hand.back;
-    q *= euler(Vec3::new(if a.gun.is_some() { hand.tilt } else { -hand.tilt }, 0.0, 0.0));
+    if let Some(&bounds) = hand.boxes.get(key) {
+        (pos, q) = tilted(pos, q, bounds, if a.gun.is_some() { hand.tilt } else { -hand.tilt });
+    }
     hand.local = Transform { translation: e(pos), rotation: ts_turn(q), scale: Vec3::ONE };
     if let Some(he) = hand.entity {
         if let Ok(mut t) = transforms.get_mut(he) {
@@ -2302,26 +2312,24 @@ pub fn animate(
     }
 }
 
-// How far a thing held at `pos`, turned `q` (the TS's eye frame), with its box `bounds` in the hand's frame, has to be
+// How far a thing held at `pos`, turned `q` (the TS's eye frame), with its hull `shape` and box `bounds` in the hand's frame, has to be
 // pulled back toward the eye to be clear of the room and (given their segments' colliders) people, at most `most`
-// metres; past that, how far it is turned about its grip as well (`sign`: down, or up). Its box is swept from the most it
+// metres; past that, how far it is turned as well (`tilted`; `sign`: down, or up). Its box is swept from the most it
 // can be pulled back to where it is wanted, and stopped where it first touches; and what it touched, if anything, and
 // where.
 #[allow(clippy::too_many_arguments)]
-fn clear_of(ctx: &RapierContext, people: Option<&HashMap<Entity, (Entity, usize)>>, eye: &Transform, pos: Vec3, q: Quat, bounds: (Vec3, Vec3), most: f32,
-         sign: f32) -> (f32, f32, Option<(Entity, Vec3)>) {
+fn clear_of(ctx: &RapierContext, people: Option<&HashMap<Entity, (Entity, usize)>>, eye: &Transform, pos: Vec3, q: Quat, shape: &Collider, bounds: (Vec3, Vec3),
+            most: f32, sign: f32) -> (f32, f32, Option<(Entity, Vec3)>) {
     let ahead = eye.forward().as_vec3();
-    let (lo, hi) = bounds;
-    let half = (hi - lo) / 2.0;
-    let shape = Collider::cuboid(half.x, half.y, half.z);
     let walls = QueryFilter::only_fixed().groups(CollisionGroups::new(Group::ALL, WORLD));
     let opts = ShapeCastOptions { stop_at_penetration: true, ..ShapeCastOptions::with_max_time_of_impact(most) };
     let mut tilt = 0.0;
     loop {
-        let hand = eye.mul_transform(Transform { translation: e(pos - Vec3::Z * most), rotation: ts_turn(q * euler(Vec3::new(sign * tilt, 0.0, 0.0))), scale: Vec3::ONE });
-        let (at, turn) = (hand.transform_point((lo + hi) / 2.0), hand.rotation);
+        let (at, turned) = tilted(pos - Vec3::Z * most, q, bounds, sign * tilt);
+        let hand = eye.mul_transform(Transform { translation: e(at), rotation: ts_turn(turned), scale: Vec3::ONE });
+        let (at, turn) = (hand.translation, hand.rotation);
         let theirs = |e: Entity, _: &bevy_rapier3d::rapier::geometry::Collider| people.is_some_and(|p| p.contains_key(&e));
-        let hit = [ctx.cast_shape(at, turn, ahead, &shape, opts, walls), people.and_then(|_| ctx.cast_shape(at, turn, ahead, &shape, opts, QueryFilter::only_dynamic().predicate(&theirs)))]
+        let hit = [ctx.cast_shape(at, turn, ahead, shape, opts, walls), people.and_then(|_| ctx.cast_shape(at, turn, ahead, shape, opts, QueryFilter::only_dynamic().predicate(&theirs)))]
             .into_iter()
             .flatten()
             .min_by(|a, b| a.1.time_of_impact.total_cmp(&b.1.time_of_impact));
@@ -2334,32 +2342,43 @@ fn clear_of(ctx: &RapierContext, people: Option<&HashMap<Entity, (Entity, usize)
     }
 }
 
-// Each held thing's box in the hand's frame, once its scene is in: what `clear_of` keeps out of walls and people.
-fn measure(mut hand: ResMut<Hand>, children: Query<&Children>, globals: Query<&GlobalTransform>, aabbs: Query<&bevy::camera::primitives::Aabb>) {
+// A thing held at `pos`, turned `q` (the TS's eye frame), turned `by` more about its width at the back of its box (a long
+// gun's butt in the shoulder, a blade's pommel), muzzle or point down for more than nothing: where its hand is then, and
+// its turn.
+fn tilted(pos: Vec3, q: Quat, (lo, hi): (Vec3, Vec3), by: f32) -> (Vec3, Quat) {
+    let turned = q * euler(Vec3::new(by, 0.0, 0.0));
+    let pivot = e(Vec3::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0, hi.z));
+    (pos + q * pivot - turned * pivot, turned)
+}
+
+// Each held thing's shape in the hand's frame, once its scene is in: the hull round its meshes (what `clear_of` keeps out
+// of walls and people) and its box.
+fn measure(mut hand: ResMut<Hand>, children: Query<&Children>, globals: Query<&GlobalTransform>, mesh3d: Query<&Mesh3d>, meshes: Res<Assets<Mesh>>) {
     let Some(he) = hand.entity else { return };
     let Ok(hg) = globals.get(he) else { return };
     let home = hg.affine().inverse();
     let mut found = Vec::new();
-    for (&key, &root) in &hand.models {
-        if hand.boxes.contains_key(key) {
+    'models: for (&key, &root) in &hand.models {
+        if hand.shapes.contains_key(key) {
             continue;
         }
-        let (mut lo, mut hi) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+        let mut points = Vec::new();
         for d in children.iter_descendants(root) {
-            let (Ok(b), Ok(g)) = (aabbs.get(d), globals.get(d)) else { continue };
+            let (Ok(m), Ok(g)) = (mesh3d.get(d), globals.get(d)) else { continue };
+            let Some(mesh) = meshes.get(&m.0) else { continue 'models };
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(ps)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { continue };
             let to_hand = home * g.affine();
-            for k in 0..8 {
-                let corner = Vec3::from(b.center) + Vec3::from(b.half_extents) * Vec3::new([-1.0, 1.0][k & 1], [-1.0, 1.0][(k >> 1) & 1], [-1.0, 1.0][k >> 2]);
-                let p = to_hand.transform_point3(corner);
-                lo = lo.min(p);
-                hi = hi.max(p);
-            }
+            points.extend(ps.iter().map(|p| to_hand.transform_point3(Vec3::from(*p))));
         }
-        if lo.x.is_finite() {
-            found.push((key, (lo, hi)));
-        }
+        let Some(hull) = Collider::convex_hull(&points) else { continue };
+        let lo = points.iter().fold(Vec3::INFINITY, |a, p| a.min(*p));
+        let hi = points.iter().fold(Vec3::NEG_INFINITY, |a, p| a.max(*p));
+        found.push((key, hull, (lo, hi)));
     }
-    hand.boxes.extend(found);
+    for (key, hull, bounds) in found {
+        hand.shapes.insert(key, hull);
+        hand.boxes.insert(key, bounds);
+    }
 }
 
 // A gun turned so that its bore, from where it is held at `at`, runs to the point AIMED metres ahead of the eye (TS frame).
