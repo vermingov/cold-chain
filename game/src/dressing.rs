@@ -245,6 +245,9 @@ pub enum Covers {
     Wrap { a: Vec3, axis: Vec3, low: f32, high: f32, far: f32 },
     // A bandage round the head, its middle plane through `mid` square to `m`, round the skull's middle `o`.
     Band { mid: Vec3, m: Vec3, o: Vec3 },
+    // Over the end of a stump, the cut through `c` square to `n` (away from the body), and wound round the stump from the
+    // end back up it by a roll's width: `r` is how far out the stump's skin is round the middle of its end.
+    Stump { c: Vec3, n: Vec3, r: f32 },
 }
 
 impl Covers {
@@ -259,6 +262,10 @@ impl Covers {
                 p > low - 0.01 && p < high + 0.01 && (r - a - axis * p).length() < far
             }
             Covers::Band { mid, m, o } => (r - mid).dot(m).abs() < BAND / 2.0 + 0.01 && r.distance(o) < 0.16,
+            Covers::Stump { c, n, r: out } => {
+                let along = (r - c).dot(n);
+                along > -ROLL - 0.01 && along < 0.03 && (r - c - n * along).length() < out * 1.45 + 0.02
+            }
         }
     }
 }
@@ -389,6 +396,12 @@ impl Npc<'_> {
             at = body.bones[b].parent;
         }
         let make = |kind, covers, per: f32, area: f32| Some(Dressing { mark: mark.clone(), kind, covers, per, capacity: area * 1e4 * per, held: 0.0, since: 0.0, seen: None, off: false });
+        // A stump's end (the bleeding out of its cut face): the gauze over the end and wound back up the stump, as a stump
+        // is dressed.
+        if let Some(&(c, n, r)) = self.hurt.stumps.iter().find(|(c, n, r)| (mark.rest - *c).dot(*n).abs() < 0.012 && mark.rest.distance(*c) < r * 1.5) {
+            let round = 2.0 * std::f32::consts::PI * (r + lift);
+            return make("wrap", Covers::Stump { c, n, r }, GAUZE_WRAP, round * ROLL + std::f32::consts::PI * r * r);
+        }
         match region {
             Some("face") | Some("neck") => {
                 let (ex, ey) = frame(mark.rest_normal);
@@ -637,7 +650,11 @@ pub struct Gauze {
 // skin by `lift` and more over the wound where the pad is folded thick. (None for a bandage round the head.)
 // shortcut: a face or neck pad is laid as a pad anywhere is (dressing.ts _head bridged the eye's hollow and wound the
 // scalp's bandage round the head: not drawn here yet).
-pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize) -> Option<Gauze> {
+//
+// `flesh` is the person's own skin once a limb has come off (flesh.rs): the gauze is laid on what is left of it, carried
+// by the bones that carry it now. (Laid on the file's skin, a dressing on a stump took the skin that went with the piece,
+// still carried by the piece's bones, and stretched out to wherever the piece lay.)
+pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize, flesh: Option<&crate::flesh::Flesh>) -> Option<Gauze> {
     let lift = 0.0028 + layer as f32 * 0.003;
     let mark = &d.mark;
     // Each corner of the skin: on it (where on the dressing, x and y in metres, its lifted place and its normal), or not.
@@ -645,6 +662,7 @@ pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize) -> Option<G
     let layout: Vec4;
     let opening;
     let pad = matches!(d.covers, Covers::Pad { .. });
+    let mut end = None;
     match d.covers {
         Covers::Pad { c, n, ex, ey, side } => {
             // A pad, square on the skin, centred on the wound, its sides along the body and across it; thickest in the
@@ -707,13 +725,58 @@ pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize) -> Option<G
                 Some((x, p - p0, q + nv * (lift + thick), nv))
             });
         }
+        Covers::Stump { c, n, r } => {
+            // Round the stump from its end back up it, the end itself covered by the gauze folded over it (`end` below).
+            // The picture's y runs up the stump from its end's rim (-r) and, over the end, from the middle of it (0), so
+            // the blood spreads from the middle out over the end and on up.
+            let e0 = n.cross(if n.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
+            let e1 = n.cross(e0);
+            let round = std::f32::consts::TAU * (r + lift);
+            layout = Vec4::new(round, ROLL + 2.0 * r + 0.03, -round / 2.0, -r - ROLL - 0.015);
+            opening = (c - n * (ROLL / 2.0), n, r * 1.45 + 0.07, ROLL / 2.0 + 0.02);
+            end = Some((c, n, e0, e1, r));
+            place = Box::new(move |v| {
+                let q = body.position[v];
+                let along = (q - c).dot(n);
+                if !(-ROLL..=0.0).contains(&along) {
+                    return None;
+                }
+                let o = q - c - n * along;
+                let rr = o.length();
+                if rr > r * 1.45 + 0.02 || rr < r * 0.3 {
+                    return None;
+                }
+                let radial = o / rr;
+                let mut nv = body.normal[v];
+                if nv.dot(radial) < 0.0 {
+                    nv = -nv;
+                }
+                if nv.dot(radial) < 0.2 {
+                    return None;
+                }
+                Some((o.dot(e1).atan2(o.dot(e0)) * (r + lift), along - r, q + nv * lift, nv))
+            });
+        }
         Covers::Band { .. } => return None,
     }
     let (mut pos, mut nor, mut uv, mut joints, mut weights, mut rest) = (vec![], vec![], vec![], vec![], vec![], vec![]);
     let mut done: std::collections::HashMap<usize, Option<(f32, f32, Vec3, Vec3)>> = std::collections::HashMap::new();
+    let index = flesh.map_or(&body.index, |f| &f.drawn);
+    let carried = |v: usize| match flesh {
+        Some(f) => (f.joints[v], f.weights[v]),
+        None => (body.joints[v], body.weights[v].map(|w| w as f32 / 255.0)),
+    };
     for part in body.parts.iter().filter(|p| p.kind == "skin") {
         for t in (part.index_start..part.index_start + part.index_count).step_by(3) {
-            let tri = [0, 1, 2].map(|k| body.index[t + k] as usize);
+            let tri = [0, 1, 2].map(|k| index[t + k] as usize);
+            // (A triangle that went with a piece cut off has its corners made one.)
+            if tri[0] == tri[1] && tri[0] == tri[2] {
+                continue;
+            }
+            // (Nor one the cut runs through, whose corners past it are drawn cut away: the gauze over the end covers there.)
+            if flesh.is_some_and(|f| f.planes.iter().any(|pl| tri.iter().any(|&v| (body.position[v] - pl.c).dot(pl.n) > 0.0 && body.position[v].distance(pl.c) < pl.radius))) {
+                continue;
+            }
             let on: Vec<_> = tri.iter().map(|&v| *done.entry(v).or_insert_with(|| place(v))).collect();
             if on.iter().any(Option::is_none) {
                 continue;
@@ -729,9 +792,64 @@ pub fn gauze(body: &crate::person::Body, d: &Dressing, layer: usize) -> Option<G
                 pos.push(at);
                 nor.push(n);
                 uv.push(Vec2::new((xs[k] - layout.z) / layout.x, (y - layout.w) / layout.y));
-                joints.push(body.joints[tri[k]]);
-                weights.push(body.weights[tri[k]].map(|w| w as f32 / 255.0));
+                let (j, w) = carried(tri[k]);
+                joints.push(j);
+                weights.push(w);
                 rest.push(body.position[tri[k]]);
+            }
+        }
+    }
+    // The end of a stump: the gauze folded over it, a low dome from the stump's skin round the end (taken from the skin
+    // there, each way round) over the cut face, carried by the bone the limb hung from.
+    if let Some((c, n, e0, e1, r)) = end {
+        const ROUND: usize = 36;
+        const UP: usize = 6;
+        let mut out = [0.0f32; ROUND];
+        for part in body.parts.iter().filter(|p| p.kind == "skin") {
+            for &q in &body.position[part.vertex_start..part.vertex_start + part.vertex_count] {
+                let along = (q - c).dot(n);
+                let o = q - c - n * along;
+                if (-0.015..=0.0).contains(&along) && o.length() < r * 1.6 {
+                    let a = o.dot(e1).atan2(o.dot(e0)).rem_euclid(std::f32::consts::TAU);
+                    let k = (a / std::f32::consts::TAU * ROUND as f32) as usize % ROUND;
+                    out[k] = out[k].max(o.length());
+                }
+            }
+        }
+        for k in 0..ROUND {
+            if out[k] == 0.0 {
+                out[k] = r;
+            }
+        }
+        let prox = d.mark.owner;
+        let dome = 0.012 + lift;
+        // Rings from 2 cm up the stump, over its rim and in to the middle of the end; each corner where it lies, which way it
+        // faces, and where it is in the picture.
+        let corner = |k: usize, i: i32| -> (Vec3, Vec3, Vec2) {
+            let a = k as f32 / ROUND as f32 * std::f32::consts::TAU;
+            let way = e0 * a.cos() + e1 * a.sin();
+            let rr = out[k % ROUND] + lift;
+            let (p, normal, s) = if i < 0 {
+                (c + way * rr - n * 0.02, way, rr + 0.02)
+            } else {
+                let f = i as f32 / UP as f32 * std::f32::consts::FRAC_PI_2;
+                (c + way * rr * f.cos() + n * dome * f.sin(), (way * f.cos() * dome + n * f.sin() * rr).normalize(), rr * f.cos())
+            };
+            let picture = if i < 0 { Vec2::new(a.sin() * rr, -s) } else { Vec2::new(a.sin() * s, -a.cos() * s) };
+            (p, normal, Vec2::new((picture.x - layout.z) / layout.x, (picture.y - layout.w) / layout.y))
+        };
+        for k in 0..ROUND {
+            for i in -1..UP as i32 {
+                let quad = [corner(k, i), corner(k + 1, i), corner(k + 1, i + 1), corner(k, i + 1)];
+                for t in [0, 1, 2, 0, 2, 3] {
+                    let (p, normal, at) = quad[t];
+                    pos.push(p);
+                    nor.push(normal);
+                    uv.push(at);
+                    joints.push([prox as u16, 0, 0, 0]);
+                    weights.push([1.0, 0.0, 0.0, 0.0]);
+                    rest.push(p);
+                }
             }
         }
     }

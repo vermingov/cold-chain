@@ -1615,7 +1615,7 @@ pub fn scenario() -> Vec<Step> {
         // (Each view waits six frames for the eye to settle: the five are half a second apart.)
         at = t + 0.5;
         s.push(Step::Do(Box::new(move |w: &mut World| tally(w, t))));
-        let x = |i: usize| (i as f32 - 1.5) * 1.5;
+        let x = |i: usize| (i as f32 - (crate::sandbox::BODIES.len() as f32 - 1.0) / 2.0) * 1.5;
         s.extend(view(&format!("blood_{t:03}_femoral"), x(0) - 1.0, 0.6, [x(0), 0.6, 2.2], 1.5));
         s.extend(view(&format!("blood_{t:03}_neck"), x(1) + 0.9, 1.0, [x(1), 0.05, 2.6], 1.6));
         s.extend(view(&format!("blood_{t:03}_chest"), x(2), 0.7, [x(2), 0.9, 2.2], 1.5));

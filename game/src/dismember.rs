@@ -212,6 +212,38 @@ pub struct CutOff {
     pub n: Vec3,
     pub drains: f32,
     pub entities: Vec<Entity>,
+    // Each bone of the body: whether it went with the piece, and whether it is one of the bones of the segment the cut is
+    // in (its flesh past the plane, within `reach` twice over, went too); the limb's reach.
+    pub gone: Vec<bool>,
+    pub near: Vec<bool>,
+    pub reach: f32,
+}
+
+impl CutOff {
+    // Whether a point of the body at rest `p`, carried by bone `bone` before this cut, is on the piece: past the plane
+    // and on the limb (split's test for the skin's corners, for one bone).
+    pub fn on_piece(&self, p: Vec3, bone: usize) -> bool {
+        (p - self.c).dot(self.n) > 0.0 && (self.gone[bone] || (self.near[bone] && p.distance_squared(self.c) < self.reach * self.reach * 4.0))
+    }
+
+    // The bone that carries that point after the cut: on the piece, one of the piece's (its first bone for one of the
+    // body's); on the body, one of the body's (the bone the limb hung from for one of the piece's).
+    pub fn carrier(&self, p: Vec3, bone: usize) -> usize {
+        match (self.on_piece(p, bone), self.gone[bone]) {
+            (true, false) => self.root_bone,
+            (false, true) => self.prox,
+            _ => bone,
+        }
+    }
+}
+
+impl Dismember {
+    // The bone that carries a point of the body at rest, hung from `bone` before any cut, after all of them: what every
+    // mesh skinned to the skeleton is carried by once limbs have come off, so nothing stretches from a stump to its
+    // piece (the x-ray, the dressings; the skin and clothes are cut along the plane besides, flesh.rs).
+    pub fn carrier(&self, p: Vec3, bone: usize) -> usize {
+        self.cuts.iter().fold(bone, |b, cut| cut.carrier(p, b))
+    }
 }
 
 #[derive(Component, Default)]
@@ -500,6 +532,23 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
         state.apply(world);
     });
 
+    // The stump's end, for a dressing put on it: the skin's mean distance from the middle of the cut, on the body's side.
+    {
+        let (mut sum, mut count) = (0.0, 0);
+        for part in body.parts.iter().filter(|p| p.kind == "skin") {
+            for &q in &body.position[part.vertex_start..part.vertex_start + part.vertex_count] {
+                let along = (q - c).dot(n);
+                let out = q - c - n * along;
+                if (-0.02..=0.0).contains(&along) && out.length() < l.reach * 1.5 {
+                    sum += out.length();
+                    count += 1;
+                }
+            }
+        }
+        let r = if count > 0 { sum / count as f32 } else { l.reach * 0.5 };
+        world.get_mut::<Hurt>(who).unwrap().stumps.push((c, n, r));
+    }
+
     // Both ends closed, the blood, the hurt.
     let t_ends = std::time::Instant::now();
     let ends = ends(world, who, body, limb, side, c, n, prox, root_bone, how);
@@ -508,7 +557,8 @@ pub fn sever(world: &mut World, who: Entity, limb: Limb, side: &str, point: Opti
     entities.extend(ends.entities);
     let tip = root_bone;
     let spread = world.get::<Ragdoll>(who).unwrap().segs[root].spread.iter().copied().filter(|&x| x != root_bone).collect();
-    let cut = CutOff { limb, side: side.to_string(), how, root, segs, root_bone, spread, prox, tip, c, n, drains: 0.0, entities };
+    let cut = CutOff { limb, side: side.to_string(), how, root, segs, root_bone, spread, prox, tip, c, n, drains: 0.0, entities, gone, near, reach: l.reach };
+    crate::anatomy::cut(world, who, &cut);
     bleed(world, who, &cut, &ends.vessels, ends.e1, ends.e2, how);
     let death = hurt(world, who, &cut);
     {

@@ -1086,7 +1086,7 @@ fn hurts(mut sound: ResMut<Sound>, people: Query<(Entity, &crate::person::Person
                     if let Some((playing, _)) = saying.0.remove(&e) {
                         playing.cut();
                     }
-                    if let Some(playing) = sound.play(&format!("{kind}-{}", p.body.name), Play { gain: *gain, follow: head, voice: true, ..default() }) {
+                    if let Some(playing) = sound.play(&format!("{kind}-{}", crate::sandbox::voice(&p.body.name)), Play { gain: *gain, follow: head, voice: true, ..default() }) {
                         saying.0.insert(e, (playing, kind));
                     }
                 }

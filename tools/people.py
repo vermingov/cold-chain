@@ -64,18 +64,24 @@ CAST = {
         'skin': 'old_caucasian_male', 'eyes': 'brown', 'brows': 'eyebrow010', 'lashes': 'eyelashes01',
         'hair': 'short01', 'wears': ['male_worksuit01', 'shoes05'],
     },
-    # The sandbox's young man in a hood: early twenties, a dark green hooded sweat jacket over a dark T-shirt and
-    # jeans, a black knitted beanie pushed back on short dark hair. The jacket and beanie are from the MakeHuman
-    # community packs shirts02 and hats03 (Elvaerwyn, CC-BY), copied into <base assets>/clothes; `tint` recolours a
-    # garment's texture (sRGB 0..255).
-    'hood': {
-        'body': {'gender': 0.97, 'age': 0.44, 'muscle': 0.45, 'weight': 0.62, 'height': 0.52},
-        'skin': 'young_caucasian_male', 'eyes': 'brown', 'brows': 'eyebrow003', 'lashes': 'eyelashes01',
-        'hair': 'short02', 'wears': ['male_casualsuit02', 'elvs_hooded_sweat_jacket1', 'shoes04', 'elvs_slouchy_beanie1'],
-        'tint': {'male_casualsuit02': [30, 30, 33], 'elvs_hooded_sweat_jacket1': [30, 46, 31], 'elvs_slouchy_beanie1': [21, 21, 23]},
-        # The beanie pulled down and forward over the hair, and a little fuller so the hair stays under it.
-        # The jacket a little looser than it was cut, so the T-shirt under it never comes through at a bend.
-        'adjust': {'elvs_slouchy_beanie1': {'inflate': 0.012, 'shift': [0, -0.022, 0.014]}, 'elvs_hooded_sweat_jacket1': {'inflate': 0.009}},
+    # The sandbox's young man all in white: early twenties, a white T-shirt and white jeans (MakeHuman's own T-shirt and
+    # jeans, male_casualsuit02, recoloured: `tint` makes a garment's texture's typical shade that colour, sRGB 0..255;
+    # `erase` paints over a box of it, [u0, v0, u1, v1] in the picture from its top left, with the cloth `by` below it:
+    # the T-shirt's printed MakeHuman logo).
+    'white': {
+        'body': {'gender': 0.97, 'age': 0.44, 'muscle': 0.5, 'weight': 0.55, 'height': 0.56},
+        'skin': 'young_caucasian_male', 'eyes': 'brown', 'brows': 'eyebrow008', 'lashes': 'eyelashes01',
+        'hair': 'short02', 'wears': ['male_casualsuit02', 'shoes04'],
+        'tint': {'male_casualsuit02': [218, 217, 211]},
+        'erase': {'male_casualsuit02': [{'box': [0.49, 0.1, 0.63, 0.235], 'by': 0.14}]},
+    },
+    # A man in his forties with nothing on. The skin is jartur69's middle-aged man painted with his body hair, beard
+    # stubble and genitals (skins02, CC0); the genitals' shape is MakeHuman's own genital helper on its base mesh
+    # (CC0), smoothed (`genitals`), and wears the picture's genital islands.
+    'naked': {
+        'body': {'gender': 1.0, 'age': 0.6, 'muscle': 0.52, 'weight': 0.58, 'height': 0.5},
+        'skin': 'jartur69_middleage_slavic_male_with_genitals_and_beard', 'eyes': 'bluegreen', 'brows': 'eyebrow003',
+        'lashes': 'eyelashes01', 'hair': 'short03', 'wears': [], 'genitals': True,
     },
 }
 
@@ -494,6 +500,157 @@ def hands(bones, body, skin_faces, weights):
                         w[b] = w.get(b, 0.0) + share * part
 
 
+# --- the genitals ----------------------------------------------------------------
+#
+# MakeHuman's base mesh carries the male genitals as a helper (`helper-genital`, CC0: 182 quads, the penis hanging in
+# front of the scrotum), which its own macro targets shape with the body and its genital proxies were fitted to. The
+# proxies themselves were dropped from MakeHuman (and were AGPL), so the helper is drawn itself: smoothed twice
+# (Catmull and Clark: 2912 quads), carried by the bones its corners are weighted to, and wearing the islands the skin's
+# picture paints for genitals (jartur69's skin has them: the shaft, the glans with its opening, the scrotum's wrinkled
+# skin), each region mapped onto its island in its own way.
+
+# The islands, in the picture's pixels (2048 square, from its top left): the shaft's skin unrolled, the glans round its
+# opening, the scrotum's skin.
+ISLANDS = {'shaft': (712, 1384, 878, 1502), 'glans': (672, 1478, 26), 'scrotum': (548, 1562, 688, 1648)}
+
+
+def catmull_clark(n, quads):
+    """One step of Catmull and Clark's subdivision of a quad mesh with an open edge: each new corner as a mix of the
+    `n` old ones (a matrix, new by old), and the new quads (each old one in four, turned the same way)."""
+    edges, faces_of = {}, {}
+    for f, q in enumerate(quads):
+        for k in range(4):
+            e = tuple(sorted((q[k], q[(k + 1) % 4])))
+            edges.setdefault(e, len(edges))
+            faces_of.setdefault(e, []).append(f)
+    E, F = len(edges), len(quads)
+    face = np.zeros((F, n))
+    for f, q in enumerate(quads):
+        face[f, list(q)] = 0.25
+    edge = np.zeros((E, n))
+    for (a, b), i in edges.items():
+        fs = faces_of[(a, b)]
+        if len(fs) == 2:
+            edge[i] = (face[fs[0]] + face[fs[1]]) / 4
+            edge[i, a] += 0.25
+            edge[i, b] += 0.25
+        else:
+            edge[i, a] = edge[i, b] = 0.5
+    vert = np.zeros((n, n))
+    rim = {v: [] for v in range(n)}
+    around = {v: [] for v in range(n)}
+    for (a, b), fs in faces_of.items():
+        around[a].append((a, b))
+        around[b].append((a, b))
+        if len(fs) == 1:
+            rim[a].append(b)
+            rim[b].append(a)
+    touching = {v: [] for v in range(n)}
+    for f, q in enumerate(quads):
+        for v in q:
+            touching[v].append(f)
+    for v in range(n):
+        if rim[v]:
+            vert[v, v] = 0.75
+            for b in rim[v][:2]:
+                vert[v, b] += 0.125
+            continue
+        k = len(touching[v])
+        q = sum(face[f] for f in touching[v]) / k
+        r = np.zeros(n)
+        for a, b in around[v]:
+            r[a] += 0.5 / len(around[v])
+            r[b] += 0.5 / len(around[v])
+        vert[v] = (q + 2 * r) / k
+        vert[v, v] += (k - 3) / k
+    new = []
+    for f, q in enumerate(quads):
+        for k in range(4):
+            a, b, c = q[k - 1], q[k], q[(k + 1) % 4]
+            new.append((b, n + edges[tuple(sorted((b, c)))], n + E + f, n + edges[tuple(sorted((a, b)))]))
+    return np.vstack([vert, edge, face]), new
+
+
+def genitals(body, faces, weights, bones):
+    """The genital helper smoothed: its corners (MakeHuman's space), their weights ({bone: amount} each), its quads, and
+    each quad's corners' places in the picture (0..1, v up)."""
+    helper = [vs for g, vs, _ in faces if g == 'helper-genital']
+    ids = sorted({v for q in helper for v in q})
+    local = {v: i for i, v in enumerate(ids)}
+    quads = [tuple(local[v] for v in q) for q in helper]
+    mix = np.eye(len(ids))
+    for _ in range(2):
+        step, quads = catmull_clark(mix.shape[0], quads)
+        mix = step @ mix
+    pos = mix @ body[ids]
+    dense = np.zeros((len(ids), bones))
+    for i, v in enumerate(ids):
+        for b, w in weights[v].items():
+            dense[i, b] = w
+    carried = mix @ dense
+    carried = [{int(b): float(row[b]) for b in np.nonzero(row > 1e-4)[0]} for row in carried]
+
+    # Which is which (MakeHuman's space, decimetres, facing +Z): the penis hangs in front, the scrotum behind it, the
+    # two apart below their roots.
+    def penis(p):
+        return p[2] > 0.92 + max(0.0, -0.25 - p[1]) * 0.3
+    front = np.array([penis(p) for p in pos])
+    tip = pos[front][np.argmin(pos[front][:, 1])]
+    rim_side = pos[front][pos[front][:, 1] > pos[front][:, 1].max() - 0.12]
+    root = rim_side.mean(axis=0)
+    axis = (tip - root) / np.linalg.norm(tip - root)
+    side = np.array([1.0, 0.0, 0.0])
+    up = np.cross(axis, side)
+    length = np.linalg.norm(tip - root)
+    corona = 0.8
+    shaft, glans, scrotum = ISLANDS['shaft'], ISLANDS['glans'], ISLANDS['scrotum']
+    back = pos[~front]
+    lo, hi = back.min(axis=0), back.max(axis=0)
+    px = lambda x, y: [x / 2048, 1 - y / 2048]
+    uv = []
+    for q in quads:
+        c = pos[list(q)]
+        mid = c.mean(axis=0)
+        if not penis(mid):
+            # The scrotum seen from the front (the back takes the same skin turned over).
+            uv.append([px(scrotum[0] + (p[0] - lo[0]) / (hi[0] - lo[0]) * (scrotum[2] - scrotum[0]),
+                          scrotum[1] + (hi[1] - p[1]) / (hi[1] - lo[1]) * (scrotum[3] - scrotum[1])) for p in c])
+            continue
+        t = [(p - root) @ axis / length for p in c]
+        if (mid - root) @ axis / length > corona:
+            # The glans round its opening at the tip.
+            out = []
+            for p in c:
+                d = p - tip
+                r = np.linalg.norm(d - axis * (d @ axis)) + max(0.0, -(d @ axis))
+                a = np.arctan2(d @ up, d @ side)
+                k = min(1.0, r / (length * (1 - corona) * 1.6))
+                out.append(px(glans[0] + np.cos(a) * k * glans[2], glans[1] - abs(np.sin(a)) * k * glans[2]))
+            uv.append(out)
+            continue
+        # The shaft unrolled round its axis, the seam underneath, toward the scrotum.
+        angles = [np.arctan2((p - root) @ side, (p - root) @ up) for p in c]
+        angles = [angles[0] + np.angle(np.exp(1j * (a - angles[0]))) for a in angles]
+        uv.append([px(shaft[0] + (a / (2 * np.pi) + 0.5) * (shaft[2] - shaft[0]), shaft[1] + min(1.0, max(0.0, k / corona)) * (shaft[3] - shaft[1]))
+                   for a, k in zip(angles, t)])
+    # Where the shaft runs and the scrotum's two halves are, for the anatomy inside them (tools/anatomy.py): the shaft's
+    # middle line from root to tip in ten steps with its radius at each, and each half of the scrotum's lower part, where
+    # a testis hangs, its middle and its radius.
+    t = (pos[front] - root) @ axis / length
+    shaft = []
+    for k in range(10):
+        ring = pos[front][(t >= k / 10) & (t <= (k + 1) / 10)]
+        mid = ring.mean(axis=0)
+        shaft.append([mid, float(np.linalg.norm(ring - mid, axis=1).mean())])
+    shaft = [[root, shaft[0][1]]] + shaft + [[tip, shaft[-1][1] * 0.3]]
+    testes = []
+    for sign in (-1, 1):
+        half = back[(back[:, 0] * sign > 0) & (back[:, 1] < lo[1] + (hi[1] - lo[1]) * 0.6)]
+        mid = half.mean(axis=0)
+        testes.append([mid, float(np.linalg.norm(half - mid, axis=1).mean())])
+    return pos, carried, quads, uv, {'shaft': shaft, 'testes': testes}
+
+
 # --- fitting a proxy to a body ---------------------------------------------------
 
 def fit(proxy, body, weights):
@@ -589,7 +746,7 @@ def natural_iris(image):
     return out if image.mode == 'RGBA' else out.convert('RGB')
 
 
-def texture(src, kind, done, tint=None):
+def texture(src, kind, done, tint=None, erase=None):
     """Copy a texture into the game at the size its kind is kept at, once.
     Anything with see-through in it stays a PNG; a skin is a JPEG.
     With `tint` the picture is recoloured: its typical (median) shade made that colour, lighter and darker shades kept
@@ -602,6 +759,12 @@ def texture(src, kind, done, tint=None):
     image = Image.open(src)
     if kind == 'eyes':
         image = natural_iris(image)
+    for e in erase or []:
+        w, h = image.size
+        u0, v0, u1, v1 = e['box']
+        box = (round(u0 * w), round(v0 * h), round(u1 * w), round(v1 * h))
+        image = image.copy()
+        image.paste(image.crop((box[0], box[1] + round(e['by'] * h), box[2], box[3] + round(e['by'] * h))), box)
     if tint:
         grey = np.asarray(image.convert('L'), dtype=np.float32)
         shade = np.minimum(3.2, 0.6 + 0.4 * grey / max(1.0, float(np.median(grey))))
@@ -676,13 +839,29 @@ def build(name, spec, base, data, assets, cache, textures):
     skin_tex = texture(assets / 'skins' / spec['skin'] / skin_mat['diffuseTexture'], 'skin', textures)
 
     mesh = Mesh()
+    extra = {}
+    if spec.get('genitals'):
+        # Drawn as the skin, in the same part: its own corners after the body's.
+        gpos, gcarried, gquads, guv, inside = genitals(body, faces, weights, len(bones))
+        def where(p, r):
+            g = to_game(p) - [0, floor, 0]
+            return [round(float(x), 5) for x in g] + [round(r * DM, 5)]
+        extra['genitals'] = {k: [where(p, r) for p, r in v] for k, v in inside.items()}
+        g = to_game(gpos)
+        g[:, 1] -= floor
+        gj, ga = quantise(gcarried)
+        n, m = len(game), len(uvs)
+        corners = np.array([c for q in guv for c in q])
+        shown = shown + [('genitals', [n + v for v in q], [m + 4 * f + k for k in range(4)]) for f, q in enumerate(gquads)]
+        game, uvs = np.vstack([game, g]), np.vstack([uvs, corners])
+        joints, amounts = np.vstack([joints, gj]), np.vstack([amounts, ga])
     mesh.add('skin', game, uvs, shown, joints, amounts, kind='skin', texture=skin_tex)
     if under:
         mesh.add('skin-under', game, uvs, under, joints, amounts, kind='skin', texture=skin_tex, under=True)
 
     body_normals = smooth_normals(game, faces)
 
-    def proxy(part, kind, path, image=None, tint=None, adjust=None, **extra):
+    def proxy(part, kind, path, image=None, tint=None, adjust=None, erase=None, **extra):
         p = read_proxy(path)
         pos, carried = fit(p, body, weights)
         pv, puv, pf = read_obj(p['obj'])
@@ -697,7 +876,7 @@ def build(name, spec, base, data, assets, cache, textures):
             out /= np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-9)
             g = g + out * adjust.get('inflate', 0) + np.array(adjust.get('shift', [0, 0, 0]))
         pj, pa = quantise(carried)
-        mesh.add(part, g, puv, pf, pj, pa, kind=kind, texture=texture(image or p['texture'], kind, textures, tint), **extra)
+        mesh.add(part, g, puv, pf, pj, pa, kind=kind, texture=texture(image or p['texture'], kind, textures, tint, erase), **extra)
 
     iris = assets / 'eyes' / 'materials' / f"{spec['eyes']}_eye.png"
     # The eyeballs ship with MakeHuman itself; only their irises are in the assets.
@@ -709,7 +888,8 @@ def build(name, spec, base, data, assets, cache, textures):
     if spec.get('hair'):
         proxy('hair', 'hair', proxy_path(assets, 'hair', spec['hair']))
     for w in spec['wears']:
-        proxy('wears:' + w, 'cloth', proxy_path(assets, 'clothes', w), tint=spec.get('tint', {}).get(w), adjust=spec.get('adjust', {}).get(w), worn=True)
+        proxy('wears:' + w, 'cloth', proxy_path(assets, 'clothes', w), tint=spec.get('tint', {}).get(w), adjust=spec.get('adjust', {}).get(w),
+              erase=spec.get('erase', {}).get(w), worn=True)
 
     pos = np.array(mesh.pos, dtype=np.float32)
     idx = np.array(mesh.index, dtype=np.uint32)
@@ -730,6 +910,7 @@ def build(name, spec, base, data, assets, cache, textures):
         'height': round(float(height), 4),
         'face': cache['face'],
         'source': 'MakeHuman base mesh, skeleton, weights, face pose units and base assets (CC0)',
+        **extra,
     }
     out = OUT / f'{name}.bin'
     write(out, header, [

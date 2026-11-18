@@ -70,6 +70,9 @@ fn through(kind: &str) -> f32 {
         "stomach" => 0.1,
         "bowel" => 0.2,
         "colon" => 0.15,
+        "penis" => 0.035,
+        "testis" => 0.03,
+        "prostate" => 0.04,
         _ => 0.08,
     }
 }
@@ -94,6 +97,11 @@ pub fn organ_bleed(kind: &str) -> Option<f32> {
         "airway" => 0.001,
         "oesophagus" => 0.001,
         "brainstem" => 0.001,
+        // The penis's erectile bodies are blood spaces, and the prostate lies in a plexus of veins: both bleed freely.
+        "penis" => 0.003,
+        "prostate" => 0.002,
+        "testis" => 0.001,
+        "gland" => 0.0008,
         _ => return None,
     })
 }

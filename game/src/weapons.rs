@@ -3223,13 +3223,14 @@ pub fn blasts() -> Vec<crate::scenario::Step> {
             Some((n, part)) => s.push(Step::Do(Box::new(move |w: &mut World| {
                 crate::warm::aim(w, n, part, far);
             }))),
-            // The barrel on the line through the chests of the last two (the hooded man's, the young man's), the eye
+            // The barrel on the line through the chests of the last two (the naked man's, the man in white's), the eye
             // `far` back from the last along it: through him and on into the next. (The barrel is held off the eye's
             // line, some 9 cm right and 6 up of it: side on and close, a look at his chest put the shot beside him; and
             // a fixed point down the room left the line beside him or not as he stood.)
             None => s.push(Step::Do(Box::new(move |w: &mut World| {
                 let chest = |w: &mut World, n| crate::warm::aim(w, n, "chest", 0.0).map(|(_, at)| at);
-                let (Some(end), Some(next)) = (chest(w, 3), chest(w, 2)) else { return };
+                let last = crate::sandbox::BODIES.len() - 1;
+                let (Some(end), Some(next)) = (chest(w, last), chest(w, last - 1)) else { return };
                 let muzzle = {
                     let hand = w.resource::<Hand>();
                     hand.anchors.get("shotgun").map_or(Vec3::new(0.0, 0.0, -1.25), |a| hand.local.transform_point(a.tip))

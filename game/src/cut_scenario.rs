@@ -103,6 +103,124 @@ fn close_on(s: &mut Vec<Step>, name: &str, f: impl Fn(&mut World) -> Option<Vec3
     s.push(Step::Shot(name.into()));
 }
 
+// Looking at a stump's end or a piece's from the side, square to the way its end faces, `turn` (radians) round it.
+fn beside(i: usize, k: usize, piece: bool, d: f32, turn: f32) -> impl Fn(&mut World) -> Option<Vec3> + Send + Sync {
+    move |w: &mut World| {
+        let who = person_at(w, i);
+        let (at, n) = dismember::end_world(w, who, k, piece)?;
+        let across = n.cross(if n.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
+        let way = Quat::from_axis_angle(n, turn) * across;
+        let mut off = (way + n * 0.35 + Vec3::Y * 0.2).normalize() * d;
+        let ground = w.resource::<Map>().ground(at.x + off.x, at.z + off.z, f32::INFINITY);
+        if at.y + off.y < ground + 0.12 {
+            off.y = ground + 0.12 - at.y;
+        }
+        look(w, at, at + off);
+        let mut q = w.query_filtered::<&mut Transform, With<Lamp>>();
+        for mut t in q.iter_mut(w) {
+            t.translation = at + off * 0.9 + Vec3::Y * 0.12;
+        }
+        None
+    }
+}
+
+// The `stumps` scenario: every limb cut off at each of its places (both hands, forearms, upper arms, feet, shins and
+// thighs, and the head), spread over the five; each stump and piece close up from its end and from two sides, the same in
+// the x-ray, then each stump dressed and seen again, with what is still bleeding out of it before and after.
+pub fn stumps() -> Vec<Step> {
+    use dismember::Limb::*;
+    // (Who, which, which side: a person's cuts are numbered in this order.)
+    const CUTS: [(usize, dismember::Limb, &str); 13] = [
+        (0, Hand, "R"), (0, Forearm, "L"), (0, Shin, "R"),
+        (1, Upperarm, "R"), (1, Hand, "L"), (1, Thigh, "L"),
+        (2, Forearm, "R"), (2, Upperarm, "L"), (2, Head, ""),
+        (3, Foot, "R"), (3, Shin, "L"),
+        (4, Thigh, "R"), (4, Foot, "L"),
+    ];
+    let mut s = Vec::new();
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        w.spawn((Lamp, PointLight { intensity: 0.3 * crate::map::CANDELA, range: 3.0, radius: 0.05, shadow_maps_enabled: false, ..default() }, Transform::from_xyz(0.0, -50.0, 0.0)));
+    })));
+    s.push(Step::Wait(90));
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        for (i, limb, side) in CUTS {
+            let who = person_at(w, i);
+            let dir = babylon(if side == "L" { 1.0 } else { -1.0 }, -0.3, 0.0).normalize();
+            let t = std::time::Instant::now();
+            let off = dismember::sever(w, who, limb, side, None, Some(dir), dismember::How::Blade);
+            log(w, json!({ "event": "sever", "person": i, "limb": format!("{limb:?}"), "side": side, "off": off, "ms": t.elapsed().as_secs_f32() * 1000.0 }));
+        }
+    })));
+    s.push(Step::Wait(150));
+    let numbered = || {
+        let mut seen = [0usize; 5];
+        CUTS.map(|(i, limb, side)| {
+            seen[i] += 1;
+            (i, seen[i] - 1, format!("{}{}", format!("{limb:?}").to_lowercase(), side))
+        })
+    };
+    let all_sides = |s: &mut Vec<Step>, tag: &str| {
+        for (i, k, name) in numbered() {
+            for piece in [false, true] {
+                let what = if piece { "piece" } else { "stump" };
+                close_on(s, &format!("{tag}{name}_{what}_end"), facing(i, k, piece, 0.32));
+                close_on(s, &format!("{tag}{name}_{what}_side"), beside(i, k, piece, 0.32, 0.0));
+                close_on(s, &format!("{tag}{name}_{what}_back"), beside(i, k, piece, 0.32, std::f32::consts::PI));
+            }
+        }
+    };
+    all_sides(&mut s, "");
+    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = true)));
+    s.push(Step::Wait(4));
+    for (i, k, name) in numbered() {
+        for piece in [false, true] {
+            let what = if piece { "piece" } else { "stump" };
+            close_on(&mut s, &format!("xray_{name}_{what}"), beside(i, k, piece, 0.4, 0.0));
+        }
+    }
+    s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
+    // Each stump dressed, as the hands' Hands and the medkit do (dressing::wounds, worst first, and dress): the wound at the
+    // stump's end.
+    s.push(Step::Do(Box::new(move |w: &mut World| {
+        for (i, k, name) in numbered() {
+            let who = person_at(w, i);
+            let Some(end) = w.get::<dismember::Dismember>(who).and_then(|d| d.cuts.get(k)).map(|c| c.c) else { continue };
+            let flow = |w: &mut World| npc::with(w, who, |npc| npc.vitals.bleeds.iter().filter(|b| b.source.mark.as_ref().is_some_and(|m| m.rest.distance(end) < 0.08))
+                .map(|b| b.flow * if b.dressed.is_some() { b.dressed.unwrap() } else { 1.0 }).sum::<f32>()).unwrap_or(0.0);
+            let before = flow(w);
+            let kind = npc::with(w, who, |npc| {
+                let wound = crate::dressing::wounds(npc).into_iter().find(|o| o.mark.rest.distance(end) < 0.08)?;
+                let d = crate::dressing::dress(npc, &wound)?;
+                Some(format!("{:?}", npc.hurt.dressings[d].covers).split_whitespace().next().unwrap_or("").to_string())
+            }).flatten();
+            let after = flow(w);
+            log(w, json!({ "event": "dressed", "stump": name, "covers": kind, "flow_ml_s_before": before * 1000.0, "flow_ml_s_after": after * 1000.0 }));
+        }
+    })));
+    s.push(Step::Wait(60));
+    for (i, k, name) in numbered() {
+        close_on(&mut s, &format!("dressed_{name}_end"), facing(i, k, false, 0.35));
+        close_on(&mut s, &format!("dressed_{name}_side"), beside(i, k, false, 0.35, 0.0));
+    }
+    s.push(Step::Wait(600));
+    s.push(Step::Do(Box::new(move |w: &mut World| {
+        for (i, k, name) in numbered() {
+            let who = person_at(w, i);
+            let Some(end) = w.get::<dismember::Dismember>(who).and_then(|d| d.cuts.get(k)).map(|c| c.c) else { continue };
+            let (flow, held) = npc::with(w, who, |npc| {
+                let flow: f32 = npc.vitals.bleeds.iter().filter(|b| b.source.mark.as_ref().is_some_and(|m| m.rest.distance(end) < 0.08)).map(|b| b.flow).sum();
+                let held: f32 = npc.hurt.dressings.iter().filter(|d| d.mark.rest.distance(end) < 0.08).map(|d| d.held).sum();
+                (flow, held)
+            }).unwrap_or((0.0, 0.0));
+            log(w, json!({ "event": "ten seconds dressed", "stump": name, "flow_ml_s": flow * 1000.0, "gauze_ml": held }));
+        }
+    })));
+    for (i, k, name) in numbered() {
+        close_on(&mut s, &format!("dressed_later_{name}"), beside(i, k, false, 0.35, 0.0));
+    }
+    s
+}
+
 // `part`: "limbs", "belly", "bones", or everything (the whole scenario, `cut`).
 pub fn steps(part: &str) -> Vec<Step> {
     let all = part.is_empty();
@@ -168,7 +286,7 @@ pub fn steps(part: &str) -> Vec<Step> {
 
     }
     if all || part == "belly" {
-    // 4. A shotgun's charge at contact range into the man in the hood's belly: its pellets one mass (1.45 kJ, the wad's
+    // 4. A shotgun's charge at contact range into the man in white's belly: its pellets one mass (1.45 kJ, the wad's
     // width), which blows the wall open.
     s.push(Step::Do(Box::new(|w: &mut World| {
         let who = person_at(w, 3);
@@ -247,7 +365,7 @@ pub fn steps(part: &str) -> Vec<Step> {
 
     }
     if all || part == "bones" {
-    // 6. The man in the hood's left shin broken by a bat, then bent at the break until its end comes through the skin.
+    // 6. The man in white's left shin broken by a bat, then bent at the break until its end comes through the skin.
     s.push(Step::Do(Box::new(|w: &mut World| {
         let who = person_at(w, 3);
         let p = between(w, who, "lowerleg01.L", "foot.L", 0.5);

@@ -144,7 +144,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "people" => {
             s.push(Step::Do(Box::new(segments)));
             for (i, body) in crate::sandbox::BODIES.into_iter().enumerate() {
-                let (x, z) = ((i as f32 - 1.5) * 1.5, 2.2);
+                let (x, z) = ((i as f32 - (crate::sandbox::BODIES.len() as f32 - 1.0) / 2.0) * 1.5, 2.2);
                 s.push(only(Some(body)));
                 s.extend(view(&format!("people_{body}_front"), x, z - 2.1, [x, 0.95, z], 1.0));
                 s.extend(view(&format!("people_{body}_side"), x + 2.1, z, [x, 0.95, z], 1.0));
@@ -171,6 +171,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "blasts" => s = crate::weapons::blasts(),
         "wounds" => s = wounds(),
         "cut" => s = crate::cut_scenario::steps(""),
+        "stumps" => s = crate::cut_scenario::stumps(),
         "cut-limbs" | "cut-belly" | "cut-bones" => s = crate::cut_scenario::steps(&name[4..]),
         "blood" => s = crate::blood::scenario(),
         // The look of hurt on the skin (port/skin): skin.rs.
@@ -1025,7 +1026,7 @@ fn body(name: &str) -> Option<Vec<Step>> {
         // How often people cry out (the user: "a bit too excessive with the screaming"), against the TS's
         // (tools/port-screams.mjs does the same there): the four standing, each shot once with the pistol where it
         // hurts but does not kill (the old man's right upper arm, the groundskeeper's left thigh, the young man's belly,
-        // the hooded man's left shin), the old man again in the left thigh half a minute on, four shots into the
+        // the man in white's left shin), the old man again in the left thigh half a minute on, four shots into the
         // groundskeeper a quarter second apart at 45 s, and a minute of what follows with the physics running (they fall, writhe, crawl). Every voice started (a cry, a cough, a retch),
         // by person and kind, and how many are sounding at once across the room.
         "screams" => {
@@ -1457,7 +1458,7 @@ fn wounds() -> Vec<Step> {
     s
 }
 
-// The person standing `i`th in the line (sandbox.rs's order: the old man, the groundskeeper, the young man, the hood).
+// The person standing `i`th in the line (sandbox.rs's order: the old man, the groundskeeper, the young man, the man in white, the naked man).
 pub fn person_at(w: &mut World, i: usize) -> Entity {
     let body = crate::sandbox::BODIES[i];
     let mut q = w.query::<(Entity, &Person)>();
