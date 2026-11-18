@@ -96,7 +96,8 @@ fn spawn(mut commands: Commands, assets: Res<AssetServer>) {
         "Fists: left click punches with the left, right click with the right; hold to wind up a harder punch.",
         "1 to 6 or the mouse wheel: change what you hold. R: reload. E: take from the wall. G: put it back. Tab: what you carry.",
         "Bandage or medkit: hold left click on a wound (the medkit dresses all of them, one after another).",
-        "N: another person where you are looking. X: see inside them. K: clear the room. H: hide this. Escape: pause, settings.",
+        "N: another person where you are looking. B: an opponent in the ring (duck to go through the ropes). X: see inside them.",
+        "K: clear the room. H: hide this. Escape: pause, settings.",
     ];
     commands.spawn((Node { width: px(34.0 * REM), flex_direction: FlexDirection::Column, ..at(Some(1.0), None, None, Some(1.0)) }, Help)).with_children(|c| {
         for line in help {
