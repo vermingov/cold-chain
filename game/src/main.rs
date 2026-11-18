@@ -29,6 +29,7 @@ mod flesh;
 mod film;
 mod floor;
 mod fluid;
+mod gore_scenario;
 mod graphics;
 mod hider;
 mod hands;
