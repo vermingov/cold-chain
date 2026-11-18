@@ -42,3 +42,6 @@ fix the loose ends". Order proposed to them: 4 first (the active ragdoll touches
   torn tissue, not a drilled tunnel.
 - Intestines poke out of the belly in a weird way: they appear only where there is a hole and clip through the body
   (a red cone sticking out of a shirt). Not a real evisceration.
+- Same body, side view: the intestines come out as flat red shards/flaps sticking out of the flank, clipping
+  through the shirt; the blood soaked into the shirt is one dark blob with a hard jagged edge (real soak: wet,
+  darker in the middle, a soft wicking edge that follows the weave and gravity).
