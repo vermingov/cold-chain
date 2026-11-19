@@ -942,6 +942,9 @@ impl Behaviour {
         // the other) is stepped at once: left hanging, it was nothing to stand on.
         let lifted = if down.len() == 1 { feet.iter().copied().find(|f| !down.contains(f)) } else { None };
         let past = outside(&hull, xi.x, xi.z);
+        // (Leaning toward range, each step lands as far again toward it: put down just past where the weight would stop,
+        // the steps were a centimetre or two and they shuffled 15 cm in twelve seconds.)
+        let goal = if leaning { xi + lean } else { xi };
         if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if leaning { -0.06 } else if self.settle > 0.0 { 0.1 } else { 0.08 })) {
             if self.steps >= STEPS || xi.distance(centre) > REACH * 1.4 {
                 self.why = if self.steps >= STEPS { "steps" } else { "far" };
@@ -949,7 +952,7 @@ impl Behaviour {
                 return self.fall_pose(rd);
             }
             let only = lifted.map(|f| rd.segs[f].def.name.chars().last().unwrap());
-            self.start_step(rd, xi, f, r, feet, only);
+            self.start_step(rd, goal, f, r, feet, only);
             // Caught already over the planted foot, the lifted one only closes up beside it, and they stand.
             if let (Some(l), true) = (lifted, past < 0.04) {
                 let at = rd.segs[down[0]].now.translation;
@@ -962,12 +965,12 @@ impl Behaviour {
         }
         // (Leaning toward range a while and still not over the edge: the step taken anyway, caught as a stumble's is.)
         if self.step.is_none() && leaning && self.leaned > 0.8 && down.len() == 2 {
-            self.start_step(rd, xi + lean, f, r, feet, None);
+            self.start_step(rd, goal, f, r, feet, None);
             self.steps = 0;
             self.leaned = 0.0;
         }
         if self.step.is_some() {
-            self.stepping(dt, rd, &mut pose, f, xi, r);
+            self.stepping(dt, rd, &mut pose, f, goal, r);
         } else if past < -0.02 {
             self.steps = 0;
         }
