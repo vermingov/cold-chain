@@ -996,7 +996,8 @@ impl Behaviour {
         pose
     }
 
-    // Squared up to the player in the ring (bout.rs): the guard up (hands by the jaw, elbows in, chin down, knees soft),
+    // Squared up to the player in the ring (bout.rs): the guard up (hands by the jaw, elbows in, chin down; the knees
+    // not bent for it: crouched, against the hips' upright muscles, they crept back 20 cm in five seconds and fell),
     // tighter while a fist of theirs is flying; a step in or out to keep about an arm's length off; and now and then a
     // jab with the left or a straight with the right at the head or the body. A punch is the arm's: its pose thrown
     // straight and the hand driven at the target by its arm, paid for at the chest, over 130 ms, and back. What it carries
@@ -1020,10 +1021,6 @@ impl Behaviour {
         add(pose, "neckFlex", 12.0 + 8.0 * cover);
         add(pose, "spineFlex", 6.0 + 6.0 * cover);
         for k in ['L', 'R'] {
-            if std::env::var("PROBE_NOCROUCH").is_err() {
-                add(pose, side("knee", k), 14.0);
-                add(pose, side("hipFlex", k), 8.0);
-            }
             if self.punch.as_ref().is_some_and(|p| p.side == k) || self.holding[i(k)] {
                 continue;
             }
@@ -1090,6 +1087,9 @@ impl Behaviour {
         let h = rd.middle(hand);
         let (lo, hi) = (foe.feet + Vec3::Y * 0.65, foe.eye - Vec3::Y * 0.12);
         let t = clamp((h - lo).dot(hi - lo) / (hi - lo).length_squared());
+        if std::env::var("PROBE_FIGHT").is_ok() && !landed {
+            eprintln!("PROBE punch {k} t {pt:.3} hand off the body {:.2} m, {:.1} m/s toward", h.distance(lo + (hi - lo) * t) - 0.25, rd.segs[hand].vel.dot(ahead));
+        }
         if !landed && h.distance(lo + (hi - lo) * t) < 0.25 + 0.07 {
             self.punch.as_mut().unwrap().landed = true;
             let speed = rd.segs[hand].vel.dot(ahead).max(0.0);
