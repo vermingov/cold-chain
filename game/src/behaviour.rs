@@ -167,7 +167,9 @@ fn crawling(phase: f32) -> Pose {
     let reach_r = 1.0 - reach_l;
     // (Out to the side first and forward last, as person.rs turns a shoulder: an arm out at 70 degrees is only spun about
     // its own length by the forward turn, so the elbow is brought forward by the forward turn with the arm half out.)
-    let arm = |k: char, r: f32| [(side("shoulderFlex", k), 110.0 + 55.0 * r), (side("shoulderAbduct", k), 42.0 - 12.0 * r), (side("elbow", k), 100.0 - 75.0 * r),
+    let ce: f32 = std::env::var("PROBE_CE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
+    let ca: f32 = std::env::var("PROBE_CA").ok().and_then(|v| v.parse().ok()).unwrap_or(42.0);
+    let arm = |k: char, r: f32| [(side("shoulderFlex", k), 110.0 + 55.0 * r), (side("shoulderAbduct", k), ca - 12.0 * r), (side("elbow", k), ce - (ce - 25.0) * r),
         (side("curl", k), 20.0 + 25.0 * (1.0 - r))];
     let p = over(poses::relaxed(), &arm('L', reach_l));
     let p = over(p, &arm('R', reach_r));
@@ -2045,8 +2047,8 @@ impl Behaviour {
         // until it is out. (Pulled over it, the trapped elbow was wrenched 30 to 90 degrees sideways for seconds.)
         let c = rd.segs[chest].now;
         let caught = |k: char| {
-            let at = c.rotation.inverse() * (rd.middle(rd.by_name(&format!("forearm2{k}"))) - c.translation);
-            at.y < 0.1 && at.z < -0.05
+            let at = c.rotation.inverse() * (rd.middle(rd.by_name(&format!("forearm{k}"))) - c.translation);
+            at.y < 0.3 && at.z < -0.1 && at.x.abs() < 0.13
         };
         let trapped = if std::env::var("PROBE_FREE").is_ok() { ['L', 'R'].into_iter().find(|&k| caught(k)) } else { None };
         if let Some(k) = trapped {
