@@ -138,15 +138,26 @@ fn stained(albedo: vec3<f32>, rest: vec3<f32>, field: texture_3d<f32>, s: sample
     var cover = smoothstep(0.015, 0.2, front);
     cover = max(cover, step(1.0 - full * 3.0, n2) * smoothstep(0.004, 0.03, full) * 0.6);
     let wet = sk.g;
+    // How full the cloth is round about (two centimetres either way): the stain darkens toward where the blood keeps
+    // coming in, rather than being one colour to its edge (the grid's own reading falls off within a cube or two).
+    let o = 0.02;
+    var round = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let a = f32(i) * 1.5707963 + 0.4;
+        let at = sp + vec3(cos(a) * o, sin(a) * o, (f32(i) - 1.5) * o * 0.5);
+        let r = soak_read(field, s, (at - origin) * scale).r;
+        round += r * r * 1.3 * 0.25;
+    }
+    let deep = min(full, 0.35 * full + 0.65 * round);
     // The serum's halo: damp cloth ahead of the red, darker, no colour of its own; gone once it dries.
     let damp = smoothstep(0.0, 0.02, front) * (1.0 - cover) * wet;
     // How much blood each fibre holds: a film thin at the edge, deep where the cloth is full and blood stands on it.
     // (Even a little blood darkens a coloured cotton plainly: a tenth of a millimetre is most of the way to opaque.)
-    let mm = (0.07 + 0.55 * smoothstep(0.03, 0.85, full)) * (0.85 + 0.3 * n1);
+    let mm = (0.05 + 0.6 * pow(smoothstep(0.05, 1.0, deep), 1.5)) * (0.85 + 0.3 * n1);
     var c = blood_over(albedo * mix(1.0, 0.75, wet), mm, wet);
     // Drying, blood is drawn to the edge of the stain and leaves it darker there (a tide line).
     let rim = smoothstep(0.03, 0.09, front) * (1.0 - smoothstep(0.12, 0.3, front)) * (1.0 - wet);
     c = mix(c, blood_over(albedo, mm + 0.3, 0.0), rim * 0.6);
     let cloth = albedo * (1.0 - 0.22 * damp);
-    return vec4(mix(cloth, c, cover), cover * smoothstep(0.9, 1.25, full) * wet);
+    return vec4(mix(cloth, c, cover), cover * smoothstep(0.6, 1.1, deep) * wet);
 }

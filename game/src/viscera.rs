@@ -455,7 +455,7 @@ pub fn open(world: &mut World, who: Entity, hit: &Crossing, along: Vec3, length:
         // round hole as wide.)
         if torn {
             sk.skin_hole(&Hole { at: o.at, ex, ey: n, half: [half[0], -half[1]] });
-            sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.25 + 0.006, -1.0] });
+            sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.08 + 0.002, -1.0] });
         } else {
             sk.skin_hole(&Hole { at: o.at, ex, ey: n, half });
             sk.cloth_hole(&Hole { at: o.at, ex, ey: n, half: [half[0] * 1.1 + 0.005, half[1] * 1.15 + 0.004] });
