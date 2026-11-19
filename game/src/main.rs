@@ -46,6 +46,7 @@ mod person;
 mod picture;
 mod player;
 mod poses;
+mod press_scenario;
 mod profiler;
 mod ragdoll;
 mod rng;

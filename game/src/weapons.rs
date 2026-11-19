@@ -1098,7 +1098,7 @@ fn fire(cx: &mut Cx, key: &'static str) {
         }
     }
     let ms = started.elapsed().as_secs_f64() * 1000.0;
-    cx.weapons.log.push(json!({ "shot": key, "pellets": gun.pellets, "ms": (ms * 100.0).round() / 100.0 }));
+    cx.weapons.log.push(json!({ "shot": key, "pellets": gun.pellets, "ms": (ms * 100.0).round() / 100.0, "muzzle": muzzle.to_array(), "from": from.to_array(), "dir": ahead.to_array() }));
     cx.sound.play(gun.sound, Play::default());
     // The flash at the muzzle, one frame (muzzle.rs), and the light it throws, going by the clock.
     let hand = cx.hand.world(&cx.eye());
