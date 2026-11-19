@@ -5,7 +5,8 @@
 // then the same at a few parts of people lying on the floor, and of people staggering from a shove as the shot goes.
 // Each shot is logged with whether the barrel's line, from half a metre behind the muzzle on, passes through anyone's
 // skin, and whether the shot went in: a miss where it does is the report's.
-// `press-pistol`, `press-ak`, `press-m4`, `press-shotgun`, `press-rifle` (standing), `press-lying`, `press-shove`.
+// `press-pistol`, `press-ak`, `press-m4`, `press-shotgun`, `press-rifle` (standing), `press-lying`, `press-shove`,
+// `press-walk`.
 //
 // The player is put where the gun, held as it is at rest, has its muzzle at that point and its bore along the line in:
 // the eye standing (1.65 m) or crouched (0.92 m), whichever reaches, turned to the pitch that brings the muzzle there.
@@ -58,8 +59,10 @@ fn skin(w: &mut World, who: Entity, o: Vec3, d: Vec3, far: f32) -> Option<f32> {
 fn reach(w: &mut World, who: Entity, part: &str, off: f32, turn: f32, eye: f32) -> Option<(Vec3, f32, f32, Vec3, Vec3)> {
     let Rest(hand, tip) = *w.resource::<Rest>();
     let rd = w.get::<Ragdoll>(who)?;
-    let k = rd.segs.iter().position(|s| s.def.name == part)?;
-    let c = rd.middle(k);
+    // (The neck is the head's segment's lower end: it starts there.)
+    let k = rd.segs.iter().position(|s| s.def.name == if part == "neck" { "head" } else { part })?;
+    let def = &rd.segs[k].def;
+    let c = if part == "neck" { rd.world_point(k, def.head.lerp(def.end, 0.12)) } else { rd.middle(k) };
     let level = Quat::from_rotation_y(turn.to_radians()) * Vec3::NEG_Z;
     let held = hand.translation + hand.rotation * tip;
     // For a pitch: the yaw that lays the bore's heading on `level`, the bore, where it meets the skin on the line through
@@ -170,9 +173,22 @@ fn record(w: &mut World) {
     log(w, json!({ "event": "press", "shot": plan }));
 }
 
-fn shot(s: &mut Vec<Step>, settle: u32, n: usize, part: &'static str, off: f32, turn: f32, case: &'static str, shove: Option<Vec3>) {
+// How the shot is come to: put there and held still, the person shoved a moment before it, or the player walking on into
+// them with the gun held out (W held from a quarter of a metre off: what a player does who "stands very close").
+#[derive(Clone, Copy)]
+enum Way {
+    Still,
+    Shove(Vec3),
+    Walk,
+}
+
+fn shot(s: &mut Vec<Step>, settle: u32, n: usize, part: &'static str, off: f32, turn: f32, case: &'static str, way: Way) {
     s.push(act(move |w| place(w, n, part, off, turn, case)));
-    if let Some(by) = shove {
+    if let Way::Walk = way {
+        s.push(Step::Wait(settle));
+        s.push(act(|w| w.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW)));
+        s.push(Step::Wait(40));
+    } else if let Way::Shove(by) = way {
         // (Shoved once the player is there: the shot goes as they stagger.)
         s.push(Step::Wait(2));
         s.push(act(move |w| {
@@ -189,7 +205,10 @@ fn shot(s: &mut Vec<Step>, settle: u32, n: usize, part: &'static str, off: f32, 
     }
     s.push(act(fire));
     s.push(Step::Wait(2));
-    s.push(act(|w| crate::warm::release(w, 0)));
+    s.push(act(|w| {
+        crate::warm::release(w, 0);
+        w.resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyW);
+    }));
     s.push(Step::Wait(2));
     s.push(act(record));
 }
@@ -235,7 +254,7 @@ pub fn steps(part: &str) -> Vec<Step> {
                         s.push(reset());
                         s.push(Step::Wait(40));
                     }
-                    shot(&mut s, settle(key), i % 5, p, off, turn, "standing", None);
+                    shot(&mut s, settle(key), i % 5, p, off, turn, "standing", Way::Still);
                     i += 1;
                 }
             }
@@ -259,9 +278,26 @@ pub fn steps(part: &str) -> Vec<Step> {
             for p in ["head", "chest", "belly", "thighL"] {
                 for off in [0.0, 0.03] {
                     for turn in TURNS {
-                        shot(&mut s, settle(key), i % 5, p, off, turn, "lying", None);
+                        shot(&mut s, settle(key), i % 5, p, off, turn, "lying", Way::Still);
                         i += 1;
                     }
+                }
+            }
+        }
+    }
+    // Walking on into them: each gun from a quarter of a metre off at a few parts, the shot 40 frames into the walk.
+    if part == "walk" {
+        for key in GUNS {
+            take(&mut s, key);
+            let mut i = 0;
+            for p in ["head", "chest", "belly", "upperarmL", "thighL"] {
+                for turn in TURNS {
+                    if i % 5 == 0 {
+                        s.push(reset());
+                        s.push(Step::Wait(40));
+                    }
+                    shot(&mut s, settle(key), i % 5, p, 0.25, turn, "walking", Way::Walk);
+                    i += 1;
                 }
             }
         }
@@ -277,7 +313,7 @@ pub fn steps(part: &str) -> Vec<Step> {
                         s.push(reset());
                         s.push(Step::Wait(40));
                     }
-                    shot(&mut s, settle(key), i % 5, p, 0.0, 0.0, "shoved", Some(by));
+                    shot(&mut s, settle(key), i % 5, p, 0.0, 0.0, "shoved", Way::Shove(by));
                     i += 1;
                 }
             }
