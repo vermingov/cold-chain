@@ -1037,9 +1037,11 @@ impl Behaviour {
         if std::env::var("PROBE_FIGHT").is_ok() && (self.clock * 2.0).fract() < dt * 2.0 {
             eprintln!("PROBE fight d {d:.2} step {} punch {} next_punch {:.2} steps {}", self.step.is_some(), self.punch.is_some(), self.next_punch, self.steps);
         }
-        // Footwork: leaning in when out of reach, back when crowded.
+        // Footwork: leaning in when out of reach, back when crowded (off: see below).
         let range = 0.8;
-        let lean = if self.punch.is_none() && (d - range).abs() > 0.15 { ahead * (d - range).clamp(-0.2, 0.2) } else { Vec3::ZERO };
+        // shortcut: no footwork yet, they hold their ground (leaning toward range, every step in drew the feet back and
+        // they backed away and fell: PORT.md, "The opponent's fighting"); upgrade when stepping on purpose is solved.
+        let lean = if std::env::var("PROBE_WALK").is_ok() && self.punch.is_none() && (d - range).abs() > 0.15 { ahead * (d - range).clamp(-0.2, 0.2) } else { Vec3::ZERO };
         self.leaned = if lean == Vec3::ZERO || self.step.is_some() { 0.0 } else { self.leaned + dt };
 
         // A punch, now and then, when in reach and steady.
