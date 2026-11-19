@@ -1074,7 +1074,7 @@ impl Behaviour {
         if pt < OUT {
             // Driven from the floor: paid through the feet on it (paid by the chest, each punch shoved the puncher back
             // some 40 N s and his own punches put him down), and at a point 10 cm past the target, through it.
-            let most = (if straight { 220.0 } else { 150.0 }) * will * up;
+            let most = (if straight { 450.0 } else { 300.0 }) * will * up;
             let through = at + ahead * 0.1;
             let feet: Vec<usize> = feet.iter().copied().filter(|&f| rd.lowest(f) < self.floor + TOUCH).collect();
             let against = if feet.is_empty() { vec![chest] } else { feet };
