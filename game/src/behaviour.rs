@@ -1005,6 +1005,9 @@ impl Behaviour {
             add(pose, side("thumbIn", k), -55.0);
         }
 
+        if std::env::var("PROBE_FIGHT").is_ok() && (self.clock * 2.0).fract() < dt * 2.0 {
+            eprintln!("PROBE fight d {d:.2} step {} punch {} next_step {:.2} next_punch {:.2} steps {}", self.step.is_some(), self.punch.is_some(), self.next_step, self.next_punch, self.steps);
+        }
         // Footwork: a step in when out of reach, out when crowded, one at a time.
         self.next_step -= dt;
         let range = 0.8;
@@ -1013,8 +1016,12 @@ impl Behaviour {
             let mut xi = mid + ahead * (d - range).clamp(-0.3, 0.35);
             xi.y = self.floor;
             self.start_step(rd, xi, f, r, feet, None);
-            // (A step taken on purpose is not a stumble.)
+            // (A step taken on purpose is not a stumble, and keeps its mark: re-aimed at the capture point every frame
+            // as a stumble's is, it was brought back to where the body already was, and they never came in.)
             self.steps = self.steps.saturating_sub(1);
+            if let Some(st) = self.step.as_mut() {
+                st.closing = true;
+            }
             self.next_step = 0.5;
         }
 

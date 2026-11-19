@@ -336,6 +336,21 @@ pub fn spar() -> Vec<crate::scenario::Step> {
     use serde_json::json;
     let opponent = |w: &mut World| -> Option<Entity> { w.query_filtered::<Entity, With<Opponent>>().iter(w).next() };
     let mut s = vec![Step::Wait(30)];
+    // (In the hall instead, quicker: the groundskeeper made the opponent where he stands, the player 2.4 m in front.)
+    if std::env::var("SPAR_HALL").is_ok() {
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            let e = crate::scenario::person_at(w, 1);
+            w.entity_mut(e).insert(Opponent::default());
+            let c = w.get::<Ragdoll>(e).unwrap().middle(w.get::<Ragdoll>(e).unwrap().by_name("chest"));
+            let ahead = w.get::<Transform>(e).unwrap().rotation * Vec3::NEG_Z;
+            let at = c + Vec3::new(ahead.x, 0.0, ahead.z).normalize_or(Vec3::Z) * 2.4;
+            w.resource_scope(|w, map: Mut<crate::map::Map>| {
+                for mut p in w.query::<&mut Player>().iter_mut(w) {
+                    p.spawn(&map, at.x, at.z, Some(c), 1.65);
+                }
+            });
+        })));
+    } else {
     s.push(Step::Do(Box::new(|w: &mut World| {
         w.resource_scope(|w, map: Mut<crate::map::Map>| {
             let (mid, corner) = (RING.middle(), RING.corner(2));
@@ -345,6 +360,7 @@ pub fn spar() -> Vec<crate::scenario::Step> {
         });
         let _ = w.run_system_once(call);
     })));
+    }
     let report = move |what: &'static str| {
         Step::Do(Box::new(move |w: &mut World| {
             let Some(e) = opponent(w) else { return };
