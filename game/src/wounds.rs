@@ -768,12 +768,13 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
     if base == "head" && npc.in_neck(point) {
         npc.vitals.injure("Blow to the throat", 3.0);
     } else if base == "head" {
-        let c = (npc.vitals.concussion() + energy / 160.0).min(1.0);
+        let turn = head_turn(force, lever(npc, point, dir));
+        let c = (npc.vitals.concussion() + turn).min(1.0);
         npc.vitals.concuss(c, npc.dice);
         if energy > 90.0 {
             npc.vitals.bleed(Bleed::new("scalp", 0.0008).clots(0.01));
         }
-        npc.vitals.injure(if energy > 60.0 { "Head struck: knocked out" } else { "Head struck" }, if energy > 60.0 { 6.0 } else { 3.0 });
+        npc.vitals.injure("Head struck", 3.0 + 3.0 * (turn / 0.45).min(1.0));
     } else if base == "belly" && energy > 140.0 {
         let which = if npc.dice.next() < 0.5 { "spleen" } else { "liver" };
         if let Some(p) = npc.traced.parts.iter().position(|p| p.name == which) {
@@ -808,6 +809,35 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
     }
     npc.hit(point, dir * (mass * speed * 0.9), 0.0);
     force
+}
+
+// A blow to the head knocks out by how fast it turns the head, not by how hard it lands (blunt-trauma.md sec. 5: the
+// brain is hurt by the head's rotation): the force times its lever about the head's middle, over the head's moment of
+// inertia (0.0233 kg m2, the Hybrid III's about its side axis). Olympic boxers' straights to a dummy's face turned it at
+// 6343 +- 1789 rad/s2 from 3427 N (Walilko05: a lever of some 4.3 cm), about even odds of a concussion (Rowson12);
+// taken as even odds of a knockout (vitals.rs `concuss`: 0.445 of a concussion at once). So a punch through the head's
+// middle, on the nose, hardly turns it; one on the point of the chin, 9 cm below the middle, turns it twice as hard as
+// one on the forehead. In concussion units.
+const HEAD_INERTIA: f32 = 0.0233;
+const TURN: f32 = 14250.0; // rad/s2 for one whole concussion: Walilko's 6343 is 0.445
+pub const FACE_LEVER: f32 = 0.043; // m: Walilko's punches to the face, on average
+
+pub fn head_turn(force: f32, lever: f32) -> f32 {
+    force * lever / HEAD_INERTIA / TURN
+}
+
+// How far off the head's middle a blow at `point` along `dir` passes: its middle taken about level with the eyes and
+// 7.5 cm behind them, just above and in front of the ear's opening, where the head's centre of mass lies (Clauser et al.
+// 1969, AMRL-TR-69-70).
+fn lever(npc: &Npc, point: Vec3, dir: Vec3) -> f32 {
+    let Some(head) = npc.segment("head") else { return FACE_LEVER };
+    let back = npc.segment_world(head).rotation * Vec3::Z;
+    let eye = |n: &str| {
+        let b = npc.bone_index(n);
+        npc.world_of(npc.body().bones[b].head, b, None).0
+    };
+    let middle = (eye("eye.L") + eye("eye.R")) / 2.0 + back * 0.075;
+    (point - middle).cross(dir.normalize()).length()
 }
 
 fn rupture(npc: &mut Npc, p: usize, energy: f32) {

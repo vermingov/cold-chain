@@ -28,14 +28,16 @@ use crate::player::Player;
 use crate::sound::{Play, Sound};
 use crate::weapons::{e, Kind, Weapons};
 
-// How hard (dev/research/blunt-trauma.md sec. 9). A jab, thrown from the guard with the arm alone, lands at 1 to 1.5 kN
-// (lead straights of boxers of two levels, Liu22); a straight with the hips and shoulder behind it at 2.4 kN for a novice
-// boxer, 3.7 for an intermediate and 4.8 for the elite (Smith00), 3.4 +- 0.8 kN for Olympic boxers, whose fists landed at
-// 9.1 +- 2.1 m/s with an effective mass of 2.9 +- 2.0 kg (Walilko05), and 4.1 kN for a heavyweight's (Atha85). A tap is
-// a jab, a full wind-up (`WIND` s) a trained man's hardest straight, and between by how long it was wound up: on a jaw
-// about 1.5 kN to 4.2, on the chest, which gives more, 1 to 3 (bones.rs `impact`, with FIST_GIVES).
-const JAB: (f32, f32) = (6.0, 1.0);
-const FULL: (f32, f32) = (10.5, 3.2);
+// How hard (dev/research/fist-weapons.md sec. 1): as a man who is no boxer punches. His fist lands at about 6 m/s, a
+// trained boxer's at 8 to 9 (Tao25: 6.3 and 5.9 m/s lead and rear untrained, 8.8 and 8.3 trained; Walilko05: Olympic
+// boxers 9.1 +- 2.1 m/s with 2.9 kg behind it). A jab is the hand and a little of the forearm thrown from the guard; a
+// full wind-up (`WIND` s) has the shoulder and the hips turned in behind it, about a novice boxer's hardest straight:
+// on a jaw about 1.2 kN for a jab and 2.3 for the full (novice boxers' rear straight 2.4 kN on a padded dynamometer,
+// elites' 4.8: Smith00; professionals in their bouts landed 59% of their punches under 1 kN and 1% over 3 kN: Pierce06),
+// on the chest, which gives more, 0.8 and 1.4 (bones.rs `impact`, with FIST_GIVES). (The elite's 10.5 m/s with 3.2 kg
+// behind it, 176 J, had every full punch knock out and break ribs.)
+const JAB: (f32, f32) = (6.0, 0.6);
+const FULL: (f32, f32) = (7.5, 1.6);
 const WIND: f32 = 1.0;
 
 // What a punch wound up `charge` of the way (0 a tap, 1 a full second) lands with: the mass behind the fist, kg, and its
@@ -58,9 +60,10 @@ const AWAY: Vec3 = Vec3::new(0.0, -0.015, -0.06);
 const INTO: Vec3 = Vec3::new(-0.03, 0.0, 0.08);
 const LEAN: (f32, f32) = (0.025, 0.015);
 // What it lands with: how far the fist and arm give (N/m), the bone's pad in series (bones.rs) and the struck part's mass
-// behind it. Taken so that a full punch to a jaw peaks at about the elite's 4 to 5 kN and is over in some 13 ms (a mass on
-// a spring is in contact for pi sqrt(m / k); Atha's heavyweight's peaked 14 ms in). (Under 1e5: wounds.rs takes a
-// stiffer thing as narrower than the eye's socket.)
+// behind it. Taken so that the elite's full punch (Walilko05's 2.9 kg at 9 m/s) to a jaw peaks at their 3.4 to 4.8 kN,
+// over in some 13 ms (a mass on a spring is in contact for pi sqrt(m / k); Atha's heavyweight's peaked 14 ms in); a jab
+// here is in contact some 9 ms, a full punch 13. (Under 1e5: wounds.rs takes a stiffer thing as narrower than the eye's
+// socket.)
 pub const FIST_GIVES: f32 = 9.5e4;
 
 #[derive(Clone, Copy)]

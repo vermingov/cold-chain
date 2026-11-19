@@ -55,15 +55,20 @@ pub struct Harm {
 
 impl Harm {
     // A blow on the player of `mass` kg at `speed` m/s, to the head or not: what the fighting AI calls when a punch lands
-    // (its own fist's, as fist.rs works them out: a jab 1 kg at 6 m/s, a full straight 3.2 kg at 10.5 m/s). Concussion
-    // as wounds.rs gives a person (energy / 160 J added, and a knockout at once from 60 J into the head with luck against
-    // it: vitals.rs `concuss`), here without the dice: out past 0.8.
+    // (behaviour.rs: the mass its own arm's segments carry). It lands as a fist lands on a person (bones.rs `impact`: the
+    // fist's give and the jaw's pad in series, against the head's 6 kg), and turns the head as it does theirs (wounds.rs
+    // `head_turn`) with the lever of a punch to the face on average, as no point is known; concussion adds up and
+    // passes off over minutes, and knocks out past 0.8, here without the dice. Pain from the energy, as theirs.
     pub fn struck(&mut self, mass: f32, speed: f32, head: bool) {
         let energy = 0.5 * mass * speed * speed;
         self.blows += 1;
         self.pain = (self.pain + energy / 400.0).min(1.0);
         if head {
-            self.concussion = (self.concussion + energy / 160.0).min(1.0);
+            let behind = 75.0 * 0.08;
+            let m = mass * behind / (mass + behind);
+            let k = 1.0 / (1.0 / crate::bones::spec("jaw").unwrap().pad + 1.0 / crate::fist::FIST_GIVES);
+            let force = speed * (k * m).sqrt();
+            self.concussion = (self.concussion + crate::wounds::head_turn(force, crate::wounds::FACE_LEVER)).min(1.0);
             if self.concussion > 0.8 && self.out <= 0.0 {
                 self.out = 10.0 + 20.0 * self.concussion;
             }
@@ -179,16 +184,19 @@ pub fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    // A jab to the head dazes; a full straight knocks out, for 10 to 30 s; a body blow only hurts.
+    // A jab to the head dazes; a body blow only hurts; hard straights to the head add up to a knockout, for 10 to 30 s.
     #[test]
     fn struck() {
         let mut h = Harm::default();
         h.struck(1.0, 6.0, true);
-        assert!(h.out == 0.0 && h.concussion > 0.1);
-        h.struck(3.2, 10.5, false);
-        assert!(h.out == 0.0 && h.pain > 0.4);
-        h.struck(3.2, 10.5, true);
-        assert!((10.0..=30.0).contains(&h.out));
+        assert!(h.out == 0.0 && h.concussion > 0.1, "{}", h.concussion);
+        h.struck(2.6, 7.5, false);
+        assert!(h.out == 0.0 && h.pain > 0.15);
+        h.struck(2.6, 7.5, true);
+        assert!(h.out == 0.0);
+        h.struck(2.6, 7.5, true);
+        h.struck(2.6, 7.5, true);
+        assert!((10.0..=30.0).contains(&h.out), "{}", h.concussion);
     }
 }
 

@@ -96,7 +96,8 @@ pub fn spec(key: &str) -> Option<BoneSpec> {
         "skull" => flat(6100.0, None, 0.008, 500e3, 0.0, 0.4),
         "maxilla" => flat(1300.0, None, 0.006, 300e3, 0.1, 0.5),
         "zygoma" => flat(1600.0, None, 0.008, 300e3, 0.05, 0.45),
-        "nasal" => flat(450.0, None, 0.004, 300e3, 0.0, 0.4),
+        // (The nose: 50% at 540-600 N, a 6.45 cm2 flat face on 24 men's noses, Cormier et al. 2010.)
+        "nasal" => flat(600.0, None, 0.004, 300e3, 0.0, 0.4),
         "jaw" => flat(1800.0, None, 0.012, 400e3, 0.05, 0.5),
         // The hyoid and the voice box are estimates: they break from blows and grips to the front of the neck that leave
         // the neck's bones whole, and more easily in the old, whose cartilage has turned to brittle bone.
@@ -740,15 +741,18 @@ impl BonesOf<'_, '_> {
     }
 
     // The chest pushed in by something of `mass` kg at `speed` along `dir`, landing on `tool`'s patch at `point`: how far
-    // in, against how far this person's ribs go (a fifth of the chest's depth young, less with age: Kroell; Zhou's age
-    // factors), says how many ribs break, whether a panel of them breaks loose, and whether the sternum goes.
+    // in, against how far this person's ribs go, says how many ribs break, whether a panel of them breaks loose, and
+    // whether the sternum goes. Even odds of a broken rib at 35% of the chest's depth at 30 and 13% at 70 (Kent and
+    // Patrie 2005, 93 cadavers' chests pushed in by a hub, a belt or both: age decided it, not the load's spread), and
+    // the 70-year-old's past 70. (A fifth of the depth young, from Kroell's cadavers, who were old, broke a young man's
+    // ribs with nearly every punch.)
     pub fn chest(&mut self, point: Vec3, dir: Vec3, what: What, mass: f32, speed: f32, how: &str) -> f32 {
         let behind = self.0.person.mass * 0.3;
         let m = (mass * behind) / (mass + behind);
         let k = 1.0 / (1.0 / CHEST_STIFF + 1.0 / what.k);
         let force = speed * (k * m).sqrt();
         let inward = force / CHEST_STIFF / CHEST_DEPTH;
-        let onset = 0.2 * (1.0 - 0.011 * (self.0.hurt.bones.age - 30.0)).clamp(0.45, 1.0) * self.grain("ribs");
+        let onset = (0.35 - 0.0055 * (self.0.hurt.bones.age - 30.0)).clamp(0.13, 0.35) * self.grain("ribs");
         let chest = self.0.segment_world(self.0.segment("chest").unwrap());
         // (The chest's ahead: its -Z, the TS's +Z.)
         let front = dir.dot(chest.rotation * Vec3::NEG_Z) < -0.5;
@@ -930,9 +934,12 @@ impl BonesOf<'_, '_> {
     }
 
     // Which place on the head a point of bone `name` (rest space) is: round an eye (the person's own eye bones) it is the
-    // eye socket, whatever bone it is; otherwise the vault's bones are its forehead, temples, sides, back and floor.
+    // eye socket, of the bones whose thin plates make its floor and inner wall and the rim below it (maxilla, cheekbone,
+    // lacrimal, ethmoid); otherwise the vault's bones are its forehead, temples, sides, back and floor. The brow above the
+    // eye is the frontal bone's thick rim, which is there to take a blow (eye-trauma.md sec. 1): taken as the eye socket
+    // (1.2 kN), a jab to the brow broke the frontal bone. The nose's bones have their own figure.
     fn place(&self, name: &str, p: Vec3) -> &'static str {
-        if !["maxilla", "zygomatic", "frontal", "nasal", "lacrimal", "ethmoid"].iter().any(|w| name.contains(w)) {
+        if !["maxilla", "zygomatic", "lacrimal", "ethmoid"].iter().any(|w| name.contains(w)) {
             return vault(name);
         }
         let body = self.0.body();
