@@ -1391,9 +1391,11 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
   joints (scaled to their spread), hung from the wrist's bone so they go with the hand:
   - a 14 oz velcro glove, lofted from cross-sections: the mitt (curled like the fist inside it, the padding thickest
     over the knuckles, 4 cm in front of them, a crease where the fingers fold into the palm), the thumb as a tube sewn
-    along the mitt's side to the tip, a white piped seam over each side, and on the forearm (hung from the forearm's
-    twist bone, so the wrist bending does not push the sleeve through it) the cuff, its white hem and a black strap
-    with a raised tab. Leather is drawn in code (worn.rs `leather`, 1024 px): grain, a tone that wanders, the striking
+    along the mitt's side to the tip, a white piped seam over each side, the cuff up the forearm with its white hem and
+    a black strap with a raised tab. Worn, it is skinned to two bones, as leather strapped round the wrist moves: in
+    front of the wrist with the hand, the cuff with the forearm's twist bone, between them by how far back (worn.rs
+    `skinned`). Hung rigidly, from the hand the cuff swung out through the sleeve as the wrist bent, and with the cuff
+    on the forearm the mitt's back hung open round it as a flap. Leather is drawn in code (worn.rs `leather`, 1024 px): grain, a tone that wanders, the striking
     face worn paler, panel seams with stitch rows and their holes in the normal map, a soft sheen (roughness about 0.5, rougher where worn and on the thread),
     not a clear coat;
   - brass knuckles: four rings round the fingers' first bones fused into one plate, the striking bar across their
