@@ -1689,7 +1689,7 @@ impl Behaviour {
         match self.mode {
             Mode::Roll => self.roll(rd, rng),
             Mode::Push | Mode::Lunge | Mode::Rise => self.rise(dt, person, rd, eye, rng),
-            Mode::Crawl => self.crawl(rd, eye),
+            Mode::Crawl => self.crawl(person, rd, eye),
             Mode::Creep => self.creep(dt, rd, eye),
             Mode::Writhe => self.writhe(dt, person, rd),
             Mode::Rest => {
@@ -2022,7 +2022,7 @@ impl Behaviour {
     }
 
     // Dragging themselves away from whoever did it, on their elbows, the legs trailing.
-    fn crawl(&mut self, rd: &mut Ragdoll, eye: Option<Vec3>) -> Pose {
+    fn crawl(&mut self, person: &Person, rd: &mut Ragdoll, eye: Option<Vec3>) -> Pose {
         let will = self.will;
         let dt = self.dt;
         // (Flat on the front first: crawling from three-quarters over, the arm underneath was dragged under the hips.)
@@ -2037,11 +2037,29 @@ impl Behaviour {
         self.phase += dt * (2.0 * PI / 1.9) * (0.5 + 0.5 * will);
         // (Into it from lying as they lay, over half a second: taken from beside the body to out past the head at once,
         // the arms were flung up through the floor and spun at 100 rad/s.)
-        let pose = poses::mix(&rest(), &crawling(self.phase), smooth(self.t / 0.5));
+        let mut pose = poses::mix(&rest(), &crawling(self.phase), smooth(self.t / 0.5));
         self.strength.leg_l *= 0.12;
         self.strength.leg_r *= 0.12;
         let f = facing(self.heading);
         let limbs = self.limbs_down(rd);
+        // The arms put where the stroke wants the hands (out past the head reaching; pulling, where the hand is planted)
+        // by arm_to, which keeps the forearm out of the trunk: posed by the stroke's angles alone, the pull folded the
+        // forearm in under the front of the chest, and the body lay on it.
+        if std::env::var("PROBE_CIK").is_ok() {
+            let chest = rd.by_name("chest");
+            let c = rd.segs[chest].now.translation;
+            for k in ['L', 'R'] {
+                if self.broken(rd, true, k) {
+                    continue;
+                }
+                let reaching = self.phase.cos() * if k == 'L' { 1.0 } else { -1.0 } > 0.0;
+                let hand = rd.middle(rd.by_name(&format!("hand{k}")));
+                let mut to = if reaching { c + f * 0.5 + right_of(f) * if k == 'R' { 0.36 } else { -0.36 } } else { hand };
+                to.y = self.floor + 0.04;
+                let reach = self.arm_to(person, rd, k, to);
+                self.reach_pose(k, &reach, smooth(self.t / 0.5), &mut pose);
+            }
+        }
         // An arm caught under the chest (the forearm in front of it, below the shoulders): that side of the chest rolled
         // up off it against the limbs on the floor and the hand swept out to the side, and no pulling with the other arm
         // until it is out. (Pulled over it, the trapped elbow was wrenched 30 to 90 degrees sideways for seconds.)
