@@ -3,14 +3,14 @@
 //
 // A person's arm (arm.rs: a person's bones, the hand closed into a fist, the elbow found between a shoulder beside and
 // below the eye and the wrist), in that person's own skin and sleeve. What is moved is the knuckles. Between punches the
-// fist is up in a guard beside the jaw. A press winds it up: it is drawn back and down toward its shoulder, that
-// shoulder taken back and the body turned away from the punch, the view leaning with it, further the longer it is held,
-// to a second. Let go, it is driven at the skin the eye looks at, if the arm reaches it (else straight out from its own
-// side of the chin), the shoulder and the body turning in behind it, and turns over from upright to most of the way
-// flat as it goes; a tap is a jab, thrown from the guard with the arm alone. It lands on the first skin its knuckles
+// fist is up in a guard beside the jaw. A press winds it up: it is cocked back by the cheek, that shoulder taken back
+// and the body turned away from the punch, the view leaning with it, further the longer it is held, to a second. Let
+// go, it is driven at the skin the eye looks at, if the arm reaches it (else straight out from its own side of the
+// chin), the shoulder and the body turning in behind it, and turns over from upright to flat, palm down, as it goes; a
+// tap is a jab, thrown from the guard with the arm alone. It lands on the first skin its knuckles
 // cross on the way (`punch`: where the fist is, not where the eye looks), with the speed it is going and the mass
-// behind it. What it lands on stops it there and it comes back off it to the guard; a miss carries it on to the end of
-// the arm and is pulled back slower.
+// behind it. What it lands on stops it there and it snaps back off it to the guard; a miss carries it on to the end of
+// the arm and back.
 //
 // The TS's numbers are in its eye frame (x right, y up, z ahead), brought over where they meet the world (weapons::e).
 
@@ -50,14 +50,16 @@ pub fn landing(charge: f32) -> (f32, f32) {
 // hand), m.
 const GUARD_R: Vec3 = Vec3::new(0.11, -0.08, 0.27);
 const GUARD_L: Vec3 = Vec3::new(0.1, -0.07, 0.31);
-const DRAWN: Vec3 = Vec3::new(0.17, -0.17, 0.12); // wound all the way up: back and down toward the shoulder
+// Wound all the way up: cocked by the cheek, back and a little down, the body turned away behind it (drawn down out of
+// sight toward the shoulder, it read as a cartoon's wind-up, not a punch being loaded).
+const DRAWN: Vec3 = Vec3::new(0.14, -0.12, 0.19);
 const LINE: Vec3 = Vec3::new(0.05, -0.06, 0.0); // where it is driven out from, straight ahead: its own side of the chin
 const MISS: f32 = 0.6; // m ahead of the eye looking level: the arm's end, nothing met (`arm_end`)
 const HANGS: Vec3 = Vec3::new(0.3, -1.0, -0.15); // the way the elbow is off the line from shoulder to fist: down, a little out
 // The body's turn (`body`, -1 wound fully away to 1 driven fully in): the punching shoulder that far back or forward (m,
 // as Arm::shift: out, up, ahead), and the view's yaw and lean with it (rad).
 const AWAY: Vec3 = Vec3::new(0.0, -0.015, -0.06);
-const INTO: Vec3 = Vec3::new(-0.03, 0.0, 0.08);
+const INTO: Vec3 = Vec3::new(-0.03, 0.0, 0.12);
 const LEAN: (f32, f32) = (0.025, 0.015);
 // What it lands with: how far the fist and arm give (N/m), the bone's pad in series (bones.rs) and the struck part's mass
 // behind it. Taken so that the elite's full punch (Walilko05's 2.9 kg at 9 m/s) to a jaw peaks at their 3.4 to 4.8 kN,
@@ -248,10 +250,12 @@ impl Fist {
         (-sign * self.body * LEAN.0, sign * self.body * LEAN.1)
     }
 
-    // At the target: stopped at the skin it met (where it was aimed, or a little nearer or further if they moved), held
-    // there a moment and back off it; or, nothing there, on to the end of the arm, the shoulder pulled after it, and
-    // slowly back. (Stopped at the skin and not on into it: the face is not dented under it, and knuckles going on two
-    // centimetres into an undented face read as a fist passing through a head.)
+    // At the target: stopped at the skin it met (where it was aimed, or a little nearer or further if they moved), for a
+    // frame, and snapped back off it to the guard; or, nothing there, on to the end of the arm, the shoulder pulled after
+    // it, and back. Back quicker than it went out, fastest as it leaves (a punch is pulled back by the same turn of the
+    // body that threw it, and a boxer's hand is back at his chin before the punch has been seen; held out a third of a
+    // second and drifting back from a slow start, it floated). (Stopped at the skin and not on into it: the face is not
+    // dented under it, and knuckles going on two centimetres into an undented face read as a fist passing through a head.)
     fn landed(&mut self, at: Option<Vec3>) {
         self.flying = false;
         let t = self.contact;
@@ -261,13 +265,13 @@ impl Fist {
         match at {
             Some(at) => {
                 self.keys[1].at = at;
-                self.keys.push(Key { at, t: t + 0.035, turn: 1.0, body: hit.body, ease: Ease::Off });
-                self.keys.push(Key { at: guard, t: t + 0.3, turn: 0.25, body: 0.0, ease: Ease::Smooth });
+                self.keys.push(Key { at, t: t + 0.02, turn: 1.0, body: hit.body, ease: Ease::Off });
+                self.keys.push(Key { at: guard, t: t + 0.18, turn: 0.25, body: 0.0, ease: Ease::Off });
             }
             None => {
                 let on = hit.at + (hit.at - self.keys[0].at).normalize() * 0.03;
-                self.keys.push(Key { at: on, t: t + 0.07, turn: 1.1, body: hit.body * 1.1, ease: Ease::Off });
-                self.keys.push(Key { at: guard, t: t + 0.45, turn: 0.25, body: 0.0, ease: Ease::Onto });
+                self.keys.push(Key { at: on, t: t + 0.03, turn: 1.0, body: hit.body * 1.1, ease: Ease::Off });
+                self.keys.push(Key { at: guard, t: t + 0.23, turn: 0.25, body: 0.0, ease: Ease::Off });
             }
         }
     }
@@ -283,13 +287,13 @@ impl Fist {
         self.at = at;
     }
 
-    // The knuckles to `at`, the fist turned `turn` of the way over from upright (its back outward) to most of the way flat
-    // (its back up). The arm is its own shoulder's: the elbow where an arm of that length from there puts it, a little
+    // The knuckles to `at`, the fist turned `turn` of the way over from upright (its back outward) to flat (its back up,
+    // the palm down, as a straight lands; it stopped at two thirds of the way, and landed on its side). The arm is its own shoulder's: the elbow where an arm of that length from there puts it, a little
     // down and out from the line to the fist; and the wrist kept straight, the knuckles in line with the forearm, so that
     // the fist turns over by the forearm rolling (a hand aimed by itself bent the wrist back and left the hand hanging
     // off it).
     fn pose(&self, arm: &mut Arm, eye: &Transform) {
-        let a = self.turn * 1.1;
+        let a = self.turn * std::f32::consts::FRAC_PI_2;
         let sign = if self.side == 'R' { 1.0 } else { -1.0 };
         let at = self.knuckles(eye);
         let shoulder = arm.shoulder(eye);
