@@ -1466,6 +1466,78 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
   - what it reads: where the player's eye and fists are (player.rs, fist.rs), its own vitals (pain, concussion,
     consciousness) to fight harder or worse.
 
+## One punch broke a bone, and the punch looked wrong (the play-test, branch port/b-six)
+
+The user, playing a913169: "the punching with and without gloves looks weird, and also does way too much damage, like
+why do I break a bone within 1 punch". Sources and figures: dev/research/fist-weapons.md sec. 1.
+
+### The damage, traced
+A punch: fist.rs `let_go` gives it a mass and speed (`landing`), `punch` lands it (wounds.rs `blow`), bones.rs `impact`
+works the peak force F = v sqrt(k m) (the fist's give and the bone's pad in series, the reduced mass of fist and struck
+part) and breaks the first bone in the way past its figure, `chest` breaks ribs by how far the chest is pushed in,
+`blow` concusses from the head, bruise.rs bruises and splits. What was wrong, in order of harm:
+1. The punch was an Olympic boxer's: a full wind-up at 10.5 m/s with 3.2 kg (176 J), a jab at 6 m/s with 1 kg. Now an
+   ordinary man's: a jab 6 m/s, 0.6 kg; full 7.5 m/s, 1.6 kg (Tao25's untrained 6 m/s, trained 8.3-8.8; a novice
+   boxer's 2.4 kN hardest straight, Smith00; professionals landing 59% of punches under 1 kN, Pierce06). Peak on the
+   face 1.2 and 2.3 kN, on the chest 0.8 and 1.5.
+2. The brow was taken for the eye socket: bones.rs `place` called any facial or frontal bone within 2 cm of an eye "eye"
+   and gave it 1.2 kN, so a punch to the brow broke the frontal bone (36 of 100 full punches to the face). The brow is
+   the frontal bone's thick rim; only the orbit's thin floor and inner wall and the rim below it (maxilla, cheekbone,
+   lacrimal, ethmoid) are the eye socket now; the nose has its own figure.
+3. Ribs broke at a fifth of the chest's depth in a 30-year-old (Kroell's figure, from old cadavers, with an age factor
+   on top of it): every full punch broke the sternum and ribs. Now Kent and Patrie's 50% points: 35% of the depth at 30,
+   13% at 70.
+4. Knockout came from the fist's energy over 160 J wherever it landed: every full punch to the head knocked out, to
+   the forehead as to the chin. Now from the turn it gives the head (wounds.rs `head_turn`): the momentum given to it
+   times its lever about the head's middle, against Walilko's measured punches to the jaw (6343 rad/s2, even odds). By
+   momentum, so gloves knock out as bare fists do (more: 0.4 kg more), as in boxing.
+5. A punch at the side of the chin passed under the jaw and broke the hyoid: a face blow now reaches the throat's
+   bones only when it lands on the throat (in_neck).
+6. The nose broke at 450 N; Cormier10's 50% is 540-600 N (now 600). The bruise dose (bruise.rs DOSE 120 J) was set so
+   the elite jab bruised; an ordinary man's jab gives Desmoulin's 5.9 N s of half-the-time bruising, so 95 J.
+The opponent's punches on the player (bout.rs `Harm::struck`, the only edit in bout.rs, and its test) concuss the same
+way (`head_turn` at the jaw's lever) instead of energy / 160.
+
+### Measured: `punch-damage` (punch_scenario.rs)
+Twenty punches of each kind at each of the five (81, 64, 41, 22 and 38 years old), each on someone unhurt (bones,
+teeth, eyes, skin and vitals put back after each), scattered about the aim: the face (nose's bridge, plus or minus 3
+cm: brows, eyes, nose, cheeks), the jaw (chin and both sides), the chest. Mean peak force, and of 100 how many broke a
+bone, bruised, split the skin, knocked out; the old man's breaks of his 20. (The jaw's aim was raised 2.5 cm and the
+line flattened for "after", having fallen partly on the throat: its rows are not quite like for like.)
+
+| fist | punch | at | N | broke | old man | bruised | split | knocked out |
+|---|---|---|---|---|---|---|---|---|
+| bare | quick | face | 1551 -> 1236 | 18 -> 12 | 12 -> 4 | 84 -> 60 | 0 -> 0 | 5 -> 0 |
+| bare | quick | jaw | 1522 -> 1238 | 12 -> 0 | 5 -> 0 | 88 -> 1 | 0 -> 0 | 0 -> 0 |
+| bare | quick | chest | 986 -> 770 | 20 -> 0 | 20 -> 0 | 48 -> 10 | 0 -> 0 | 0 -> 0 |
+| bare | charged | face | 4294 -> 2381 | 49 -> 11 | 11 -> 3 | 100 -> 100 | 92 -> 0 | 100 -> 0 |
+| bare | charged | jaw | 4173 -> 2359 | 47 -> 24 | 11 -> 12 | 99 -> 100 | 0 -> 0 | 22 -> 12 |
+| bare | charged | chest | 2957 -> 1540 | 100 -> 35 | 20 -> 20 | 100 -> 100 | 0 -> 0 | 0 -> 0 |
+| gloves | quick | face | 928 -> 806 | 7 -> 0 | 0 -> 0 | 100 -> 100 | 0 -> 0 | 0 -> 0 |
+| gloves | quick | jaw | 926 -> 806 | 1 -> 0 | 1 -> 0 | 99 -> 100 | 0 -> 0 | 0 -> 0 |
+| gloves | quick | chest | 822 -> 700 | 10 -> 0 | 10 -> 0 | 85 -> 83 | 0 -> 0 | 0 -> 0 |
+| gloves | charged | face | 2298 -> 1336 | 63 -> 13 | 20 -> 5 | 100 -> 100 | 100 -> 0 | 89 -> 0 |
+| gloves | charged | jaw | 2289 -> 1337 | 8 -> 0 | 3 -> 0 | 100 -> 100 | 5 -> 0 | 6 -> 26 |
+| gloves | charged | chest | 2211 -> 1213 | 100 -> 13 | 20 -> 13 | 100 -> 100 | 0 -> 0 | 0 -> 0 |
+| dusters | quick | face | 2053 -> 1726 | 48 -> 27 | 11 -> 7 | 100 -> 100 | 0 -> 0 | 18 -> 0 |
+| dusters | quick | jaw | 1989 -> 1732 | 28 -> 29 | 11 -> 10 | 96 -> 100 | 0 -> 0 | 0 -> 0 |
+| dusters | quick | chest | 1147 -> 944 | 28 -> 0 | 20 -> 0 | 100 -> 100 | 0 -> 0 | 0 -> 0 |
+| dusters | charged | face | 5366 -> 3054 | 68 -> 16 | 20 -> 4 | 100 -> 100 | 100 -> 92 | 97 -> 0 |
+| dusters | charged | jaw | 5337 -> 3033 | 64 -> 57 | 20 -> 12 | 100 -> 100 | 81 -> 61 | 42 -> 16 |
+| dusters | charged | chest | 3238 -> 1735 | 100 -> 40 | 20 -> 20 | 100 -> 100 | 93 -> 0 | 0 -> 0 |
+
+What breaks now (of 100): a bare jab, the nose (11) and nothing else; a full bare punch, the nose or the maxilla to the
+face (11), the jaw (24: 12 of them the old man's, 5 the 64-year-old's, 7 the 38-year-old's), ribs (35: all the old
+man's 20, the 64-year-old's 15, none in the three younger); gloves, the nose on 13 full punches to the face, the old
+man's ribs; dusters, the jaw on 29 jabs and 57 full punches, the maxilla and nose. Knockouts only from the jaw: bare
+full 12, gloved full 26, dusters 16; none from the face or a jab.
+
+Not changed, and worth a look: the face bones' figures are Nahum's, from elderly cadavers, used as a young man's and
+then lowered again for age (as Kroell's were for the ribs), so the old man may be double counted; a full bare punch
+breaks the 38-year-old's jaw 7 times in 20 (the mandible at 1.8 kN, inside Nahum's 0.82-3.4); the glove's peak force
+and the fist's give are calibrated on the same gloved measurements, so the glove's foam may be counted twice (its
+fractures are rarer than they would be, its knockouts are by momentum and not affected).
+
 ## The active ragdoll (BACKLOG item 4 and item 7's joint loose ends, branch port/b-ragdoll)
 
 ### What is measured now
