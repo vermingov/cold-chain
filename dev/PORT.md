@@ -1594,10 +1594,23 @@ taken, "fell" with why.
   Made the default (commit 77a8e89). Getup seeds 1-3: 14 of 15 standing at 15 s (one never got up off all fours, as
   before), none fell again. Shoves on it: 120 N s, all ten fall after 1 to 4 steps (one "far"); 80 N s seed 1, behind
   falls after 3 steps, front after 7, the sides recover in 2 and 5.
-Fighting footwork: steps forced on the feet toward range (`start_step` at a point toward the player) put the opponent on
-the floor within a second of the first step in, every time; re-aimed every frame at the capture point the step was
-pulled back first, and its swing's pull on the hip (some 60 N s) drove the body back. Now the balance's aim leans up to
-12 cm toward the range wanted and the ordinary stepping catches it.
+The opponent's fighting (behaviour.rs `fight`, bout.rs `landed` and `spar`; `--scenario spar`, SPAR_HALL=1 for the
+groundskeeper in the hall instead of the ring, SPAR_NEAR=1 with the player 0.85 m off, SPAR_SHORT=1 for the twelve
+seconds of sparring alone). An `Opponent` turns to face the player (at most 9 rad/s), holds a guard (hands at the jaw,
+elbows in, chin down, knees soft; tighter, chin further down, while a fist of the player's is flying, fist.rs
+`Fists::flying`; sagging with daze), and in reach throws a jab (left, 65%) or a straight (right, the trunk turned behind
+it) at the head (70%) or the body every 0.7 to 2 s (slower dazed): the arm's pose thrown straight and the hand driven at
+a point 10 cm through the target over 130 ms, back over 220 ms. Where the hand meets the player's capsule, what it
+carries goes to `Harm::struck`: the hand's speed toward the player and the hand and forearm's mass (and the upper arm's,
+a straight's). Struck, the reactions are the ones there were (flinch, guard, winded, stagger, fall, get up).
+- Footwork is off (`PROBE_WALK=1` turns on what there is). Four ways were tried and each backed the opponent away from
+  the player until he fell: steps forced at a point toward range (re-aimed at the capture point each frame, they came
+  back; kept to their mark, the swing's pull on the hip drove the body back); the balance's aim leaned 12 cm toward range
+  (the push dies at the edge of the feet: he stood on his toes); leaned 20 cm with the step taken at the edge and landing
+  as far again toward range, and its swing paid through the planted foot, and the hip strategy measured from the aim
+  (each step in, a foot ended up 28 cm further back and the weight went after it). Not found yet.
+- First punches, paid by the chest at 220-320 N, shoved the puncher back about 40 N s each and he put himself down; now
+  paid through the feet on the floor at 150/220 N.
 Crawl elbows: the jitter's worst was one person's elbow held 30-90 degrees sideways for seconds, an arm caught under the
 chest. Two ways in: rolled onto it (the arm on the side they roll to was posed at their side; now up past the head), and
 the crawl's own pull pose (elbow 100 degrees, shoulder flexed) folding the forearm under the front of the chest each
