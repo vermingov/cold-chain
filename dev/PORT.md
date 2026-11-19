@@ -1609,8 +1609,20 @@ a straight's). Struck, the reactions are the ones there were (flinch, guard, win
   (the push dies at the edge of the feet: he stood on his toes); leaned 20 cm with the step taken at the edge and landing
   as far again toward range, and its swing paid through the planted foot, and the hip strategy measured from the aim
   (each step in, a foot ended up 28 cm further back and the weight went after it). Not found yet.
-- First punches, paid by the chest at 220-320 N, shoved the puncher back about 40 N s each and he put himself down; now
-  paid through the feet on the floor at 150/220 N.
+- Punches: paid by the chest (220-320 N) each shoved the puncher back about 40 N s and he put himself down; now paid
+  through the feet on the floor, 300 N a jab and 450 a straight. The hand is stopped by the player's capsule 8 cm off its
+  skin, so a hit is the hand within 12 cm of it, and what it carries is the hand's fastest toward the player during the
+  punch (read at the closest point, after it was stopped, it was 0 to 2 m/s). The mass is what the fist carries, not
+  the arm's segments summed: the hand and half the forearm for a jab, the forearm and half the upper arm too for a
+  straight (about fist.rs's 1 and 3.2 kg; summed, the first jab alone gave 0.42 concussion).
+- The guard has no crouch: knees 14 and hips 8 degrees bent against the hips' upright muscles crept the opponent back 20
+  cm in five seconds until he fell; without, he stood 12 s within 0.81-0.93 m of the player.
+- `spar` (the hall, the player 0.7 m off, still), final build: 5 punches landed in 6 s, the player's concussion 0.31
+  after the first, 0.58 after five, pain 0.27, not knocked out. Each jab about 50 J (fist.rs's jab is 18 J: they are
+  quick, some 9.5 m/s). He backs off his own punches as they meet the player's 80 kg body (0.69 to 1.05 m) and goes
+  down at 6.5 s; three hard blows to the head put him down and he gets up twice in fifteen seconds.
+- Open: footwork; the backing off (a punch's meeting the player is not taken through the stance); the jab's speed (the
+  drive could be eased); a punch is thrown at the head where it is, not led; nothing yet slips, blocks or counters.
 Crawl elbows: the jitter's worst was one person's elbow held 30-90 degrees sideways for seconds, an arm caught under the
 chest. Two ways in: rolled onto it (the arm on the side they roll to was posed at their side; now up past the head), and
 the crawl's own pull pose (elbow 100 degrees, shoulder flexed) folding the forearm under the front of the chest each
@@ -1621,6 +1633,9 @@ Further tries (worst elbow, seeds 1-2): the trapped test widened to the forearm 
 75.7, 56.4; the pull pose with less elbow (70) and more abduction (60), 71.4, 58.7; the arms posed by `arm_to` (which
 keeps the forearm out of the trunk) to the reach spot and the planted hand, 99 and 134 (worse); shoulder flexion 140,
 abduction 60, elbow 90 in the pull (the upper arm nearer the floor than pointing into it), 52.5, 45.0. Not under 10 yet.
+Final build, seed 1: getup 4 of 5 standing (one got up and went down again at 12 s; the stagger build had 5 of 5 on this
+seed, and nothing for those not fighting has changed since but the merged code and a term that matters only dazed);
+shove 80 N s, behind falls after 4 steps, front after 7, the sides recover in 2 (one right in 12); crawl, worst elbow 51.
 Standing creep and the thrown dead man's jitter, which one seed each had made look worse: this branch's two physics
 changes (no gyroscopic term, joints corrected at 30 a second) off ("old") and on ("new"), three seeds each. Creep, the five
 people's cm in ten seconds: old 4.8-13.5, 2.1-13.4, 3.1-15.8 (mean 9.8); new 6.0-13.6, 2.3-13.0, 3.2-15.2 (mean 9.6).
