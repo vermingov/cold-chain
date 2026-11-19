@@ -402,6 +402,7 @@ pub fn spar() -> Vec<crate::scenario::Step> {
                     p.yaw = (-d.x).atan2(-d.z);
                 }
             })));
+            s.push(Step::Wait(1));
             if frame % 30 == 29 {
                 s.push(report("followed"));
             }
