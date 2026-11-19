@@ -1405,6 +1405,8 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
     colour.
   `worn-gloves`, `worn-dusters`: the pair at rest in guard and lowered, then one full right close up, a shot every two
   frames through the throw.
+  `warm` holds each in hand during the warm-up (the fists raised, so both are worn, skinned and the brass polished):
+  none made after it (147 pipelines, 0 after the warm-up, merged with bevy-port at 72dd856).
   The left hand's are the right's mirrored. On the board (arsenal.rs, the bottom row): a pair of each, gloves hung by
   their cuffs, dusters flat.
 - Not modelled: the wearer's hand (the bare fist's boxer's fracture, the dusters' and gloves' protection of it): the
