@@ -533,6 +533,14 @@ fn lips(world: &mut World, who: Entity, o: &Opening) -> Vec<Option<Crossing>> {
                 // through in a slope: no band of the layers round it, only the raw edge.)
                 let wide = if o.torn { 0.0025 } else { (0.006 + o.half[1] * 0.25).min(0.015) };
                 sk.lip(&edge, wide, 0.014, &mut rng);
+                // The skin round a hole burst open is blood all round it at once (what the wall bleeds and the blast
+                // threw back): without it the skin under the clothes showed clean and pale between the shirt's frayed
+                // edge and the wound's.
+                if o.torn {
+                    for c in edge.iter().step_by(4) {
+                        sk.blot(c, 0.012, 0.3, &mut rng);
+                    }
+                }
             }
         });
     }
@@ -1212,7 +1220,7 @@ pub fn update_system(
                     let at = inv.transform_point3(v.loops[k].p[i]);
                     let mm = v.blood_at(at);
                     // (A film where the organ was bled on, in patches: soaked through it reads as red paint.)
-                    v.loops[k].gore[i] = v.loops[k].gore[i].max(mm.min(0.035));
+                    v.loops[k].gore[i] = v.loops[k].gore[i].max(mm.min(0.012));
                 }
             }
         }
