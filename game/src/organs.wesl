@@ -61,8 +61,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
     let mm = in.color.a;
     if wet.look.w < 0.5 {
-        // A rope of bowel: its own picture (the corners' colour is white), blood over it.
-        pbr_input.material.base_color = vec4(blood_over(pbr_input.material.base_color.rgb, mm, 1.0), 1.0);
+        // A rope of bowel: its own picture (the corners' colour is white), blood over it in smears, the pink serosa
+        // between (a film over all of it read as red plastic).
+        // (By its picture's place, which goes with it as it moves.)
+        let q = vec3(in.uv.x * 9.0, in.uv.y * 3.0, 0.5);
+        let smears = smoothstep(0.35, 0.8, wet_noise(q * 2.0 + 3.0) * 0.7 + wet_noise(q * 7.0) * 0.3);
+        pbr_input.material.base_color = vec4(blood_over(pbr_input.material.base_color.rgb, mm * mix(0.1, 1.3, smears), 1.0), 1.0);
     } else {
         let p = in.color.rgb;
         let px = max(length(dpdx(p)), length(dpdy(p)));

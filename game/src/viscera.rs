@@ -769,7 +769,7 @@ impl Loop {
                 if !self.out[i] {
                     if through && hn > r * 0.5 {
                         self.out[i] = true;
-                        self.gore[i] = self.gore[i].max(0.004 + rng.next() * 0.025);
+                        self.gore[i] = self.gore[i].max(0.002 + rng.next() * 0.012);
                         self.bloody = true;
                         continue;
                     }
@@ -1012,7 +1012,9 @@ fn organs(v: &mut Viscera, person: &Person, hurt: &Hurt, anatomy: &Anatomy, comm
     let normal = &anatomy.bodies[&person.body.name].normal;
     let mut groups: Vec<(String, Vec<(usize, &[u32])>)> = Vec::new();
     for (pi, part) in traced.parts.iter().enumerate() {
-        if !shown(&part.kind, &part.name) {
+        // (The bowel, colon and stomach behind an opening in the belly are its ropes, soft and round: the anatomy's
+        // own clusters of them are flat facets, which showed as shards in the hole.)
+        if !shown(&part.kind, &part.name) || (ROPES.iter().any(|r| r.0 == part.kind) && v.loops.iter().any(|l| l.kind == part.kind)) {
             continue;
         }
         for c in &part.clusters {
