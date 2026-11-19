@@ -290,7 +290,7 @@ struct Stepping {
     t: f32,
     length: f32,
     closing: bool,
-    // Taken on purpose (fighting's footwork): its swing paid through the planted leg.
+    // Taken on purpose (fighting's footwork), for the step probe.
     meant: bool,
     // Where the planted foot and the weight were as it began (PROBE_STEPS).
     stance0: Vec3,
@@ -1079,10 +1079,22 @@ impl Behaviour {
             let through = at + ahead * 0.1;
             let feet: Vec<usize> = feet.iter().copied().filter(|&f| rd.lowest(f) < self.floor + TOUCH).collect();
             let against = if feet.is_empty() { vec![chest] } else { feet };
+            // No faster than a fist goes: an untrained man's jab about 5.5 m/s and his straight 7, under the 8.2 m/s of
+            // competition boxers' single cross (Piorkowski, Lees and Barton 2011; PORT.md). Driven to the point alone, a
+            // jab came in at some 9.5 m/s.
+            let fastest = if straight { 7.0 } else { 5.5 };
             self.act(move |rd, dt| {
-                let force = motor::reach(rd, hand, through, 900.0, 2.0, most, None);
+                let mut force = motor::reach(rd, hand, through, 900.0, 2.0, most, None);
+                let way = (through - rd.middle(hand)).normalize_or_zero();
+                let going = rd.segs[hand].vel.dot(way);
+                if going > fastest && force.dot(way) > 0.0 {
+                    force -= way * force.dot(way);
+                }
                 motor::push(rd, hand, force, &against, dt);
             });
+        }
+        if std::env::var("PROBE_STEPS").is_ok() && pt + dt > OUT + BACK {
+            eprintln!("PROBE punch {k} peak {fast:.1} m/s landed {landed}");
         }
         // Landed: the hand at the player's body (its capsule, from the knees to the crown, 0.25 m round).
         let h = rd.middle(hand);
@@ -1174,12 +1186,13 @@ impl Behaviour {
             st.t += dt;
             (clamp(st.t / st.length), st.length, st.closing)
         };
-        let reach_fix = std::env::var("PROBE_REACH").is_ok();
         let st_side = self.step.as_ref().unwrap().side;
+        // Up off the floor until it is over its mark: put down when its time was up wherever it had got to, a step
+        // landed 30 to 60% of the way (the leg follows its mark late), and the weight ran on past feet left short.
         let swing_now = rd.middle(self.step.as_ref().unwrap().swing);
         let off_mark = { let d = self.step.as_ref().unwrap().to - swing_now; d.x.hypot(d.z) };
         let near = off_mark < 0.06;
-        let lift = if reach_fix && s > 0.5 && !near { (0.06 * (PI * s).sin()).max(0.03) } else { 0.06 * (PI * s).sin() };
+        let lift = if s > 0.5 && !near { (0.06 * (PI * s).sin()).max(0.03) } else { 0.06 * (PI * s).sin() };
         if s < 0.95 && !closing {
             let to = self.landing(rd, xi, st_side, r);
             self.step.as_mut().unwrap().to = to;
@@ -1195,17 +1208,16 @@ impl Behaviour {
         self.leg_to(rd, st_side, ankle, pose, f, None, true, None);
         add(pose, side("ankle", st_side), 8.0 * (PI * s).sin());
         // The foot carried to its place by the leg's own muscles, the hip taking the pull.
-        let most = if reach_fix { 400.0 } else { 220.0 } * self.strength.get(Part::leg(st_side));
-        // (A step on purpose pays through the planted leg into the floor, as pushing off it does: paid by the hip alone,
-        // each step in sent the body back some 60 N s and they backed away from the player and fell.)
-        let pelvis = if st.meant { rd.by_name(&format!("foot{}", other(st_side))) } else { rd.by_name("pelvis") };
+        let most = 400.0 * self.strength.get(Part::leg(st_side));
+        // (Paid by the hip, inside the body. Paid by the planted foot, for a step on purpose, it shoved that foot back
+        // along the floor, 0.4 to 1 m a step at 220 to 400 N, and the weight went after it: the feet left behind.)
+        let pelvis = rd.by_name("pelvis");
         self.act(move |rd, dt| {
             let force = motor::reach(rd, swing, middle, 300.0, 6.0, most, None);
             motor::push(rd, swing, force, &[pelvis], dt);
         });
         // Down when it touches: a foot kept hovering for its mark let the weight run on past the other one.
-        let done = if reach_fix { (s >= 1.0 && near && rd.lowest(swing) < self.floor + TOUCH) || t > length + 0.3 }
-            else { (s >= 1.0 && rd.lowest(swing) < self.floor + TOUCH) || t > length + 0.15 };
+        let done = (s >= 1.0 && near && rd.lowest(swing) < self.floor + TOUCH) || t > length + 0.3;
         if done {
             if std::env::var("PROBE_STEPS").is_ok() {
                 let st = self.step.as_ref().unwrap();
