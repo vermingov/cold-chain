@@ -290,6 +290,9 @@ struct Stepping {
     closing: bool,
     // Taken on purpose (fighting's footwork): its swing paid through the planted leg.
     meant: bool,
+    // Where the planted foot and the weight were as it began (PROBE_STEPS).
+    stance0: Vec3,
+    com0: Vec3,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1127,6 +1130,8 @@ impl Behaviour {
             length: (0.18 + 0.15 * here.distance(landing)).clamp(0.2, 0.3),
             closing: false,
             meant: false,
+            stance0: rd.segs[rd.by_name(&format!("foot{}", other(s)))].now.translation,
+            com0: self.com,
         });
         self.steps += 1;
         self.stepped += 1;
@@ -1191,6 +1196,17 @@ impl Behaviour {
         });
         // Down when it touches: a foot kept hovering for its mark let the weight run on past the other one.
         if (s >= 1.0 && rd.lowest(swing) < self.floor + TOUCH) || t > length + 0.15 {
+            if std::env::var("PROBE_STEPS").is_ok() {
+                let st = self.step.as_ref().unwrap();
+                // Along the line to the player (or the way they face), metres.
+                let a = self.foe.map(|foe| { let d = foe.eye - self.com; Vec3::new(d.x, 0.0, d.z).normalize_or(f) }).unwrap_or(f);
+                let stance = rd.segs[rd.by_name(&format!("foot{}", other(st_side)))].now.translation;
+                let pelvis_tip = (rd.segs[rd.by_name("pelvis")].now.rotation * Vec3::Y).dot(a);
+                let chest_tip = (rd.segs[rd.by_name("chest")].now.rotation * Vec3::Y).dot(a);
+                eprintln!("PROBE step {} meant {} t {:.2} from {:.2} mark {:.2} landed {:.2} stance slip {:.3} com {:.2} -> {:.2} xi {:.2} vel {:.2} tip pelvis {:.2} chest {:.2}",
+                    st_side, st.meant, t, st.from.dot(a), st.to.dot(a), rd.middle(swing).dot(a), (stance - st.stance0).dot(a), st.com0.dot(a), self.com.dot(a),
+                    xi.dot(a), self.vel.dot(a), pelvis_tip, chest_tip);
+            }
             self.step = None;
         }
     }

@@ -27,6 +27,10 @@ pub struct Opponent {
     pub down: f32,
 }
 
+// Where the scripted player of `spar` (SPAR_MOVE) goes round, and the bearing they start at.
+#[derive(Resource, Clone, Copy)]
+struct Circle(Vec3, f32);
+
 // Somebody shoved at the ropes in the `ring` scenario.
 #[derive(Component)]
 struct Shoved;
@@ -366,15 +370,47 @@ pub fn spar() -> Vec<crate::scenario::Step> {
             let Some(e) = opponent(w) else { return };
             let p = w.query::<&Player>().iter(w).next().map(|p| Vec3::new(p.pos.x, 0.0, p.pos.y)).unwrap_or_default();
             let eye = w.query::<&Player>().iter(w).next().map(|p| p.eye().translation).unwrap_or_default();
-            let (state, mode) = w.get::<crate::behaviour::Behaviour>(e).map(|b| (format!("{:?}", b.state), format!("{:?}", b.mode))).unwrap_or_default();
+            let (state, mode, stepped) = w.get::<crate::behaviour::Behaviour>(e).map(|b| (format!("{:?}", b.state), format!("{:?}", b.mode), b.stepped)).unwrap_or_default();
             let c = w.get::<Ragdoll>(e).map(|rd| rd.middle(rd.by_name("chest"))).unwrap_or_default();
             let h = w.resource::<Harm>();
             let (blows, conc, pain, out) = (h.blows, h.concussion, h.pain, h.out);
             log(w, json!({ "event": what, "apart": Vec3::new(c.x - p.x, 0.0, c.z - p.z).length(), "state": state, "mode": mode,
-                "blows_on_player": blows, "concussion": conc, "pain": pain, "out_s": out,
+                "stepped": stepped, "blows_on_player": blows, "concussion": conc, "pain": pain, "out_s": out,
                 "chest": (c * 100.0).round() / 100.0, "eye": (eye * 100.0).round() / 100.0 }));
         }))
     };
+    // SPAR_MOVE: a minute of the player going round the opponent's first place at about 0.3 m/s, coming in to 0.9 m
+    // and backing off to 1.7 m every eighteen seconds, always looking at him: whether he follows on his feet.
+    if std::env::var("SPAR_MOVE").is_ok() {
+        s.push(Step::Do(Box::new(move |w: &mut World| {
+            let Some(e) = opponent(w) else { return };
+            let c = w.get::<Ragdoll>(e).map(|rd| rd.middle(rd.by_name("chest"))).unwrap_or_default();
+            let p = w.query::<&Player>().iter(w).next().map(|p| Vec3::new(p.pos.x, 0.0, p.pos.y)).unwrap_or_default();
+            w.insert_resource(Circle(Vec3::new(c.x, 0.0, c.z), (p.z - c.z).atan2(p.x - c.x)));
+        })));
+        for frame in 0..60 * 60 {
+            s.push(Step::Do(Box::new(move |w: &mut World| {
+                let Circle(at, from) = *w.resource::<Circle>();
+                let t = frame as f32 / 60.0;
+                let r = 1.3 - 0.4 * (t * std::f32::consts::TAU / 18.0).cos();
+                let a = from + 0.25 * t;
+                let pos = at + Vec3::new(a.cos(), 0.0, a.sin()) * r;
+                let him = opponent(w).and_then(|e| w.get::<Ragdoll>(e).map(|rd| rd.middle(rd.by_name("chest")))).unwrap_or(at);
+                for mut p in w.query::<&mut Player>().iter_mut(w) {
+                    p.pos = Vec2::new(pos.x, pos.z);
+                    let d = him - Vec3::new(pos.x, 0.0, pos.z);
+                    p.yaw = (-d.x).atan2(-d.z);
+                }
+            })));
+            if frame % 30 == 29 {
+                s.push(report("followed"));
+            }
+            if frame % 900 == 450 {
+                s.push(Step::Shot(format!("follow_{}", frame / 900)));
+            }
+        }
+        return s;
+    }
     for k in 0..24 {
         s.push(Step::Wait(30));
         s.push(report("sparring"));
