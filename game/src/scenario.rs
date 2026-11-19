@@ -172,6 +172,8 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "ring" => s = crate::bout::scenario(),
         "punches-dusters" => s = crate::fist::scenario("dusters"),
         "punches-gloves" => s = crate::fist::scenario("gloves"),
+        "worn-gloves" => s = crate::fist::look("gloves"),
+        "worn-dusters" => s = crate::fist::look("dusters"),
         "blasts" => s = crate::weapons::blasts(),
         "wounds" => s = wounds(),
         "cut" => s = crate::cut_scenario::steps(""),

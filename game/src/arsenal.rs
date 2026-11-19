@@ -121,7 +121,7 @@ fn build(
     models.prepare(&[BOX], &assets, &mut meshes, &mut materials);
     let kits = kit(&mut meshes, &mut materials, &mut images, &mut rng);
     let fists = wraps(&mut meshes, &mut materials);
-    let worn: Vec<(&str, Vec<Piece>)> = ["dusters", "gloves"].into_iter().filter_map(|k| Some((k, crate::worn::board(k, &mut made, &mut meshes, &mut materials)?))).collect();
+    let worn: Vec<(&str, Vec<Piece>)> = ["dusters", "gloves"].into_iter().filter_map(|k| Some((k, crate::worn::board(k, &mut made, &mut meshes, &mut materials, &mut images)?))).collect();
     let mut arsenal = Arsenal::default();
     for (y, keys) in ROWS {
         // Each thing as it will hang (its turn) and its box so turned, in the TS's space.

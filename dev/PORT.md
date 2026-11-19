@@ -1389,10 +1389,24 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
     and momentum (so concussion and knockout as bare, wounds.rs's head blow being by energy).
 - Built in code (worn.rs), in the closed fist's own frame and laid on each of the player's fists by its four knuckle
   joints (scaled to their spread), hung from the wrist's bone so they go with the hand:
-  - a 14 oz glove: a padded mitt (a superellipsoid 13 x 11 x 21 cm, 4 cm in front of the knuckles), the thumb sewn
-    to its side, a cuff 11 cm up the forearm and its strap; red leather with a clear coat;
+  - a 14 oz velcro glove, lofted from cross-sections: the mitt (curled like the fist inside it, the padding thickest
+    over the knuckles, 4 cm in front of them, a crease where the fingers fold into the palm), the thumb as a tube sewn
+    along the mitt's side to the tip, a white piped seam over each side, the cuff up the forearm with its white hem and
+    a black strap with a raised tab. Worn, it is skinned to two bones, as leather strapped round the wrist moves: in
+    front of the wrist with the hand, the cuff with the forearm's twist bone, between them by how far back (worn.rs
+    `skinned`). Hung rigidly, from the hand the cuff swung out through the sleeve as the wrist bent, and with the cuff
+    on the forearm the mitt's back hung open round it as a flap. Leather is drawn in code (worn.rs `leather`, 1024 px): grain, a tone that wanders, the striking
+    face worn paler, panel seams with stitch rows and their holes in the normal map, a soft sheen (roughness about 0.5, rougher where worn and on the thread),
+    not a clear coat;
   - brass knuckles: four rings round the fingers' first bones fused into one plate, the striking bar across their
-    fronts, a grip in the palm joined at either end.
+    fronts, a grip in the palm joined at either end. Metals read dark in the hall because its fill light has no
+    specular (map.rs), so brass is `worn::Metal`, an extension of the standard material (polished.wesl) that adds the
+    hall's own faces (wet.rs `Hall`, as the wet look uses them) as the reflection, with a Schlick fresnel off the brass
+    colour.
+  `worn-gloves`, `worn-dusters`: the pair at rest in guard and lowered, then one full right close up, a shot every two
+  frames through the throw.
+  `warm` holds each in hand during the warm-up (the fists raised, so both are worn, skinned and the brass polished):
+  none made after it (147 pipelines, 0 after the warm-up, merged with bevy-port at 72dd856).
   The left hand's are the right's mirrored. On the board (arsenal.rs, the bottom row): a pair of each, gloves hung by
   their cuffs, dusters flat.
 - Not modelled: the wearer's hand (the bare fist's boxer's fracture, the dusters' and gloves' protection of it): the
