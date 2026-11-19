@@ -325,3 +325,75 @@ pub fn scenario() -> Vec<crate::scenario::Step> {
     s.extend(view("next_opponent", 3.0, -1.0, [4.5, 1.0, -6.5], 1.65));
     s
 }
+
+// The opponent's fighting (behaviour.rs `fight`): the player in the middle of the ring, still, facing the corner the
+// opponent comes in at; twelve seconds of what the opponent does (how far off, standing or not, punches landed and what
+// they did to the player), then blows to the opponent's head as the player's fists give them (behaviour.rs `hit`): six
+// light, a second apart, then three hard together, and fifteen seconds to see them go down and get up.
+pub fn spar() -> Vec<crate::scenario::Step> {
+    use crate::scenario::{log, Step};
+    use bevy::ecs::system::RunSystemOnce;
+    use serde_json::json;
+    let opponent = |w: &mut World| -> Option<Entity> { w.query_filtered::<Entity, With<Opponent>>().iter(w).next() };
+    let mut s = vec![Step::Wait(30)];
+    s.push(Step::Do(Box::new(|w: &mut World| {
+        w.resource_scope(|w, map: Mut<crate::map::Map>| {
+            let (mid, corner) = (RING.middle(), RING.corner(2));
+            for mut p in w.query::<&mut Player>().iter_mut(w) {
+                p.spawn(&map, mid.x, mid.z, Some(corner + Vec3::Y * 1.4), 1.65);
+            }
+        });
+        let _ = w.run_system_once(call);
+    })));
+    let report = move |what: &'static str| {
+        Step::Do(Box::new(move |w: &mut World| {
+            let Some(e) = opponent(w) else { return };
+            let p = w.query::<&Player>().iter(w).next().map(|p| Vec3::new(p.pos.x, 0.0, p.pos.y)).unwrap_or_default();
+            let (state, mode) = w.get::<crate::behaviour::Behaviour>(e).map(|b| (format!("{:?}", b.state), format!("{:?}", b.mode))).unwrap_or_default();
+            let c = w.get::<Ragdoll>(e).map(|rd| rd.middle(rd.by_name("chest"))).unwrap_or_default();
+            let h = w.resource::<Harm>();
+            let (blows, conc, pain, out) = (h.blows, h.concussion, h.pain, h.out);
+            log(w, json!({ "event": what, "apart": Vec3::new(c.x - p.x, 0.0, c.z - p.z).length(), "state": state, "mode": mode,
+                "blows_on_player": blows, "concussion": conc, "pain": pain, "out_s": out }));
+        }))
+    };
+    for k in 0..24 {
+        s.push(Step::Wait(30));
+        s.push(report("sparring"));
+        if k % 6 == 5 {
+            s.push(Step::Shot(format!("spar_{}", k / 6)));
+        }
+    }
+    let blow = move |n: f32| {
+        Step::Do(Box::new(move |w: &mut World| {
+            let Some(e) = opponent(w) else { return };
+            let p = w.query::<&Player>().iter(w).next().map(|p| p.eye().translation).unwrap_or_default();
+            w.resource_scope(|w, mut rng: Mut<crate::rng::Rng>| {
+                let mut q = w.query::<(&mut Ragdoll, &mut crate::behaviour::Behaviour, &Transform)>();
+                let Ok((mut rd, mut b, root)) = q.get_mut(w, e) else { return };
+                let head = rd.by_name("head");
+                let at = rd.middle(head);
+                let way = Vec3::new(at.x - p.x, 0.0, at.z - p.z).normalize_or(Vec3::X);
+                b.hit(&mut rd, root, &mut rng, head, way * n, at - way * 0.08, 0.5);
+            });
+        }))
+    };
+    for _ in 0..6 {
+        s.push(blow(6.0));
+        s.push(Step::Wait(60));
+        s.push(report("struck lightly"));
+    }
+    s.push(Step::Shot("spar_struck".into()));
+    for _ in 0..3 {
+        s.push(blow(30.0));
+        s.push(Step::Wait(4));
+    }
+    for k in 0..30 {
+        s.push(Step::Wait(30));
+        s.push(report("struck hard"));
+        if k % 10 == 3 {
+            s.push(Step::Shot(format!("spar_down_{}", k / 10)));
+        }
+    }
+    s
+}

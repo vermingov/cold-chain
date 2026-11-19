@@ -170,6 +170,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "viewmodel" => s = crate::weapons::viewmodel(),
         "punches" => s = crate::fist::scenario("fists"),
         "ring" => s = crate::bout::scenario(),
+        "spar" => s = crate::bout::spar(),
         "punches-dusters" => s = crate::fist::scenario("dusters"),
         "punches-gloves" => s = crate::fist::scenario("gloves"),
         "blasts" => s = crate::weapons::blasts(),
