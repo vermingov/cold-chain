@@ -951,15 +951,6 @@ impl Behaviour {
         // (Leaning toward range, each step lands as far again toward it: put down just past where the weight would stop,
         // the steps were a centimetre or two and they shuffled 15 cm in twelve seconds.)
         let goal = if leaning { xi + lean } else { xi };
-        if let (Some(foe), true) = (self.foe, std::env::var("PROBE_FIGHT").is_ok() && (self.clock * 4.0).fract() < dt * 4.0) {
-            let mut a = foe.eye - self.com;
-            a.y = 0.0;
-            let a = a.normalize_or_zero();
-            let along = |v: Vec3| (v - foe.eye).dot(a);
-            eprintln!("PROBE walk feet {:.2} {:.2} com {:.2} xi {:.2} aim {:.2} mark {:?} side {:?} f.a {:.2} leaning {}", along(rd.segs[feet[0]].now.translation),
-                along(rd.segs[feet[1]].now.translation), along(self.com), along(xi), along(aim), self.step.as_ref().map(|s| (along(s.to) * 100.0).round() / 100.0),
-                self.step.as_ref().map(|s| s.side), f.dot(a), leaning);
-        }
         if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if leaning { -0.06 } else if self.settle > 0.0 { 0.1 } else { 0.08 })) {
             if self.steps >= STEPS || xi.distance(centre) > REACH * 1.4 {
                 self.why = if self.steps >= STEPS { "steps" } else { "far" };
@@ -1034,9 +1025,6 @@ impl Behaviour {
             add(pose, side("thumbIn", k), -55.0);
         }
 
-        if std::env::var("PROBE_FIGHT").is_ok() && (self.clock * 2.0).fract() < dt * 2.0 {
-            eprintln!("PROBE fight d {d:.2} step {} punch {} next_punch {:.2} steps {}", self.step.is_some(), self.punch.is_some(), self.next_punch, self.steps);
-        }
         // Footwork: leaning in when out of reach, back when crowded (off: see below).
         let range = 0.8;
         // shortcut: no footwork yet, they hold their ground (leaning toward range, every step in drew the feet back and
@@ -1092,18 +1080,17 @@ impl Behaviour {
         let h = rd.middle(hand);
         let (lo, hi) = (foe.feet + Vec3::Y * 0.65, foe.eye - Vec3::Y * 0.12);
         let t = clamp((h - lo).dot(hi - lo) / (hi - lo).length_squared());
-        if std::env::var("PROBE_FIGHT").is_ok() && !landed {
-            eprintln!("PROBE punch {k} t {pt:.3} hand off the body {:.2} m, {:.1} m/s toward", h.distance(lo + (hi - lo) * t) - 0.25, rd.segs[hand].vel.dot(ahead));
-        }
         // (Within 12 cm of the capsule's skin: the hand's middle, met by the body, stops 8 cm off it.)
         if !landed && h.distance(lo + (hi - lo) * t) < 0.25 + 0.12 {
             self.punch.as_mut().unwrap().landed = true;
             let speed = fast.max(0.0);
-            let mut parts = vec![format!("hand{k}"), format!("forearm{k}"), format!("forearm2{k}")];
-            if straight {
-                parts.extend([format!("upperarm{k}"), format!("upperarm2{k}")]);
-            }
-            let mass: f32 = parts.iter().map(|n| rd.segs[rd.by_name(n)].def.mass).sum();
+            // The mass the fist carries: the hand and half the forearm behind a jab, and the forearm and half the upper
+            // arm too behind a straight (about fist.rs's 1 and 3.2 kg; the whole of the arm's segments counted, one jab
+            // was 0.4 of a knockout).
+            let m = |n: String| rd.segs[rd.by_name(&n)].def.mass;
+            let fore = m(format!("forearm{k}")) + m(format!("forearm2{k}"));
+            let upper = m(format!("upperarm{k}")) + m(format!("upperarm2{k}"));
+            let mass = m(format!("hand{k}")) + if straight { fore + upper * 0.5 } else { fore * 0.5 };
             self.blows.push((mass, speed, head && h.y > foe.eye.y - 0.3));
         }
         lean

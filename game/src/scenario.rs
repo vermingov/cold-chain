@@ -468,13 +468,6 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
             acc.spun[k] = acc.spun[k].max(s.spin.length());
             if s.def.parent.is_some() && !s.def.joint.as_ref().unwrap().lock && !rd.cut_off(k) {
                 let p = rd.past(k);
-                if std::env::var("PROBE_PAST").is_ok() && p.iter().any(|&x| x > 0.5) {
-                    let a = rd.angles(k);
-                    let c = rd.segs[rd.by_name("chest")].now;
-                    let h = c.rotation.inverse() * (rd.middle(k) - c.translation);
-                    eprintln!("PROBE past {:?} {:?} {} ang {:?} past {:?} in-chest {:?}", e, b.mode, rd.segs[k].def.name,
-                        a.map(|x| x.to_degrees().round()), p.map(|x| x.to_degrees().round()), (h * 100.0).round());
-                }
                 for i in 0..3 {
                     acc.past[k][i] = acc.past[k][i].max(p[i]);
                 }

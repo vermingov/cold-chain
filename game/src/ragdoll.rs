@@ -657,7 +657,7 @@ impl Ragdoll {
                     // turning inertia about its length is a tenth of that across it) held at a joint limit it turns the spin
                     // the limit stops into spin about the other axes. A forearm on a joint taking 120 N m went 75 degrees
                     // through a 5-degree limit with it and stayed within 3 without it (port/b-ragdoll, PORT.md).
-                    GyroscopicForces { enabled: std::env::var("PROBE_GYRO").is_ok() },
+                    GyroscopicForces::disabled(),
                     Velocity::default(),
                     ExternalImpulse::default(),
                     ActiveEvents::COLLISION_EVENTS,
@@ -1473,7 +1473,7 @@ fn solver(mut contexts: Query<&mut RapierContextSimulation, Added<RapierContextS
     for mut c in &mut contexts {
         c.integration_parameters.warmstart_joints = true;
         c.integration_parameters.num_solver_iterations = SOLVER_PASSES;
-        c.integration_parameters.normalized_max_corrective_velocity = std::env::var("PROBE_CORR").ok().and_then(|v| v.parse().ok()).unwrap_or(CORRECT);
+        c.integration_parameters.normalized_max_corrective_velocity = CORRECT;
     }
 }
 const SOLVER_PASSES: usize = 16;
