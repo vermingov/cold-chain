@@ -167,10 +167,7 @@ fn crawling(phase: f32) -> Pose {
     let reach_r = 1.0 - reach_l;
     // (Out to the side first and forward last, as person.rs turns a shoulder: an arm out at 70 degrees is only spun about
     // its own length by the forward turn, so the elbow is brought forward by the forward turn with the arm half out.)
-    let ce: f32 = std::env::var("PROBE_CE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
-    let ca: f32 = std::env::var("PROBE_CA").ok().and_then(|v| v.parse().ok()).unwrap_or(42.0);
-    let cf: f32 = std::env::var("PROBE_CF").ok().and_then(|v| v.parse().ok()).unwrap_or(110.0);
-    let arm = |k: char, r: f32| [(side("shoulderFlex", k), cf + (165.0 - cf) * r), (side("shoulderAbduct", k), ca - 12.0 * r), (side("elbow", k), ce - (ce - 25.0) * r),
+    let arm = |k: char, r: f32| [(side("shoulderFlex", k), 110.0 + 55.0 * r), (side("shoulderAbduct", k), 42.0 - 12.0 * r), (side("elbow", k), 100.0 - 75.0 * r),
         (side("curl", k), 20.0 + 25.0 * (1.0 - r))];
     let p = over(poses::relaxed(), &arm('L', reach_l));
     let p = over(p, &arm('R', reach_r));
@@ -883,8 +880,7 @@ impl Behaviour {
         // through the legs (held straight up instead, its turn back swung the legs and hips on toward the fall).
         let mut off = xi - centre;
         off.y = 0.0;
-        let strat: f32 = std::env::var("PROBE_STRAT").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-        let tilt = if off.length() > 1e-4 { Quat::from_axis_angle(Vec3::Y.cross(off).normalize(), (strat * off.length()).min(0.5)) } else { Quat::IDENTITY };
+        let tilt = if off.length() > 1e-4 { Quat::from_axis_angle(Vec3::Y.cross(off).normalize(), (4.0 * off.length()).min(0.5)) } else { Quat::IDENTITY };
         let (face, bent) = (tilt * face, tilt * bent);
         if !down.is_empty() {
             let floor = self.floor;
@@ -919,27 +915,21 @@ impl Behaviour {
                 // forth.)
                 // (The soles' grip turns the feet back: the floor holds them.)
                 let twist = motor::toward(rd, pelvis, face, 40.0, 1.5, f32::INFINITY, Some(spin)).y.clamp(-40.0 * legs, 40.0 * legs);
-                if std::env::var("PROBE_TWISTOLD").is_ok() { rd.turn(pelvis, Vec3::new(0.0, twist * dt, 0.0)); } else {
-                motor::turn(rd, pelvis, Vec3::new(0.0, twist, 0.0), &down, dt); }
+                motor::turn(rd, pelvis, Vec3::new(0.0, twist, 0.0), &down, dt);
                 // The trunk kept upright over the legs, the hip strategy, as far as the muscles round the hips (about 300
                 // N m both together) and the back hold it, pushing on the floor through the legs: without it a stride
                 // pitched the pelvis forty degrees over the front leg and took the body down, and at a third of that a
                 // shove still tipped the trunk back a little more with every step until it lay back at fifty degrees. The
                 // chest is held as far over as the pose bends the back, so a body doubled over is not straightened.
-                // (Paid for by the thighs standing on the floor and the belly, as muscles across the hips and the back
-                // would, a shove of 80 N s made them stagger and step as a person does, but a body just up off the floor
-                // stepped on and went down again, five of fifteen in getup against none: port/b-ragdoll, PORT.md.)
+                // Both are muscles', so each turns the other side of its joint back: the hips' the thighs standing on the
+                // floor, the back's the belly. (Given to the trunk from nowhere, they held a standing body upright against
+                // anything that pushed it, up to 450 N m: shoved at 120 N s they took a step and stood, a post.)
                 let t = motor::toward(rd, pelvis, face, 25.0, 12.0, 300.0 * legs, Some(spin));
-                if std::env::var("PROBE_HIPS").is_ok() {
-                    let thighs: Vec<usize> = down.iter().map(|&f| rd.by_name(&format!("thigh{}", rd.segs[f].def.name.chars().last().unwrap()))).collect();
-                    motor::turn(rd, pelvis, Vec3::new(t.x, 0.0, t.z), &thighs, dt);
-                    let t = motor::toward(rd, chest, bent, 25.0, 12.0, 150.0 * legs, Some(spin));
-                    let belly = rd.by_name("belly");
-                    motor::turn(rd, chest, Vec3::new(t.x, 0.0, t.z), &[belly], dt);
-                } else {
-                rd.turn(pelvis, Vec3::new(t.x, 0.0, t.z) * dt);
+                let thighs: Vec<usize> = down.iter().map(|&f| rd.by_name(&format!("thigh{}", rd.segs[f].def.name.chars().last().unwrap()))).collect();
+                motor::turn(rd, pelvis, Vec3::new(t.x, 0.0, t.z), &thighs, dt);
                 let t = motor::toward(rd, chest, bent, 25.0, 12.0, 150.0 * legs, Some(spin));
-                rd.turn(chest, Vec3::new(t.x, 0.0, t.z) * dt); }
+                let belly = rd.by_name("belly");
+                motor::turn(rd, chest, Vec3::new(t.x, 0.0, t.z), &[belly], dt);
             });
         }
 
@@ -1691,7 +1681,7 @@ impl Behaviour {
         match self.mode {
             Mode::Roll => self.roll(rd, rng),
             Mode::Push | Mode::Lunge | Mode::Rise => self.rise(dt, person, rd, eye, rng),
-            Mode::Crawl => self.crawl(person, rd, eye),
+            Mode::Crawl => self.crawl(rd, eye),
             Mode::Creep => self.creep(dt, rd, eye),
             Mode::Writhe => self.writhe(dt, person, rd),
             Mode::Rest => {
@@ -1791,7 +1781,7 @@ impl Behaviour {
             (side("shoulderAbduct", away), -40.0), (side("elbow", away), 20.0), (side("shoulderAbduct", toward), 30.0), ("neckFlex", 15.0)]);
         // The arm on the side they roll onto up past the head, out of the way: left at the side it was rolled on and
         // trapped under the chest, and the crawl after it wrenched that elbow 30 to 90 degrees sideways for seconds.
-        let pose = if std::env::var("PROBE_ROLLARM").is_ok() { over(pose, &[(side("shoulderFlex", toward), 150.0), (side("elbow", toward), 30.0)]) } else { pose };
+        let pose = over(pose, &[(side("shoulderFlex", toward), 150.0), (side("elbow", toward), 30.0)]);
         // The push off the floor with that leg and arm, as the turn it gives the trunk about its own length, easing off
         // as it gets going: given back to the limbs on the floor instead, it only wrung the trunk against them.
         let most = 200.0 * self.will;
@@ -1865,8 +1855,10 @@ impl Behaviour {
                 let mut o = back.lerp(front, 0.7) + facing(self.heading) * self.foot.2;
                 o.y = 0.0;
                 over_at = Some(o);
-                let upright = rd.segs[pelvis].now.rotation.mul_vec3(Vec3::Y).y > 0.97 || std::env::var("PROBE_RISE").is_err();
-                done = self.t > if std::env::var("PROBE_RISE").is_ok() { 1.3 } else { 1.0 } && upright && pp.y - self.floor > stand.pelvis * 0.93 && feet.iter().all(|&f| rd.lowest(f) < self.floor + TOUCH)
+                // (And only once the trunk is upright, within 14 degrees, at the end of the rise: stood up still bent over,
+                // the hips' muscles straightening it swung the legs on and they stepped and went down again.)
+                let upright = rd.segs[pelvis].now.rotation.mul_vec3(Vec3::Y).y > 0.97;
+                done = self.t > 1.3 && upright && pp.y - self.floor > stand.pelvis * 0.93 && feet.iter().all(|&f| rd.lowest(f) < self.floor + TOUCH)
                     && outside(&footprint(rd, &feet).0, self.com.x, self.com.z) < -0.03 && self.vel.x.hypot(self.vel.z) < 0.15;
                 time = 3.5;
             }
@@ -2024,7 +2016,7 @@ impl Behaviour {
     }
 
     // Dragging themselves away from whoever did it, on their elbows, the legs trailing.
-    fn crawl(&mut self, person: &Person, rd: &mut Ragdoll, eye: Option<Vec3>) -> Pose {
+    fn crawl(&mut self, rd: &mut Ragdoll, eye: Option<Vec3>) -> Pose {
         let will = self.will;
         let dt = self.dt;
         // (Flat on the front first: crawling from three-quarters over, the arm underneath was dragged under the hips.)
@@ -2039,55 +2031,15 @@ impl Behaviour {
         self.phase += dt * (2.0 * PI / 1.9) * (0.5 + 0.5 * will);
         // (Into it from lying as they lay, over half a second: taken from beside the body to out past the head at once,
         // the arms were flung up through the floor and spun at 100 rad/s.)
-        let mut pose = poses::mix(&rest(), &crawling(self.phase), smooth(self.t / 0.5));
+        let pose = poses::mix(&rest(), &crawling(self.phase), smooth(self.t / 0.5));
         self.strength.leg_l *= 0.12;
         self.strength.leg_r *= 0.12;
         let f = facing(self.heading);
         let limbs = self.limbs_down(rd);
-        // The arms put where the stroke wants the hands (out past the head reaching; pulling, where the hand is planted)
-        // by arm_to, which keeps the forearm out of the trunk: posed by the stroke's angles alone, the pull folded the
-        // forearm in under the front of the chest, and the body lay on it.
-        if std::env::var("PROBE_CIK").is_ok() {
-            let chest = rd.by_name("chest");
-            let c = rd.segs[chest].now.translation;
-            for k in ['L', 'R'] {
-                if self.broken(rd, true, k) {
-                    continue;
-                }
-                let reaching = self.phase.cos() * if k == 'L' { 1.0 } else { -1.0 } > 0.0;
-                let hand = rd.middle(rd.by_name(&format!("hand{k}")));
-                let mut to = if reaching { c + f * 0.5 + right_of(f) * if k == 'R' { 0.36 } else { -0.36 } } else { hand };
-                to.y = self.floor + 0.04;
-                let reach = self.arm_to(person, rd, k, to);
-                self.reach_pose(k, &reach, smooth(self.t / 0.5), &mut pose);
-            }
-        }
-        // An arm caught under the chest (the forearm in front of it, below the shoulders): that side of the chest rolled
-        // up off it against the limbs on the floor and the hand swept out to the side, and no pulling with the other arm
-        // until it is out. (Pulled over it, the trapped elbow was wrenched 30 to 90 degrees sideways for seconds.)
-        let c = rd.segs[chest].now;
-        let caught = |k: char| {
-            let at = c.rotation.inverse() * (rd.middle(rd.by_name(&format!("forearm{k}"))) - c.translation);
-            at.y < 0.3 && at.z < -0.1 && at.x.abs() < 0.13
-        };
-        let trapped = if std::env::var("PROBE_FREE").is_ok() { ['L', 'R'].into_iter().find(|&k| caught(k)) } else { None };
-        if let Some(k) = trapped {
-            let hand = rd.by_name(&format!("hand{k}"));
-            let out = if k == 'R' { 1.0 } else { -1.0 };
-            let mut spot = c.translation + f * 0.15 + right_of(f) * (0.5 * out);
-            spot.y = self.floor + 0.04;
-            let (along, lift) = (c.rotation * Vec3::Y, -out * 90.0 * will);
-            let limbs = limbs.clone();
-            self.act(move |rd, dt| {
-                motor::turn(rd, chest, along * lift, &limbs, dt);
-                let force = motor::reach(rd, hand, spot, 80.0, 2.0, 80.0 * will, None);
-                motor::push(rd, hand, force, &[chest], dt);
-            });
-        }
         for k in ['L', 'R'] {
             let hand = rd.by_name(&format!("hand{k}"));
             let arm = self.strength.get(Part::arm(k));
-            if arm == 0.0 || self.broken(rd, true, k) || trapped.is_some() {
+            if arm == 0.0 || self.broken(rd, true, k) {
                 continue;
             }
             let reaching = self.phase.cos() * if k == 'L' { 1.0 } else { -1.0 };
