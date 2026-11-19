@@ -1397,7 +1397,7 @@ fn shoot(i: usize, a: &'static str, b: &'static str, t: f32, weapon: &'static st
     }))
 }
 
-fn cameras(on: bool) -> Step {
+pub fn cameras(on: bool) -> Step {
     Step::Do(Box::new(move |w: &mut World| {
         let mut q = w.query::<&mut Camera>();
         for mut c in q.iter_mut(w) {

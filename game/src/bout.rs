@@ -388,6 +388,7 @@ pub fn spar() -> Vec<crate::scenario::Step> {
             let p = w.query::<&Player>().iter(w).next().map(|p| Vec3::new(p.pos.x, 0.0, p.pos.y)).unwrap_or_default();
             w.insert_resource(Circle(Vec3::new(c.x, 0.0, c.z), (p.z - c.z).atan2(p.x - c.x)));
         })));
+        s.push(crate::scenario::cameras(false));
         for frame in 0..60 * 60 {
             s.push(Step::Do(Box::new(move |w: &mut World| {
                 let Circle(at, from) = *w.resource::<Circle>();
@@ -402,12 +403,16 @@ pub fn spar() -> Vec<crate::scenario::Step> {
                     p.yaw = (-d.x).atan2(-d.z);
                 }
             })));
-            s.push(Step::Wait(1));
+            // (A frame each: `Wait(n)` waits n - 1. Not drawn but for the pictures: drawing every frame on the software
+            // renderer, the minute took an hour.)
+            s.push(Step::Wait(2));
             if frame % 30 == 29 {
                 s.push(report("followed"));
             }
             if frame % 900 == 450 {
+                s.push(crate::scenario::cameras(true));
                 s.push(Step::Shot(format!("follow_{}", frame / 900)));
+                s.push(crate::scenario::cameras(false));
             }
         }
         return s;
