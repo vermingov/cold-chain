@@ -949,6 +949,15 @@ impl Behaviour {
         // (Leaning toward range, each step lands as far again toward it: put down just past where the weight would stop,
         // the steps were a centimetre or two and they shuffled 15 cm in twelve seconds.)
         let goal = if leaning { xi + lean } else { xi };
+        if let (Some(foe), true) = (self.foe, std::env::var("PROBE_FIGHT").is_ok() && (self.clock * 4.0).fract() < dt * 4.0) {
+            let mut a = foe.eye - self.com;
+            a.y = 0.0;
+            let a = a.normalize_or_zero();
+            let along = |v: Vec3| (v - foe.eye).dot(a);
+            eprintln!("PROBE walk feet {:.2} {:.2} com {:.2} xi {:.2} aim {:.2} mark {:?} side {:?} f.a {:.2} leaning {}", along(rd.segs[feet[0]].now.translation),
+                along(rd.segs[feet[1]].now.translation), along(self.com), along(xi), along(aim), self.step.as_ref().map(|s| (along(s.to) * 100.0).round() / 100.0),
+                self.step.as_ref().map(|s| s.side), f.dot(a), leaning);
+        }
         if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if leaning { -0.06 } else if self.settle > 0.0 { 0.1 } else { 0.08 })) {
             if self.steps >= STEPS || xi.distance(centre) > REACH * 1.4 {
                 self.why = if self.steps >= STEPS { "steps" } else { "far" };
