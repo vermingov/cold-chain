@@ -186,6 +186,7 @@ fn mitt() -> Mesh {
     let sections: Vec<Section> = (0..=ALONG)
         .map(|i| {
             let s = i as f32 / ALONG as f32;
+            let z = z0 + (z1 - z0) * s;
             // (The front end closes as a quarter of an ellipse over its last 30 percent.)
             let end = if s > 0.68 { (1.0 - ((s - 0.68) / 0.32).powi(2)).max(0.0).sqrt() } else { 1.0 };
             let w = 0.05 + 0.014 * smooth(0.0, 0.62, s);
@@ -193,7 +194,15 @@ fn mitt() -> Mesh {
             let top = 0.033 + 0.008 * smooth(0.05, 0.45, s) + 0.01 * smooth(0.5, 0.72, s);
             let crease = 0.005 * (-((s - 0.43) / 0.05).powi(2)).exp();
             let bottom = 0.034 + 0.03 * smooth(0.32, 0.62, s) - crease;
-            Section { at: Vec3::new(0.0, -0.014, z0 + (z1 - z0) * s), w: w * end, top: top * end.powf(0.8), bottom: bottom * end.powf(0.8), round: 2.5 - 0.3 * s }
+            // Back to the cuff's front end, the mitt lies 3 mm over the cuff all round, as the hand's panels are sewn
+            // to it, and only past it swells out into the hand; its back edge turned in onto the cuff. (Left as it was
+            // made, the hand's own size, its open back hung out round the cuff.)
+            let (cw, ch) = cuff_size(z);
+            let lip = 0.004 * (smooth(0.0, 0.04, s) - 1.0);
+            let hug = smooth(CUFF.1, CUFF.1 + 0.045, z);
+            let mix = |own: f32, over: f32| over + (own - over) * hug + lip;
+            let (w, top, bottom) = (mix(w, cw + 0.003), mix(top, ch + 0.003 + 0.014), mix(bottom, ch + 0.003 - 0.014));
+            Section { at: Vec3::new(0.0, -0.014, z), w: w * end, top: top * end.powf(0.8), bottom: bottom * end.powf(0.8), round: 2.5 - 0.3 * s }
         })
         .collect();
     loft(&sections, MITT_RING, 0.22)
@@ -301,14 +310,27 @@ fn cuff(z0: f32, z1: f32, w: f32, h: f32, flare: f32, narrow: f32, roll: f32) ->
     let n = 14;
     for i in 0..=n {
         let s = i as f32 / n as f32;
-        // (Wider at its open end; narrowed at the other, which goes inside the mitt's back, so that as the wrist bends the
-        // mitt's back passes over it rather than its edge standing out.)
-        let grow = (1.0 + flare * (1.0 - s)) * (1.0 - narrow * smooth(0.6, 1.0, s));
+        let grow = cuff_grow(s, flare, narrow);
         // (The last millimetres at each end turned in, a rolled edge.)
         let lip = roll * (smooth(0.0, 0.06, s).min(smooth(1.0, 0.94, s)) - 1.0);
         sections.push(Section { at: Vec3::new(0.0, -0.01, z0 + (z1 - z0) * s), w: w * grow + lip, top: h * grow + lip, bottom: h * grow + lip, round: 2.2 });
     }
     loft(&sections, 64, 0.22)
+}
+
+// (Wider at its open end; narrowed at the other, which goes inside the mitt's back, so that as the wrist bends the mitt's
+// back passes over it rather than its edge standing out.)
+fn cuff_grow(s: f32, flare: f32, narrow: f32) -> f32 {
+    (1.0 + flare * (1.0 - s)) * (1.0 - narrow * smooth(0.6, 1.0, s))
+}
+
+// The cuff proper: from and to (z, in the fist's frame), half wide, half high, flare, narrowing.
+const CUFF: (f32, f32, f32, f32, f32, f32) = (-0.235, -0.1, 0.047, 0.041, 0.04, 0.16);
+
+// The cuff's half width and half height at z (in the fist's frame, about the line through the wrist).
+fn cuff_size(z: f32) -> (f32, f32) {
+    let grow = cuff_grow(((z - CUFF.0) / (CUFF.1 - CUFF.0)).clamp(0.0, 1.0), CUFF.4, CUFF.5);
+    (CUFF.2 * grow, CUFF.3 * grow)
 }
 
 // Smooth noise over the plane (0 to 1), the same at the same place every time.
@@ -434,7 +456,7 @@ fn shapes(key: &str) -> Vec<(Build, usize, bool)> {
             strap.add(cuff(-0.203, -0.152, 0.0535, 0.0475, 0.0, 0.0, 0.0015), Transform::from_xyz(0.0, 0.0115, WRIST).with_scale(Vec3::new(0.62, 1.0, 1.0)));
             vec![
                 (leather, 0, false),
-                (on_arm(cuff(-0.235, -0.1, 0.047, 0.041, 0.04, 0.16, 0.004)), 0, true),
+                (on_arm(cuff(CUFF.0, CUFF.1, CUFF.2, CUFF.3, CUFF.4, CUFF.5, 0.004)), 0, true),
                 (strap, 1, true),
                 (one(piping()), 2, false),
                 (on_arm(cuff(-0.236, -0.226, 0.0495, 0.0435, 0.0, 0.0, 0.0015)), 2, true),
