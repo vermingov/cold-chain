@@ -218,7 +218,10 @@ fn thumb() -> Mesh {
         .map(|i| {
             let t = i as f32 / ALONG as f32;
             let at = p0 * (1.0 - t).powi(2) + p1 * 2.0 * t * (1.0 - t) + p2 * t * t;
-            let end = if t > 0.75 { (1.0 - ((t - 0.75) / 0.25).powi(2)).max(0.0).sqrt() } else { 1.0 };
+            // (Both ends closed: the tip rounded, the root tapered shut where it leaves the cuff, as its panel is sewn
+            // into the mitt's; left open, it hung there as a flap.)
+            let end = if t > 0.75 { (1.0 - ((t - 0.75) / 0.25).powi(2)).max(0.0).sqrt() } else { 1.0 }
+                * (1.0 - ((0.2 - t).max(0.0) / 0.2).powi(2)).sqrt();
             (at, (0.021 - 0.004 * t) * end)
         })
         .collect();
@@ -296,8 +299,8 @@ fn piping() -> Mesh {
     let ring = MITT_RING + 1;
     let at = |i: usize, j: usize| Vec3::from(p[i * ring + j]) + Vec3::from(n[i * ring + j]) * 0.001;
     let rows = p.len() / ring;
-    // (From where the mitt comes out of the cuff.)
-    let from = rows / 6;
+    // (From where the mitt comes out of the cuff: begun under it, its cut end stood out by the thumb.)
+    let from = (0..rows).find(|&i| p[i * ring][2] > CUFF.1).unwrap();
     let mut path: Vec<Vec3> = (from..rows - 1).map(|i| at(i, MITT_RING / 4)).collect();
     path.extend((from..rows - 1).rev().map(|i| at(i, 3 * MITT_RING / 4)));
     cord(&path, 0.0028)
