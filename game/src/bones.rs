@@ -991,15 +991,19 @@ impl BonesOf<'_, '_> {
     // The first bone in a blow's way into segment `seg` at `point` along `dir`, or the bone under that segment.
     fn struck(&mut self, seg: usize, point: Vec3, dir: Vec3) -> Option<(String, Vec3)> {
         let name = self.0.person.segments[seg].name.clone();
-        // A blow to the head reaches the skull and jaw and no further (not the neck behind them); a blow anywhere reaches
-        // the bones under that skin, never the spine at the back of the trunk.
+        // A blow to the head reaches the skull and jaw and no further (not the neck behind them), and the throat's hyoid
+        // and voice box only when it lands on the throat, under the jaw's border (a punch at the side of the chin passed
+        // under the jaw and broke the hyoid behind it); a blow anywhere reaches the bones under that skin, never the spine
+        // at the back of the trunk.
         let head = name == "head";
+        let throat = head && self.0.in_neck(point);
         let reach = |p: &crate::anatomy::TracedPart| {
             let bony = p.kind == "bone" || p.kind == "skull" || p.kind == "cartilage";
+            let in_throat = ["hyoid", "thyroid cartilage", "cricoid cartilage"].iter().any(|w| p.name.contains(w));
             let of_head = p.kind == "skull"
-                || ["maxilla", "zygomatic", "nasal", "lacrimal", "palatine", "vomer", "mandible", "hyoid", "thyroid cartilage", "cricoid cartilage"].iter().any(|w| p.name.contains(w));
+                || ["maxilla", "zygomatic", "nasal", "lacrimal", "palatine", "vomer", "mandible"].iter().any(|w| p.name.contains(w));
             let spine = p.name.contains("vertebra") || p.name == "atlas" || p.name == "axis" || p.name.contains("sacrum");
-            bony && !spine && (if head { of_head } else { !of_head })
+            bony && !spine && (if head { of_head || (throat && in_throat) } else { !of_head && !in_throat })
         };
         let from = point - dir * 0.15;
         let (spans, _) = self.0.trace(from, dir, if head { 0.3 } else { 0.4 }, 0.0, Some(&reach));
