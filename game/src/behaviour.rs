@@ -861,6 +861,13 @@ impl Behaviour {
         }
         self.react(&mut pose, dt);
         self.fight(rd, &mut pose, dt, f, r, feet, rng);
+        // A step taken on purpose (fight's) carries the weight with it: the balance aims between the planted foot and
+        // where the other is going. (Aimed where the feet were until it landed, the swing's pull on the hip sent the body
+        // back, and a stumble step back followed every step in.)
+        if let (Some(_), Some(st)) = (self.foe, self.step.as_ref().filter(|s| s.closing)) {
+            let stance = rd.segs[rd.by_name(&format!("foot{}", other(st.side)))].now.translation;
+            aim = Vec3::new((stance.x + st.to.x) / 2.0, aim.y, (stance.z + st.to.z) / 2.0);
+        }
 
         // The ankle strategy: the body swayed back over the middle of the feet as a whole, as hard as the feet can push
         // for it. Feet only press the floor, so carrying the weight one way needs the floor pressed on the other side of
