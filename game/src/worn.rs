@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 
@@ -59,6 +60,8 @@ pub type Metal = ExtendedMaterial<StandardMaterial, Polished>;
 // behind them its wrist joint is.
 const SPREAD: f32 = 0.054;
 const WRIST: f32 = 0.084;
+// Where the forearm's pieces are made, from the fist's frame: the wrist's middle.
+const ON_ARM: Vec3 = Vec3::new(0.0, 0.01, WRIST);
 
 // What a fist wears changes: the kg it adds to each fist, and what lands (bones.rs `tool`).
 pub fn wear(key: &str) -> (f32, Tool) {
@@ -445,7 +448,7 @@ fn shapes(key: &str) -> Vec<(Build, usize, bool)> {
     // (The cuff's pieces made round the fist's frame's line through the wrist, moved onto the forearm's.)
     let on_arm = |mesh: Mesh| {
         let mut b = Build::default();
-        b.add(mesh, Transform::from_xyz(0.0, 0.01, WRIST));
+        b.add(mesh, Transform::from_translation(ON_ARM));
         b
     };
     match key {
@@ -506,19 +509,40 @@ fn looks(key: &str, images: &mut Assets<Image>) -> Vec<StandardMaterial> {
     }
 }
 
+// Worn, a part is hung from both the hand and the forearm, as leather laced or strapped round the wrist goes with both:
+// what is in front of the wrist with the hand, the cuff with the forearm, and between them partly with each, by how far
+// back it is; so the mitt's back and the cuff's front stay one as the wrist turns. (Each on a bone of its own, the mitt's
+// back swung out round the cuff, the way the wrist bent, or the cuff's front out of the mitt's back the other way.) Its
+// points all in the fist's frame, the hand's joint first.
+fn skinned(mut mesh: Mesh, arm: bool) -> Mesh {
+    let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) else { unreachable!() };
+    let back = if arm { ON_ARM } else { Vec3::ZERO };
+    let weights: Vec<[f32; 4]> = p
+        .iter_mut()
+        .map(|v| {
+            *v = (Vec3::from(*v) - back).to_array();
+            let hand = smooth(-0.14, -0.075, v[2]);
+            [hand, 1.0 - hand, 0.0, 0.0]
+        })
+        .collect();
+    let n = weights.len();
+    mesh.with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(vec![[0, 1, 0, 0]; n]))
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights)
+}
+
 // Each worn thing's meshes and materials, the right hand's and the left's, made once; and whether each is the forearm's.
 #[derive(Resource, Default)]
-pub struct Made(HashMap<(&'static str, bool), Vec<(Handle<Mesh>, Handle<StandardMaterial>, bool)>>);
+pub struct Made(HashMap<(&'static str, bool), Vec<(Handle<Mesh>, Handle<Mesh>, Handle<StandardMaterial>, bool)>>);
 
 impl Made {
     fn get(&mut self, key: &'static str, left: bool, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, images: &mut Assets<Image>)
-           -> Vec<(Handle<Mesh>, Handle<StandardMaterial>, bool)> {
+           -> Vec<(Handle<Mesh>, Handle<Mesh>, Handle<StandardMaterial>, bool)> {
         if !self.0.contains_key(&(key, left)) {
             // (The looks shared by both hands: made with the first.)
             let looks: Vec<Handle<StandardMaterial>> = match self.0.get(&(key, !left)) {
                 Some(made) => {
                     let mut l: Vec<_> = Vec::new();
-                    for (_, m, _) in made {
+                    for (_, _, m, _) in made {
                         if !l.contains(m) {
                             l.push(m.clone());
                         }
@@ -527,7 +551,13 @@ impl Made {
                 }
                 None => looks(key, images).into_iter().map(|m| materials.add(m)).collect(),
             };
-            let made = shapes(key).into_iter().map(|(b, k, arm)| (meshes.add(b.mesh(left)), looks[k].clone(), arm)).collect();
+            let made = shapes(key)
+                .into_iter()
+                .map(|(b, k, arm)| {
+                    let mesh = b.mesh(left);
+                    (meshes.add(skinned(mesh.clone(), arm)), meshes.add(mesh), looks[k].clone(), arm)
+                })
+                .collect();
             self.0.insert((key, left), made);
         }
         self.0[&(key, left)].clone()
@@ -548,9 +578,9 @@ pub fn board(key: &'static str, made: &mut Made, meshes: &mut Assets<Mesh>, mate
     let rotation = Quat::from_mat3(&turn);
     let mut out = Vec::new();
     for (left, z) in [(false, -apart), (true, apart)] {
-        for (mesh, material, arm) in made.get(key, left, meshes, materials, images) {
+        for (_, mesh, material, arm) in made.get(key, left, meshes, materials, images) {
             // (The forearm's pieces where they are on a straight wrist.)
-            let along = if arm { rotation * Vec3::new(0.0, -0.01, -WRIST) } else { Vec3::ZERO };
+            let along = if arm { rotation * -ON_ARM } else { Vec3::ZERO };
             out.push(Piece { mesh, material, at: Transform::from_translation(Vec3::new(0.0, 0.0, z) + along).with_rotation(rotation) });
         }
     }
@@ -609,6 +639,7 @@ fn put_on(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut metals: ResMut<Assets<Metal>>,
+    mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     hall: Res<crate::wet::Hall>,
 ) {
     let Some(arms) = arms else { return };
@@ -630,9 +661,13 @@ fn put_on(
     }
     for arm in [&arms.r, &arms.l] {
         let (hand, forearm, mirror) = on_fist(arm);
-        for (mesh, material, on_arm) in made.get(want, mirror, &mut meshes, &mut materials, &mut images) {
-            let (t, bone) = if on_arm { (forearm, arm.twist) } else { (hand, arm.wrist) };
-            let mut e = commands.spawn((Mesh3d(mesh), t, ChildOf(arm.joints[bone]), Name::new(want)));
+        // (Each placed as on the hand too, so that its bounds, which are not moved with the skin, are about where it is.)
+        let skin = SkinnedMesh {
+            inverse_bindposes: bindposes.add(SkinnedMeshInverseBindposes::from(vec![hand.to_matrix(), forearm.mul_transform(Transform::from_translation(ON_ARM)).to_matrix()])),
+            joints: vec![arm.joints[arm.wrist], arm.joints[arm.twist]],
+        };
+        for (mesh, _, material, _) in made.get(want, mirror, &mut meshes, &mut materials, &mut images) {
+            let mut e = commands.spawn((Mesh3d(mesh), skin.clone(), hand, ChildOf(arm.joints[arm.wrist]), Name::new(want)));
             // (A metal shows the hall in it: the same look, extended.)
             match materials.get(&material).filter(|m| m.metallic > 0.5) {
                 Some(base) => {
@@ -660,6 +695,23 @@ pub fn plugin(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Worn, the glove's front is the hand's, the cuff's open end the forearm's, every point's weights whole; the forearm's
+    // pieces brought back into the fist's frame, behind the wrist.
+    #[test]
+    fn glove_hung_from_both() {
+        for (b, _, arm) in shapes("gloves") {
+            let m = skinned(b.mesh(false), arm);
+            let Some(VertexAttributeValues::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+            let Some(VertexAttributeValues::Float32x4(w)) = m.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT) else { panic!() };
+            for (p, w) in p.iter().zip(w) {
+                assert!((w[0] + w[1] - 1.0).abs() < 1e-5);
+                assert!(p[2] < -0.07 || w[0] > 0.999, "{p:?} {w:?}");
+                assert!(p[2] > -0.15 || w[1] > 0.999, "{p:?} {w:?}");
+            }
+            assert!(!arm || p.iter().all(|p| p[2] < -0.09), "a forearm piece not behind the wrist");
+        }
+    }
 
     // The glove's mitt reaches 4 to 6 cm past the knuckle joints in front; every part of it faces out (its corners' normals
     // away from its middle); and its mirror image is the same shape turned.
