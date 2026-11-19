@@ -1738,3 +1738,19 @@ From the round's own pictures. Before and after, the same scenario and seed each
 - The cost: the wall's opening (`open`, CPU, debug, a shared machine, single runs): belly 2.33 ms before, 2.18 after;
   head 2.55 before, 4.65 after (noise from the other jobs: the wall's geometry changed by two lines per ring point). The
   GPU cost (a few more noise reads per fragment of torn wall) not measured: lavapipe's times say nothing of a real GPU.
+
+### Round three: footwork, the crawl, the jab's speed (port/b-ragdoll)
+The step log (`PROBE_STEPS=1`: for every step, along the line to the player, where the swing foot started, its mark and
+where it landed, how far the planted foot slid, the weight and capture point before and after, the pelvis's and chest's
+tilt) and a scripted player for `spar` (`SPAR_MOVE=1`: a minute going round the opponent's first place at about 0.3
+m/s, in to 0.9 m and out to 1.7 m every 18 s; the scenario's `Wait(n)` waits n - 1 frames, so the first try ran the
+whole minute in one frame) found why every footwork try last round left the feet behind:
+- Every step's swing foot landed short of its mark, the shove recovery's as well: from -2.11 aimed at -2.64 landed at
+  -2.26; -2.18, -2.56, -2.30; -2.24, -2.64, -2.37 (30 to 60% of the step). It is pulled to a point moving along the step
+  (220 N at most), lags it, and was put down wherever it was when the step's quarter second was up.
+- Last round's "a step on purpose pays through the planted leg" shoved the planted foot back along the floor: 0.65, 0.38,
+  0.36 m in a step at 220 N, 0.65 to 1.02 m at 400 N. The swing's pull is the hip's, inside the body (it cannot move the
+  weight); put on the planted foot it asks the floor for more than its grip.
+- With both, the weight ran on past feet left behind and the trunk pitched 37 to 58 degrees toward the player, and down.
+Now every step's foot is kept up until it is within 6 cm of its mark (or 0.3 s past its time) and driven at up to 400 N,
+its pull paid by the hip.
