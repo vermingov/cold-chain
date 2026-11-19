@@ -1583,6 +1583,10 @@ the crawl's own pull pose (elbow 100 degrees, shoulder flexed) folding the forea
 stroke. Roll fix alone: worst 62.6, 50.8, 54.5 (seeds 1-3), against 88.8 one seed before; with an arm caught under the
 chest lifted off (that side of the chest rolled up against the limbs on the floor, the hand swept out, no pulling with the
 other arm meanwhile), seeds 2-3: 56.3, 40.6.
+Further tries (worst elbow, seeds 1-2): the trapped test widened to the forearm anywhere under the front of the chest,
+75.7, 56.4; the pull pose with less elbow (70) and more abduction (60), 71.4, 58.7; the arms posed by `arm_to` (which
+keeps the forearm out of the trunk) to the reach spot and the planted hand, 99 and 134 (worse); shoulder flexion 140,
+abduction 60, elbow 90 in the pull (the upper arm nearer the floor than pointing into it), 52.5, 45.0. Not under 10 yet.
 
 ## The play-test's wounds: torn holes, bowel, the shirt's stain (BACKLOG play-test reports, branch port/b-body)
 
