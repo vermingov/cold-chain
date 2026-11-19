@@ -394,6 +394,7 @@ pub struct Behaviour {
     // the next may be and the next step to range; and the blows that landed, (mass kg, speed m/s, head), for bout.rs to
     // give the player (`Harm::struck`).
     pub foe: Option<Foe>,
+    leaned: f32,
     punch: Option<Punch>,
     next_punch: f32,
     pub blows: Vec<(f32, f32, bool)>,
@@ -470,6 +471,7 @@ impl Behaviour {
             grabbed: false,
             held: None,
             foe: None,
+            leaned: 0.0,
             punch: None,
             next_punch: 1.0,
             blows: Vec::new(),
@@ -940,7 +942,7 @@ impl Behaviour {
         // the other) is stepped at once: left hanging, it was nothing to stand on.
         let lifted = if down.len() == 1 { feet.iter().copied().find(|f| !down.contains(f)) } else { None };
         let past = outside(&hull, xi.x, xi.z);
-        if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if leaning { -0.02 } else if self.settle > 0.0 { 0.1 } else { 0.08 })) {
+        if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if leaning { -0.06 } else if self.settle > 0.0 { 0.1 } else { 0.08 })) {
             if self.steps >= STEPS || xi.distance(centre) > REACH * 1.4 {
                 self.why = if self.steps >= STEPS { "steps" } else { "far" };
                 self.go(State::Fall, Mode::None, rng);
@@ -957,6 +959,12 @@ impl Behaviour {
                 st.closing = true;
                 self.steps -= 1;
             }
+        }
+        // (Leaning toward range a while and still not over the edge: the step taken anyway, caught as a stumble's is.)
+        if self.step.is_none() && leaning && self.leaned > 0.8 && down.len() == 2 {
+            self.start_step(rd, xi + lean, f, r, feet, None);
+            self.steps = 0;
+            self.leaned = 0.0;
         }
         if self.step.is_some() {
             self.stepping(dt, rd, &mut pose, f, xi, r);
@@ -1009,7 +1017,8 @@ impl Behaviour {
         }
         // Footwork: leaning in when out of reach, back when crowded.
         let range = 0.8;
-        let lean = if self.punch.is_none() && (d - range).abs() > 0.15 { ahead * (d - range).clamp(-0.12, 0.12) } else { Vec3::ZERO };
+        let lean = if self.punch.is_none() && (d - range).abs() > 0.15 { ahead * (d - range).clamp(-0.2, 0.2) } else { Vec3::ZERO };
+        self.leaned = if lean == Vec3::ZERO || self.step.is_some() { 0.0 } else { self.leaned + dt };
 
         // A punch, now and then, when in reach and steady.
         self.next_punch -= dt;

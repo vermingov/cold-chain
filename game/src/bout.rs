@@ -382,6 +382,9 @@ pub fn spar() -> Vec<crate::scenario::Step> {
             s.push(Step::Shot(format!("spar_{}", k / 6)));
         }
     }
+    if std::env::var("SPAR_SHORT").is_ok() {
+        return s;
+    }
     let blow = move |n: f32| {
         Step::Do(Box::new(move |w: &mut World| {
             let Some(e) = opponent(w) else { return };
