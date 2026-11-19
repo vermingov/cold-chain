@@ -1577,7 +1577,9 @@ taken, "fell" with why.
   bent toward the capture point, 4 rad a metre past the middle of the feet, at most 0.5 rad), 80 N s: behind 3 of 3 fall
   after 2-3 steps, front one falls after 7 steps and one recovers in 3, the sides recover in 2-5 steps (4 of 10 fall).
   40 N s: nobody steps.
-  Made the default (commit 77a8e89): getup with it, seeds 1-2: 10 of 10 standing, none fell again.
+  Made the default (commit 77a8e89). Getup seeds 1-3: 14 of 15 standing at 15 s (one never got up off all fours, as
+  before), none fell again. Shoves on it: 120 N s, all ten fall after 1 to 4 steps (one "far"); 80 N s seed 1, behind
+  falls after 3 steps, front after 7, the sides recover in 2 and 5.
 Fighting footwork: steps forced on the feet toward range (`start_step` at a point toward the player) put the opponent on
 the floor within a second of the first step in, every time; re-aimed every frame at the capture point the step was
 pulled back first, and its swing's pull on the hip (some 60 N s) drove the body back. Now the balance's aim leans up to
