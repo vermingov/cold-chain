@@ -1,4 +1,4 @@
-# Cold Chain: handoff (2026-11-18)
+# Cold Chain: handoff (2026-11-19)
 
 Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
@@ -26,7 +26,24 @@ Item 7 (what the TS left unfinished), merged 2026-11-18 (PORT.md has each job's 
 Still open from item 7: elbows past their range under load (drag 63-85, crawl 94 deg; bias cap, motors and solver
 passes measured, none fixes it), sword blows spin a forearm at 800-1000 rad/s, the brain looks like shards, faint
 bloodshot, zigzag vomit, drops drawn as dark balls, costal cartilage breaks at the rib's 2500 N (no own figure).
-Items 1-6 of BACKLOG wait for the user.
+
+Items 1-6 of BACKLOG and the user's play-test reports, merged 2026-11-19 (PORT.md has each job's numbers):
+- Body (player.rs, body_scenario.rs, thuds.rs): an 80 kg capsule that pushes people, jumping, the held weapon a solid
+  in the world, shots from the muzzle, melee stops at walls.
+- People (sandbox.rs `BODIES`): the hooded man gone; a man in white and a naked man added. Stumps, and x-ray and
+  bandages after a cut, no longer stretch to the severed piece (`CutOff::carrier`, `anatomy::cut`).
+- Gloves and brass (worn.rs, polished.wesl), the ring (ring.rs, C ducks through the ropes), an opponent (bout.rs, B;
+  respawns 10 s after going down or dying) who guards, faces you and punches (behaviour.rs `fight`).
+- Ragdoll (ragdoll.rs, behaviour.rs): joint correction speed 30 (drag elbow 64 -> 3 deg past range), no gyroscopic
+  term; shoves stagger and topple (120 N s fells all 10, 40 N s nobody); getup 14 of 15.
+- Wounds (wall.rs/wall.wesl, skin.wesl, fluid.wesl, organs.wesl, viscera.rs, gore_scenario.rs): torn edges and
+  uneven layers instead of drilled rings, the cavity closed behind, matte mottled pulp; bowel drawn only where seen;
+  the shirt stain's edge soft; a sword cut pushes once a swing.
+Still open: crawl elbows 40-70 deg past range (the pull pose folds the forearm under the chest); the opponent has no
+footwork (it backs off and falls when it walks, PROBE_WALK=1), is pushed over by its own punches into the player at
+about 6.5 s, and jabs carry ~50 J; bowel blood smears strong red; a jab broke a 78-year-old's frontal bone; the
+player's hands are never hurt by punching; no take of steel or wood on concrete; the sword's 800-1000 rad/s spin not
+reproduced since the push change.
 
 ## Run it
 
