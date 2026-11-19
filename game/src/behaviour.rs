@@ -169,7 +169,8 @@ fn crawling(phase: f32) -> Pose {
     // its own length by the forward turn, so the elbow is brought forward by the forward turn with the arm half out.)
     let ce: f32 = std::env::var("PROBE_CE").ok().and_then(|v| v.parse().ok()).unwrap_or(100.0);
     let ca: f32 = std::env::var("PROBE_CA").ok().and_then(|v| v.parse().ok()).unwrap_or(42.0);
-    let arm = |k: char, r: f32| [(side("shoulderFlex", k), 110.0 + 55.0 * r), (side("shoulderAbduct", k), ca - 12.0 * r), (side("elbow", k), ce - (ce - 25.0) * r),
+    let cf: f32 = std::env::var("PROBE_CF").ok().and_then(|v| v.parse().ok()).unwrap_or(110.0);
+    let arm = |k: char, r: f32| [(side("shoulderFlex", k), cf + (165.0 - cf) * r), (side("shoulderAbduct", k), ca - 12.0 * r), (side("elbow", k), ce - (ce - 25.0) * r),
         (side("curl", k), 20.0 + 25.0 * (1.0 - r))];
     let p = over(poses::relaxed(), &arm('L', reach_l));
     let p = over(p, &arm('R', reach_r));
