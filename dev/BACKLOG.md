@@ -45,3 +45,30 @@ fix the loose ends". Order proposed to them: 4 first (the active ragdoll touches
 - Same body, side view: the intestines come out as flat red shards/flaps sticking out of the flank, clipping
   through the shirt; the blood soaked into the shirt is one dark blob with a hard jagged edge (real soak: wet,
   darker in the middle, a soft wicking edge that follows the weave and gravity).
+
+## The user's reports and asks, 2026-11-19 (after playing the AppImage from bevy-port a913169)
+Fixes (jobs started, stopped unfinished at the session's end; each branch's PORT.md section says where it got to):
+- "fix the opponent's footwork and the crawl elbows" (port/b-ragdoll). Footwork: he must close, keep range, circle,
+  step in and out with punches and not fall off his own punches; last round every walk left the feet behind and he
+  backed off and fell, cause not found. Crawl: elbows 40-70 deg past range because the pull pose folds the forearm
+  under the chest; a real army crawl keeps the forearm flat in front. His jabs ~50 J against the player's 18 J.
+- "the punching with and without gloves looks weird, and also does way too much damage, like why do I break a bone
+  within 1 punch, it's like I'm god" (port/b-six). Trace a punch fist.rs -> wounds.rs `blow` / `Harm::struck` ->
+  bones.rs and calibrate to real figures (punch force, contact time, effective mass, facial fracture loads, what
+  gloves and brass do). Bare: bruises, cuts, a nose or a knockout, rarely more; gloves almost never break bones;
+  brass break facial bones readily. The look: the fist turning over, shoulder and hip in, the other hand guarding,
+  snap out and back.
+- "if I stand very close with my gun's barrel against somebody, sometimes it doesn't even hit them" (port/b-body).
+  Contact shots miss: a scenario pressing each gun to each body part at 0-10 cm, logging hit or miss.
+
+New things (not started):
+8. **Syringes** (injected into a person):
+   - one that heals their vitals without healing the visible damage, and stops the bleeding;
+   - one that makes their flesh rot;
+   - one that dissolves all their bones;
+   - one that poisons them.
+9. **A boiling water gun**: it should scald the skin and damage tissue realistically (real scalds: redness,
+   blisters, skin slipping off, full thickness with long contact).
+10. **An acid gun** (chemical burns that keep eating while the acid is on the skin).
+New sounds for these (the needle, the spray, the hiss) need ElevenLabs takes; the ElevenLabs connector needed
+signing in again at the end of 2026-11-19.
