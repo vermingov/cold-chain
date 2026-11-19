@@ -1538,6 +1538,25 @@ breaks the 38-year-old's jaw 7 times in 20 (the mandible at 1.8 kN, inside Nahum
 and the fist's give are calibrated on the same gloved measurements, so the glove's foam may be counted twice (its
 fractures are rarer than they would be, its knockouts are by momentum and not affected).
 
+### Punches, unfinished (the session ended here)
+The damage fix above is done and measured (tests 38 pass). The look is not finished:
+- Seen in `punch-look` before (the a913169 motion; out frames: a miss held at the end of the arm from frame 6 to about
+  26, a third of a second, then drifting back from a slow start (Ease::Onto over 0.45 s); a hit sat on the face 8
+  frames and came off slowly (0.3 s, Smooth); the fist landed at most two thirds of the way turned over (turn * 1.1
+  rad), on the face thumb up; a full wind-up dropped the fist out of sight below the view; the other fist does stay in
+  the guard; the view barely leans (1.4 degrees).
+- Changed in fist.rs, built, NOT yet seen: palm down at landing (turn * pi/2); a hit off the skin after one frame and back
+  to the guard in 0.16 s, a miss 3 cm past the arm's end and back in 0.2 s, both fastest as they leave (Ease::Off);
+  wound up cocked by the cheek in view (DRAWN 0.14, -0.12, 0.19); the shoulder 12 cm forward into the punch (INTO).
+  The punches are also slower out than at a913169 (7.5 m/s full against 10.5: the throw's time is 2 far / speed).
+- Next: run `punch-look` with the current build and look at the sheets (tools: scratch b-six/tools/seq.py) against the
+  before ones; check the elbow stays behind the fist and the wrist straight palm down; consider the head moving a few
+  cm forward with a full punch (the eye is player.rs's) and the guard a little higher; then gloves the same.
+- Damage, still open: the face bones' figures (Nahum's, old cadavers) may count age twice for the old man; the glove's
+  foam may be counted twice (FIST_GIVES is calibrated on gloved punches); bare jabs bruise the chin and chest rarely
+  (bruise.rs works from energy, not impulse); lacerations come from repeated punches, which `punch-damage` (each punch
+  on someone unhurt) does not measure.
+
 ## The active ragdoll (BACKLOG item 4 and item 7's joint loose ends, branch port/b-ragdoll)
 
 ### What is measured now
