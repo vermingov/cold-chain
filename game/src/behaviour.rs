@@ -1170,7 +1170,9 @@ impl Behaviour {
         add(pose, side("ankle", st_side), 8.0 * (PI * s).sin());
         // The foot carried to its place by the leg's own muscles, the hip taking the pull.
         let most = 220.0 * self.strength.get(Part::leg(st_side));
-        let pelvis = rd.by_name("pelvis");
+        // (A step taken on purpose, fighting: its pull paid through the planted leg into the floor. Paid by the pelvis,
+        // some 60 N s a step sent the body back, and a stumble step back followed every step in.)
+        let pelvis = if self.foe.is_some() && closing { rd.by_name(&format!("foot{}", other(st_side))) } else { rd.by_name("pelvis") };
         self.act(move |rd, dt| {
             let force = motor::reach(rd, swing, middle, 300.0, 6.0, most, None);
             motor::push(rd, swing, force, &[pelvis], dt);
