@@ -1738,3 +1738,27 @@ From the round's own pictures. Before and after, the same scenario and seed each
 - The cost: the wall's opening (`open`, CPU, debug, a shared machine, single runs): belly 2.33 ms before, 2.18 after;
   head 2.55 before, 4.65 after (noise from the other jobs: the wall's geometry changed by two lines per ring point). The
   GPU cost (a few more noise reads per fragment of torn wall) not measured: lavapipe's times say nothing of a real GPU.
+
+## Contact shots, unfinished (play-test: "with my gun's barrel against somebody, sometimes it doesn't even hit them")
+`press_scenario.rs` (`press-pistol`, `-ak`, `-m4`, `-shotgun`, `-rifle`, `-lying`, `-shove`, `-walk`): the player put so
+that the gun, held as at rest, has its muzzle 5 cm in, on the skin, 1, 3 or 10 cm off each part (head, neck, chest,
+belly, pelvis, left upper arm, forearm, hand, thigh, shin) of a standing person, straight in front and 40 degrees round;
+fired; logged per shot (`PRESS hit|clear|MISS` on stderr, `press` in log.json) with the line the shot really took (now in
+weapons.rs `fire`'s log: `muzzle`, `from`, `dir`), whether that line from half a metre behind the muzzle meets anyone's
+skin, and whether anything went in. A MISS is a line through someone with nothing in.
+- Measured (the build before any fix): pistol 90 shots, 0 misses (89 hits, 1 clear: the line passed nobody; the neck
+  was not reached then, it has no segment of its own and is now the head's lower end). AK 49 shots before the run was
+  killed for memory, 0 misses. Rifle 10 shots before it was killed (by my build), 0 misses, 1 clear (pressed 40 degrees
+  round on a head, the hull's push of up to 80 N along the eye's forward slid the head out of line in the second it
+  was held there). M4, shotgun, lying, shoved: not run.
+- `press-walk` (W held from 25 cm off, the shot 40 frames in), 11 shots before the session ended: 7 hits, 3 clear,
+  1 MISS. The miss: the pistol walked into the old man's head, held back by `clear_of` its most (6 cm), the muzzle then
+  half a metre past the head's skin, the head behind it: the player walks on while the gun can only be pulled back a
+  few centimetres (`most`: 6 cm for a long gun, `h.at[2] - 0.12` for others) and pushes the person with at most 80 N, so
+  the barrel passes through someone and the shot starts beyond them (`fire` follows it from 4 cm inside the muzzle).
+  This is the likeliest cause of the report: standing still pressed against someone, every shot went in.
+- Next: (1) stop the player's walk where the held thing's hull is against someone and pulled back its most (the arms
+  cannot push a gun through a head), or (2) follow the shot from the back of the gun's hull along the bore (what is
+  between the shooter and the muzzle is what the barrel is in), the range for the powder from the muzzle, clamped to
+  contact. (1) is the cause; (2) a guard for a frame's lag. Then the full set again (every gun, lying, shoved, walking),
+  and pictures of a few contact wounds.
