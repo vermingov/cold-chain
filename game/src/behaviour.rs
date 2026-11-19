@@ -856,11 +856,13 @@ impl Behaviour {
             self.ease("leg", &LEG, s, &mut pose, 0.06);
         }
         self.react(&mut pose, dt);
-        // Fighting, the weight leans toward the range they want, as far as past the edge of the feet: the balance steps
-        // after it, and they come in or back off a step at a time, as a stumble is caught. (A step forced on the feet
+        // Fighting, the weight leans toward the range they want, as far as past the edge of the feet, and a step is taken
+        // as soon as it gets to the edge (leaning alone, the balance's push dies away there and they only stood on their
+        // toes): they come in or back off a step at a time, each caught as a stumble is. (A step forced on the feet
         // instead put them on the floor within a second of the first step in.)
         let lean = self.fight(rd, &mut pose, dt, feet, rng);
-        if lean != Vec3::ZERO {
+        let leaning = lean != Vec3::ZERO;
+        if leaning {
             aim += lean;
             self.steps = 0;
         }
@@ -938,7 +940,7 @@ impl Behaviour {
         // the other) is stepped at once: left hanging, it was nothing to stand on.
         let lifted = if down.len() == 1 { feet.iter().copied().find(|f| !down.contains(f)) } else { None };
         let past = outside(&hull, xi.x, xi.z);
-        if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if self.settle > 0.0 { 0.1 } else { 0.08 })) {
+        if self.step.is_none() && (lifted.is_some() || (down.len() == 2 && past > if leaning { -0.02 } else if self.settle > 0.0 { 0.1 } else { 0.08 })) {
             if self.steps >= STEPS || xi.distance(centre) > REACH * 1.4 {
                 self.why = if self.steps >= STEPS { "steps" } else { "far" };
                 self.go(State::Fall, Mode::None, rng);
@@ -1007,7 +1009,7 @@ impl Behaviour {
         }
         // Footwork: leaning in when out of reach, back when crowded.
         let range = 0.8;
-        let lean = if self.punch.is_none() { ahead * (d - range).clamp(-0.12, 0.12) } else { Vec3::ZERO };
+        let lean = if self.punch.is_none() && (d - range).abs() > 0.15 { ahead * (d - range).clamp(-0.12, 0.12) } else { Vec3::ZERO };
 
         // A punch, now and then, when in reach and steady.
         self.next_punch -= dt;
