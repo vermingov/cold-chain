@@ -41,7 +41,7 @@ pub struct Tooth {
     pub state: State,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Teeth {
     pub teeth: Vec<Tooth>,
 }

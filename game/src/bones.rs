@@ -410,6 +410,7 @@ pub struct Load {
     pub end: Option<i32>,
 }
 
+#[derive(Clone)]
 pub struct Bones {
     pub age: f32,
     pub cortical: f32,

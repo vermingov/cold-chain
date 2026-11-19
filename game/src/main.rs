@@ -47,6 +47,7 @@ mod picture;
 mod player;
 mod poses;
 mod profiler;
+mod punch_scenario;
 mod ragdoll;
 mod rng;
 mod runs;

@@ -38,6 +38,12 @@ const JAB: (f32, f32) = (6.0, 1.0);
 const FULL: (f32, f32) = (10.5, 3.2);
 const WIND: f32 = 1.0;
 
+// What a punch wound up `charge` of the way (0 a tap, 1 a full second) lands with: the mass behind the fist, kg, and its
+// speed, m/s.
+pub fn landing(charge: f32) -> (f32, f32) {
+    (JAB.1 + (FULL.1 - JAB.1) * charge, JAB.0 + (FULL.0 - JAB.0) * charge)
+}
+
 // The knuckles, in the eye's frame (mirrored for the left fist, which is held a little further out in front, the lead
 // hand), m.
 const GUARD_R: Vec3 = Vec3::new(0.11, -0.08, 0.27);
@@ -138,8 +144,7 @@ impl Fist {
         let line = self.mine(LINE);
         self.wind = -1.0;
         let to = self.arm_end(line, Vec3::Z);
-        self.speed = JAB.0 + (FULL.0 - JAB.0) * c;
-        self.mass = JAB.1 + (FULL.1 - JAB.1) * c;
+        (self.mass, self.speed) = landing(c);
         self.keys = vec![
             Key { at: self.at, t: 0.0, turn: self.turn, body: self.body, ease: Ease::Smooth },
             Key { at: to, t: 0.0, turn: 1.0, body: 0.4 + 0.6 * c, ease: Ease::Onto },

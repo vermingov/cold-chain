@@ -107,6 +107,7 @@ fn moves(t: &str) -> (f32, f32) {
 
 // A layer over the skin carried out by its swelling (bruise.ts Rider): for each of its corners, the place of the skin
 // under it (or none), how far it stands off that skin past where it lies on it, and where its shift is kept (`out`).
+#[derive(Clone)]
 struct Rider {
     slots: Vec<u32>,
     place: Vec<i32>,
@@ -114,13 +115,14 @@ struct Rider {
     tight: f32,
 }
 
+#[derive(Clone)]
 pub struct EyeLids {
     pub side: Side,
     pub centre: Vec3,
     pub lid: Vec<usize>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Bruise {
     pub count: usize,
     pub pos: Vec<Vec3>,

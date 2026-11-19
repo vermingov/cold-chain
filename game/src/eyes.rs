@@ -69,7 +69,7 @@ pub struct Eye {
     pub t: f32,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Eyes {
     pub l: Eye,
     pub r: Eye,
