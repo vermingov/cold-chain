@@ -527,18 +527,40 @@ const PUNCHES: &[(usize, &str, f32, u8, u32)] = &[
     (3, "belly", 0.55, 2, 2),
 ];
 
-// (`key`: what is held, the bare fists or fists in knuckle dusters or boxing gloves, worn.rs; each also seen in the guard.)
-pub fn scenario(key: &'static str) -> Vec<crate::scenario::Step> {
+// What is held seen on the fists (`worn-gloves`, `worn-dusters`): in the guard looking at the line-up and down at the
+// floor, then a right wound up a second and thrown at nothing, caught on its way out and at the end of the arm.
+pub fn look(key: &'static str) -> Vec<crate::scenario::Step> {
     use crate::scenario::Step;
     let mut s = vec![Step::Do(Box::new(move |w: &mut World| crate::warm::take(w, key))), Step::Wait(30)];
     s.extend(crate::scenario::view(&format!("{key}_guard"), 0.0, -2.0, [0.0, 1.5, 2.2], 1.65));
-    s.push(Step::Do(Box::new(|w: &mut World| {
-        for mut p in w.query::<&mut Player>().iter_mut(w) {
-            p.pitch = -0.35;
-        }
-    })));
+    let pitch = |a: f32| {
+        Step::Do(Box::new(move |w: &mut World| {
+            for mut p in w.query::<&mut Player>().iter_mut(w) {
+                p.pitch = a;
+            }
+        }))
+    };
+    s.push(pitch(-0.35));
     s.push(Step::Wait(4));
     s.push(Step::Shot(format!("{key}_guard_down")));
+    // (Turned away from the line-up, down the empty hall, so the punch meets nothing; caught every other frame out.)
+    s.extend(crate::scenario::view(&format!("{key}_away"), 0.0, -2.0, [0.0, 1.5, -10.0], 1.65));
+    s.push(Step::Do(Box::new(|w: &mut World| crate::warm::press(w, 2))));
+    s.push(Step::Wait(60));
+    s.push(Step::Shot(format!("{key}_wound")));
+    s.push(Step::Do(Box::new(|w: &mut World| crate::warm::release(w, 2))));
+    for k in 1..=6 {
+        s.push(Step::Wait(2));
+        s.push(Step::Shot(format!("{key}_thrown_{}", k * 2)));
+    }
+    s.push(Step::Wait(40));
+    s
+}
+
+// (`key`: what is held, the bare fists or fists in knuckle dusters or boxing gloves, worn.rs; each also seen in the guard.)
+pub fn scenario(key: &'static str) -> Vec<crate::scenario::Step> {
+    use crate::scenario::Step;
+    let mut s = look(key);
     for (i, &(n, part, far, button, held)) in PUNCHES.iter().enumerate() {
         if i > 0 && i % 4 == 0 {
             s.push(Step::Do(Box::new(|w: &mut World| {
