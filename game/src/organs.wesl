@@ -84,8 +84,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         var h = (mid * 0.6 + fine * 0.25 + vessel * 0.4 + fatty * 0.6) * 0.0003;
         // Where a missile went, the blood on it lies in patches, thin and red, clotted dark, the surface showing between
         // (one even film read as red lacquer).
-        let patch = mix(0.5, wet_noise(p * 90.0 + 13.0) * 0.7 + wet_noise(p * 330.0 + 5.0) * 0.3, fade(330.0, px));
-        var blood = mm * mix(0.15, 1.6, smoothstep(0.3, 0.75, patch));
+        let patches = mix(0.5, wet_noise(p * 90.0 + 13.0) * 0.7 + wet_noise(p * 330.0 + 5.0) * 0.3, fade(330.0, px));
+        var blood = mm * mix(0.15, 1.6, smoothstep(0.3, 0.75, patches));
         // (How much of it is torn up: the brain where the charge went is pulp, not folds.)
         let pulped = smoothstep(0.02, 0.12, mm) * step(1.5, wet.look.w);
         if wet.look.w > 1.5 {
