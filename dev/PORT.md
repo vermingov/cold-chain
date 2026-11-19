@@ -1608,6 +1608,12 @@ Further tries (worst elbow, seeds 1-2): the trapped test widened to the forearm 
 75.7, 56.4; the pull pose with less elbow (70) and more abduction (60), 71.4, 58.7; the arms posed by `arm_to` (which
 keeps the forearm out of the trunk) to the reach spot and the planted hand, 99 and 134 (worse); shoulder flexion 140,
 abduction 60, elbow 90 in the pull (the upper arm nearer the floor than pointing into it), 52.5, 45.0. Not under 10 yet.
+Standing creep and the thrown dead man's jitter, which one seed each had made look worse: this branch's two physics
+changes (no gyroscopic term, joints corrected at 30 a second) off ("old") and on ("new"), three seeds each. Creep, the five
+people's cm in ten seconds: old 4.8-13.5, 2.1-13.4, 3.1-15.8 (mean 9.8); new 6.0-13.6, 2.3-13.0, 3.2-15.2 (mean 9.6).
+Standing hf 0.032-0.034 old, 0.030-0.032 new. Thrown dead, the second he lands: old 2.40, 2.08, 2.83 (mean 2.43); new
+2.41, 2.25, 3.15 (mean 2.60). Seed to seed is wider than old to new: nothing here to bring back (the thrown one, 7% on
+average, if anything, from the faster correction on a body landing).
 
 ## The play-test's wounds: torn holes, bowel, the shirt's stain (BACKLOG play-test reports, branch port/b-body)
 
