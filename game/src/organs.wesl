@@ -63,8 +63,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if wet.look.w < 0.5 {
         // A rope of bowel: its own picture (the corners' colour is white), blood over it in smears, the pink serosa
         // between (a film over all of it read as red plastic).
-        // (By its picture's place, which goes with it as it moves.)
-        let q = vec3(in.uv.x * 9.0, in.uv.y * 3.0, 0.5);
+        // (By its picture's place, which goes with it as it moves; the organs' meshes have none.)
+        var q = vec3(0.5);
+@if(VERTEX_UVS_A)
+        q = vec3(in.uv.x * 9.0, in.uv.y * 3.0, 0.5);
         let smears = smoothstep(0.35, 0.8, wet_noise(q * 2.0 + 3.0) * 0.7 + wet_noise(q * 7.0) * 0.3);
         pbr_input.material.base_color = vec4(blood_over(pbr_input.material.base_color.rgb, mm * mix(0.1, 1.3, smears), 1.0), 1.0);
     } else {
