@@ -276,6 +276,8 @@ struct Punch {
     to: Vec3,
     head: bool,
     landed: bool,
+    // The hand's fastest toward the player so far (m/s): met, it is stopped at once, and what it carried is this.
+    fast: f32,
 }
 
 struct Stepping {
@@ -1048,12 +1050,15 @@ impl Behaviour {
             let side = if rng.next() < 0.65 { 'L' } else { 'R' };
             let head = rng.next() < 0.7;
             let to = foe.eye - Vec3::Y * if head { 0.06 } else { 0.5 };
-            self.punch = Some(Punch { side, t: 0.0, to, head, landed: false });
+            self.punch = Some(Punch { side, t: 0.0, to, head, landed: false, fast: 0.0 });
             self.next_punch = 0.7 + rng.next() * 1.3 + daze * 2.5;
         }
         let Some(p) = self.punch.as_mut() else { return lean };
         p.t += dt;
         let (k, pt, at, head, landed) = (p.side, p.t, p.to, p.head, p.landed);
+        let hand_now = rd.by_name(&format!("hand{k}"));
+        p.fast = p.fast.max(rd.segs[hand_now].vel.dot(ahead));
+        let fast = p.fast;
         const OUT: f32 = 0.13;
         const BACK: f32 = 0.22;
         if pt > OUT + BACK {
@@ -1090,9 +1095,10 @@ impl Behaviour {
         if std::env::var("PROBE_FIGHT").is_ok() && !landed {
             eprintln!("PROBE punch {k} t {pt:.3} hand off the body {:.2} m, {:.1} m/s toward", h.distance(lo + (hi - lo) * t) - 0.25, rd.segs[hand].vel.dot(ahead));
         }
-        if !landed && h.distance(lo + (hi - lo) * t) < 0.25 + 0.07 {
+        // (Within 12 cm of the capsule's skin: the hand's middle, met by the body, stops 8 cm off it.)
+        if !landed && h.distance(lo + (hi - lo) * t) < 0.25 + 0.12 {
             self.punch.as_mut().unwrap().landed = true;
-            let speed = rd.segs[hand].vel.dot(ahead).max(0.0);
+            let speed = fast.max(0.0);
             let mut parts = vec![format!("hand{k}"), format!("forearm{k}"), format!("forearm2{k}")];
             if straight {
                 parts.extend([format!("upperarm{k}"), format!("upperarm2{k}")]);
