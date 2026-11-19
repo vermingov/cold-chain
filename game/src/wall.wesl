@@ -68,14 +68,14 @@ fn cavity(in: VertexOutput, is_front: bool, p: vec3<f32>, px: f32, head: bool) -
     var c: vec3<f32>;
     var mm: f32;
     if head {
-        c = mix(vec3(0.70, 0.56, 0.52), vec3(0.82, 0.70, 0.66), n2);
-        mm = 0.03 + 0.4 * smoothstep(0.4, 0.75, n1);
+        c = mix(vec3(0.60, 0.50, 0.49), vec3(0.80, 0.66, 0.62), n2) * (0.8 + 0.3 * n1);
+        mm = 0.01 + 0.05 * n1 + 0.5 * smoothstep(0.62, 0.85, n1);
     } else {
         c = vec3(0.30, 0.10, 0.09);
         mm = 0.3 + 0.6 * t;
     }
     pbr_input.material.base_color = vec4(blood_over(linear(c) * (1.0 - 0.6 * t), mm, 1.0), 1.0);
-    pbr_input.material.perceptual_roughness = mix(0.45, 0.2, clamp(mm, 0.0, 1.0));
+    pbr_input.material.perceptual_roughness = mix(0.55, 0.38, clamp(mm, 0.0, 1.0)) - 0.08 * n2;
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
@@ -194,15 +194,33 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let blotch = mix(0.5, wall_noise(p * 110.0 + 3.0), fade(110.0, px));
     let in_fat = step(wa.x, d) * step(d, wa.y);
     var mm = 0.006 + 0.035 * oozes * (0.3 + blotch) + 0.3 * smoothstep(0.75, 1.0, in.uv.x / max(deep, 1.0)) * blotch + (1.0 - smoothstep(0.25, 0.42, lob)) * 0.05 * in_fat;
+    var torn_wall = wall;
+    var roughness = 1.0 - mix(gloss, 0.75, clamp(mm * 10.0, 0.0, 1.0));
     if torn {
-        // Torn tissue bleeds from every face and the blast drives blood into it: most of it under a film of blood and
-        // clot, the pale fat and the white of fascia showing through in tags and patches.
+        // Torn tissue is not one surface under one film: shreds of what it was (in the head the scalp's hair at the
+        // edge, chips of the vault's bone, the brain pulped grey-pink), smeared with blood that is thin and red here,
+        // dark clot there, the tissue itself showing between, all of it wet but not lacquered: its sheen broken up.
         let clot = mix(0.5, wall_noise(p * 70.0 + 21.0) * 0.6 + wall_noise(p * 240.0 + 2.0) * 0.4, fade(240.0, px));
-        mm += 0.05 + 0.3 * smoothstep(0.25, 0.6, clot) + 0.04 * oozes;
+        let smear = mix(0.5, wall_noise(p * 130.0 + 33.0), fade(130.0, px));
+        let fine = mix(0.5, wall_noise(p * 700.0 + 41.0), fade(700.0, px));
+        if head {
+            let pulp = mix(vec3(0.62, 0.52, 0.50), vec3(0.80, 0.64, 0.60), smear) * (0.85 + 0.3 * fine);
+            var t = mix(c, pulp, smoothstep(0.35, 0.7, d / max(deep, 1.0)) * 0.8);
+            // Chips of the vault's bone, ivory, sharp-edged, where the bone was.
+            let chip = step(0.72, wall_noise(p * 420.0 + 17.0)) * step(wa.z, d) * step(d, wb.z + 2.0);
+            t = mix(t, vec3(0.86, 0.82, 0.72), chip);
+            // The scalp's hair over its torn edge, dark strands.
+            let hair = step(0.62, wall_noise(p * vec3(1600.0, 160.0, 1600.0) + 5.0)) * (1.0 - smoothstep(0.5, 1.6, d));
+            t = mix(t, vec3(0.05, 0.035, 0.03), hair);
+            torn_wall = linear(t);
+        }
+        mm = 0.012 + 0.025 * oozes * smear + 0.55 * smoothstep(0.55, 0.85, clot) + 0.06 * smoothstep(0.3, 0.6, smear);
+        // The fat soaks it up and is smeared with it: most of it red, the cream showing in a few tags.
+        mm += in_fat * 0.12 * smoothstep(0.22, 0.5, smear);
+        roughness = mix(0.42, 0.62, fine) - 0.12 * smoothstep(0.55, 0.85, clot);
     }
-    pbr_input.material.base_color = vec4(blood_over(wall, mm, 1.0), 1.0);
-    let wall_gloss = mix(gloss, 0.75, clamp(mm * 10.0, 0.0, 1.0));
-    pbr_input.material.perceptual_roughness = 1.0 - wall_gloss;
+    pbr_input.material.base_color = vec4(blood_over(torn_wall, mm, 1.0), 1.0);
+    pbr_input.material.perceptual_roughness = roughness;
     // The lobules and fascicles stand out of the face a little (in metres): the light catches them.
     var h = lift;
     if oozes > 0.5 {

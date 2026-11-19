@@ -242,8 +242,11 @@ pub fn build(world: &mut World, who: Entity, o: &Opening, edge: &[Option<Crossin
                 // undermined margins; tissue torn, not cut).
                 let out = (top - o.at - o.normal * (top - o.at).dot(o.normal)).normalize_or_zero();
                 let t = (mm / deep.max(1.0)).clamp(0.0, 1.0);
-                let under = (std::f32::consts::PI * t).sin().powf(0.7) * 0.3 * (top - o.at).length() * (0.8 + 0.3 * wave(k, 7.3));
-                let shred = 0.0035 * wave(k * 3 + r, 11.1) * smoothstep(0.08, 0.3, t);
+                // (Torn back unevenly: in places far under the skin's edge, out of sight, in others hardly at all.)
+                let under = (std::f32::consts::PI * t).sin().powf(0.7) * 0.3 * (top - o.at).length() * (0.5 + 0.8 * (0.5 + 0.5 * wave(k, 7.3)));
+                // (Varying smoothly down a column and round the hole: from corner to corner it folded the face into
+                // sharp creases.)
+                let shred = 0.0035 * wave(k, 11.1 + r as f32 * 0.35) * smoothstep(0.08, 0.3, t);
                 p += out * (under + shred);
             }
             pos.push(p);

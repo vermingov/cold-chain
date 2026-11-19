@@ -140,6 +140,8 @@ pub fn steps(part: &str) -> Vec<Step> {
         s.push(Step::Wait(if std::env::var("GORE_QUICK").is_ok() { 30 } else { 1500 }));
         s.extend(pictures("belly", "30s", 0.35));
         s.extend(pictures("belly", "30s_wide", 0.8));
+        // (And from as far as a player stands looking at it.)
+        s.extend(pictures("belly", "30s_far", 2.5));
     }
     // The same into the naked man's belly: the wound on bare skin.
     if all || part == "bare" {

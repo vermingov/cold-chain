@@ -1675,3 +1675,32 @@ shirt), little on a dark one.
   before, one push after; his right hand peaked at 3.6 m/s and 10 rad/s before and 3.5 m/s and 10 rad/s after, since
   the hand was crossed once either way. The 800 to 1000 rad/s spin was not reproduced with a real swing here (the ragdoll
   job's `sword` scenario gives its five pushes by hand, not through `sweep`).
+
+### Round 2: the torn tissue's material, the fat, the bowel's colour, the stain from 2.5 m
+From the round's own pictures. Before and after, the same scenario and seed each.
+- The head's pulp read as glossy red plastic (one hue, mirror highlights, sharp creases). wall.wesl, torn: the lacquer
+  (a film of blood with a clear-coat over all of it) is gone; the torn wall's own colour is mottled by three noises (clot,
+  smear, fine) and the blood over it is in patches: thin almost everywhere (0.012 mm and up), thick only where clot is
+  (to 0.55 mm, dark), roughness 0.42 to 0.62 (was mirror-wet), a little smoother on clot. In the head the torn layers
+  are pulp, pink-grey to grey-red; bone chips (off-white, between the scalp's and the skull's depth) and dark hair
+  strands at the edge are in the same material, not another layer. The cavity's bowl in the head is the same pulp, matte
+  where no clot is. organs.wesl: an organ where a missile went has blood in patches, not one film, and the brain there
+  loses its folds for pulp (dark grey-red, bumps, roughness 0.5 to 0.65). Seen in gore-head at 4 s: mottled pink-grey
+  pulp, red and dark patches, mostly matte; the gloss left is the skin's fresh blood film round the hole.
+- The belly's clean cream ring of fat: wall.rs, the fat torn back under the skin by 0.15 to 0.39 of the way to the
+  wound's middle round the hole (was one even depth), its edge shredded 3.5 mm in and out; wall.wesl puts blood over
+  the fat in smears (0.12 mm more where smeared). And the pale specks right under the skin's edge were the skin itself:
+  `lips` now blots blood (film.rs `Skin::blot`) along every fourth point of a torn edge. gore-belly at 4 s: no cream
+  band, the fat mostly red with a few yellow tags.
+- The bowel too red: the anatomy's flat clusters of bowel, colon and stomach are not drawn where the ropes are (they
+  are the same bowel and showed as red shards behind the ropes); a rope's blood (organs.wesl) is in smears along it by
+  its own picture's place (it moves with it), up to the film's thickness on them and a twentieth of it between, and the
+  film on a rope out of a wound is 0.002 to 0.014 mm (was to 0.035). gore-bare at 4 s: pink-grey serosa with red smears,
+  not candy red.
+- The stain from 2.5 m (`pictures("belly", "30s_far", 2.5)`, new): the edge reads soft, no light ring. The whitish halo
+  in round 1's oblique picture was not the damp halo (that darkens the cloth by up to 22%): it was the pale skin under
+  the shirt seen through the cloth's frayed hole, which was a quarter wider than the wound. The hole is now 8% and 2 mm
+  wider and the skin round a torn hole is blotted with blood.
+- The cost: the wall's opening (`open`, CPU, debug, a shared machine, single runs): belly 2.33 ms before, 2.18 after;
+  head 2.55 before, 4.65 after (noise from the other jobs: the wall's geometry changed by two lines per ring point). The
+  GPU cost (a few more noise reads per fragment of torn wall) not measured: lavapipe's times say nothing of a real GPU.
