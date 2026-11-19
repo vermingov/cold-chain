@@ -399,7 +399,6 @@ pub struct Behaviour {
     pub foe: Option<Foe>,
     punch: Option<Punch>,
     next_punch: f32,
-    next_step: f32,
     pub blows: Vec<(f32, f32, bool)>,
     pub leg_gone: bool,
     // The bones broken in each limb, (side, bone key): bones.rs's, when it comes.
@@ -476,7 +475,6 @@ impl Behaviour {
             foe: None,
             punch: None,
             next_punch: 1.0,
-            next_step: 0.0,
             blows: Vec::new(),
             leg_gone: false,
             breaks: Vec::new(),
@@ -861,13 +859,13 @@ impl Behaviour {
             self.ease("leg", &LEG, s, &mut pose, 0.06);
         }
         self.react(&mut pose, dt);
-        self.fight(rd, &mut pose, dt, f, r, feet, rng);
-        // A step taken on purpose (fight's) carries the weight with it: the balance aims between the planted foot and
-        // where the other is going. (Aimed where the feet were until it landed, the swing's pull on the hip sent the body
-        // back, and a stumble step back followed every step in.)
-        if let (Some(_), Some(st)) = (self.foe, self.step.as_ref().filter(|s| s.closing)) {
-            let stance = rd.segs[rd.by_name(&format!("foot{}", other(st.side)))].now.translation;
-            aim = Vec3::new((stance.x + st.to.x) / 2.0, aim.y, (stance.z + st.to.z) / 2.0);
+        // Fighting, the weight leans toward the range they want, as far as past the edge of the feet: the balance steps
+        // after it, and they come in or back off a step at a time, as a stumble is caught. (A step forced on the feet
+        // instead put them on the floor within a second of the first step in.)
+        let lean = self.fight(rd, &mut pose, dt, feet, rng);
+        if lean != Vec3::ZERO {
+            aim += lean;
+            self.steps = 0;
         }
 
         // The ankle strategy: the body swayed back over the middle of the feet as a whole, as hard as the feet can push
@@ -983,11 +981,12 @@ impl Behaviour {
     // when it meets the player's body (the hand's speed toward them, and the hand, forearm and, for a straight, the upper
     // arm behind it) goes to bout.rs for `Harm::struck`. Dazed, the guard sags and the punches come slower and softer.
     #[allow(clippy::too_many_arguments)]
-    fn fight(&mut self, rd: &mut Ragdoll, pose: &mut Pose, dt: f32, f: Vec3, r: Vec3, feet: [usize; 2], rng: &mut Rng) {
+    fn fight(&mut self, rd: &mut Ragdoll, pose: &mut Pose, dt: f32, feet: [usize; 2], rng: &mut Rng) -> Vec3 {
         let Some(foe) = self.foe else {
             self.punch = None;
-            return;
+            return Vec3::ZERO;
         };
+        let _ = feet;
         let (will, daze) = (self.will, self.felt.daze);
         let chest = rd.by_name("chest");
         let c = rd.segs[chest].now.translation;
@@ -1014,24 +1013,11 @@ impl Behaviour {
         }
 
         if std::env::var("PROBE_FIGHT").is_ok() && (self.clock * 2.0).fract() < dt * 2.0 {
-            eprintln!("PROBE fight d {d:.2} step {} punch {} next_step {:.2} next_punch {:.2} steps {}", self.step.is_some(), self.punch.is_some(), self.next_step, self.next_punch, self.steps);
+            eprintln!("PROBE fight d {d:.2} step {} punch {} next_punch {:.2} steps {}", self.step.is_some(), self.punch.is_some(), self.next_punch, self.steps);
         }
-        // Footwork: a step in when out of reach, out when crowded, one at a time.
-        self.next_step -= dt;
+        // Footwork: leaning in when out of reach, back when crowded.
         let range = 0.8;
-        if self.step.is_none() && self.punch.is_none() && self.next_step <= 0.0 && (d > range + 0.25 || d < range - 0.3) {
-            let mid = (rd.segs[feet[0]].now.translation + rd.segs[feet[1]].now.translation) * 0.5;
-            let mut xi = mid + ahead * (d - range).clamp(-0.3, 0.35);
-            xi.y = self.floor;
-            self.start_step(rd, xi, f, r, feet, None);
-            // (A step taken on purpose is not a stumble, and keeps its mark: re-aimed at the capture point every frame
-            // as a stumble's is, it was brought back to where the body already was, and they never came in.)
-            self.steps = self.steps.saturating_sub(1);
-            if let Some(st) = self.step.as_mut() {
-                st.closing = true;
-            }
-            self.next_step = 0.5;
-        }
+        let lean = if self.punch.is_none() { ahead * (d - range).clamp(-0.12, 0.12) } else { Vec3::ZERO };
 
         // A punch, now and then, when in reach and steady.
         self.next_punch -= dt;
@@ -1042,14 +1028,14 @@ impl Behaviour {
             self.punch = Some(Punch { side, t: 0.0, to, head, landed: false });
             self.next_punch = 0.7 + rng.next() * 1.3 + daze * 2.5;
         }
-        let Some(p) = self.punch.as_mut() else { return };
+        let Some(p) = self.punch.as_mut() else { return lean };
         p.t += dt;
         let (k, pt, at, head, landed) = (p.side, p.t, p.to, p.head, p.landed);
         const OUT: f32 = 0.13;
         const BACK: f32 = 0.22;
         if pt > OUT + BACK {
             self.punch = None;
-            return;
+            return lean;
         }
         let e = if pt < OUT { smooth(pt / OUT) } else { 1.0 - smooth((pt - OUT) / BACK) };
         let straight = k == 'R';
@@ -1083,6 +1069,7 @@ impl Behaviour {
             let mass: f32 = parts.iter().map(|n| rd.segs[rd.by_name(n)].def.mass).sum();
             self.blows.push((mass, speed, head && h.y > foe.eye.y - 0.3));
         }
+        lean
     }
 
     // A step to where the weight is going: the trailing foot forward or back, or the foot on the side it is falling to.
@@ -1170,9 +1157,7 @@ impl Behaviour {
         add(pose, side("ankle", st_side), 8.0 * (PI * s).sin());
         // The foot carried to its place by the leg's own muscles, the hip taking the pull.
         let most = 220.0 * self.strength.get(Part::leg(st_side));
-        // (A step taken on purpose, fighting: its pull paid through the planted leg into the floor. Paid by the pelvis,
-        // some 60 N s a step sent the body back, and a stumble step back followed every step in.)
-        let pelvis = if self.foe.is_some() && closing { rd.by_name(&format!("foot{}", other(st_side))) } else { rd.by_name("pelvis") };
+        let pelvis = rd.by_name("pelvis");
         self.act(move |rd, dt| {
             let force = motor::reach(rd, swing, middle, 300.0, 6.0, most, None);
             motor::push(rd, swing, force, &[pelvis], dt);
