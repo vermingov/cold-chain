@@ -2,6 +2,51 @@
 
 Read this first, then `dev/NOTES.md` from "## The sandbox, 2026-11-13 (0.8.0)" to the end. The game is only the sandbox.
 
+## Next session: start here (2026-11-19, end of the fifth cloud session)
+
+The user played the AppImage built from bevy-port a913169 (items 1-6 below) and asked for fixes and new things;
+dev/BACKLOG.md "The user's reports and asks, 2026-11-19" has their words. Three jobs started the fixes and were
+stopped at the user's word ("take a break, stop agents, and document for next session"). Their branches are pushed,
+NOT merged into bevy-port; each branch's dev/PORT.md has an "..., unfinished" section with numbers and next steps.
+Merge each with plumbing (assets/ is a symlink in worktrees; check `git diff --stat bevy-port...<b> -- assets` is
+empty), build with no warnings, `cargo test`, look at the scenario's screenshots, then rebuild the AppImage.
+
+- **port/b-six (adb1143): punches.** Damage fixed and measured, look built but never seen.
+  - Cause of one-punch fractures: the player threw an Olympic boxer's punch (10.5 m/s, 3.2 kg, 176 J); the brow
+    counted as the eye socket (1.2 kN, not the frontal 6.3); ribs from old cadavers with age applied again; knockout
+    from energy anywhere on the head.
+  - Now: an ordinary man's punch (jab 6 m/s 0.6 kg, full 7.5 m/s 1.6 kg); nose 600 N; ribs per Kent & Patrie 2005;
+    knockout from the head's turn (Walilko); `Harm::struck` the same. Full bare punch to the face: fractures 49 -> 11
+    of 100, knockouts 100 -> 0 (`punch-damage` scenario; table in PORT.md).
+  - fist.rs motion (palm-down landing, snap back in 0.16-0.2 s, cocked wind-up in view, shoulder turn) only built:
+    run `punch-look`, compare with the before frames. 38 tests passed before that last edit; run them again.
+  - To check: the old man weakened for age twice (jaw, ribs); glove padding counted twice; bare jabs rarely bruise.
+- **port/b-ragdoll (cc4b82b): opponent footwork, crawl elbows, jab speed.** None done.
+  - Footwork (off by default, PROBE_WALK=1): cause found and fixed in part (steps landed 30-60% short; the swing's
+    pull shoved the planted foot back 0.4-1 m). He still falls ~1.5 s after leaning in: his weight moves away from
+    the player and the planted foot slides 0.2-0.4 m. Next: log the horizontal pushes in single support. Getup and
+    the 60 s / 3-seed spar not run on the new stepping (80 N s shoves: 2 of 10 fall, was 4).
+  - Crawl: a new pull pose (shoulder flexion 135, abduction 40, elbow 35) took seed 1's worst elbow 50.5 -> 24 deg;
+    not the default yet. Next: seeds 2-3, a straighter stroke.
+  - Jab cap 5.5 m/s, straight 7 m/s (sources in PORT.md); one spar peaked 2.8-7.3 m/s, the arm's muscles overshoot.
+- **port/b-body (27d8189): contact shots that miss.** Cause likely found, not fixed.
+  - press_scenario.rs (`press-pistol`, -ak, -m4, -shotgun, -rifle, -lying, -shove, -walk) logs hit/clear/MISS.
+    Held still against someone: 0 misses (pistol 89/90 hit, AK 49/49, rifle 9/10). Walking in: 1 MISS of 11; the
+    gun gives back only ~6 cm and pushes with at most 80 N, so the barrel passes through the person and the shot
+    starts beyond them.
+  - Next: stop the player's walk once the gun is pressed and fully pulled back; start the ray from the gun's back
+    along the barrel (contact range from the muzzle); run M4, shotgun, lying, shove; look at contact wounds.
+- **New (not started):** syringes (heal vitals and stop bleeding without healing the look; rot the flesh; dissolve
+  all bones; poison), a boiling water gun (real scalds), an acid gun. They need new ElevenLabs takes; the
+  ElevenLabs connector needed signing in again at the end of this session.
+
+How the jobs ran (it worked; reuse it): one worktree per job (`git worktree add --no-checkout -B <branch> <dir>
+bevy-port`, sparse-checkout without assets, `ln -s` the main assets, `git ls-files -z assets | git update-index -z
+--assume-unchanged --stdin`), a cfg per job (`cargo rustc --bin cold-chain -- --cfg <job>`) on the shared target,
+rules in one file. The machine (4 cores, 15 GB) fits two games at once; a third ran out of memory. The container
+restarted four times in two days: jobs must commit after every step. Commits: author vermingov, committer
+`Claude <noreply@anthropic.com>` (a hook flags others as unverified). Never commit the assets deleted on disk.
+
 ## The Bevy port: done (2026-11-17, fourth cloud session; read before the rest)
 
 The game is now the Bevy one in `game/` (Rust: Bevy 0.20.1, bevy_rapier3d 0.37, kira 0.12), branch `bevy-port`. The
