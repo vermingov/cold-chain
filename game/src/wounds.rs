@@ -768,7 +768,7 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
     if base == "head" && npc.in_neck(point) {
         npc.vitals.injure("Blow to the throat", 3.0);
     } else if base == "head" {
-        let turn = head_turn(force, lever(npc, point, dir));
+        let turn = head_turn(mass, speed, npc.person.mass * 0.08, lever(npc, point, dir));
         let c = (npc.vitals.concussion() + turn).min(1.0);
         npc.vitals.concuss(c, npc.dice);
         if energy > 90.0 {
@@ -811,26 +811,27 @@ pub fn blow(npc: &mut Npc, point: Vec3, dir: Vec3, mass: f32, speed: f32, tool: 
     force
 }
 
-// A blow to the head knocks out by how fast it turns the head, not by how hard it lands (blunt-trauma.md sec. 5: the
-// brain is hurt by the head's rotation): the force times its lever about the head's middle, over the head's moment of
-// inertia (0.0233 kg m2, the Hybrid III's about its side axis). Olympic boxers' straights to a dummy's face turned it at
-// 6343 +- 1789 rad/s2 from 3427 N (Walilko05: a lever of some 4.3 cm), about even odds of a concussion (Rowson12);
-// taken as even odds of a knockout (vitals.rs `concuss`: 0.445 of a concussion at once). So a punch through the head's
-// middle, on the nose, hardly turns it; one on the point of the chin, 9 cm below the middle, turns it twice as hard as
-// one on the forehead. In concussion units.
-const HEAD_INERTIA: f32 = 0.0233;
-const TURN: f32 = 14250.0; // rad/s2 for one whole concussion: Walilko's 6343 is 0.445
-pub const FACE_LEVER: f32 = 0.043; // m: Walilko's punches to the face, on average
+// A blow to the head knocks out by how hard it turns the head, not by how hard it lands (blunt-trauma.md sec. 5: the
+// brain is hurt by the head's rotation): by the turn it gives it, the momentum it gives the head (twice the fist's and
+// head's reduced mass's, as from a spring) times its lever about the head's middle. Measured against Walilko05's: Olympic
+// boxers' straights to a dummy's jaw (2.9 kg behind the fist at 9.14 m/s, 9 cm below the head's middle) turned its head
+// at 6343 +- 1789 rad/s2, about even odds of a concussion (Rowson12), taken as even odds of a knockout (vitals.rs
+// `concuss`: 0.445 of a concussion at once). By momentum, not peak force: their fists were gloved, and a glove, which
+// halves the peak force and spreads it, does not lessen the knockout (fist-weapons.md sec. 2). So a punch through the
+// head's middle, on the nose, hardly turns it; one on the point of the chin turns it twice as hard as one on the
+// forehead. In concussion units.
+const WALILKO: f32 = 2.0 * (2.9 * 6.0 / 8.9) * 9.14 * 0.09; // N s m
+pub const JAW_LEVER: f32 = 0.09; // m
 
-pub fn head_turn(force: f32, lever: f32) -> f32 {
-    force * lever / HEAD_INERTIA / TURN
+pub fn head_turn(mass: f32, speed: f32, behind: f32, lever: f32) -> f32 {
+    0.445 * 2.0 * (mass * behind / (mass + behind)) * speed * lever / WALILKO
 }
 
 // How far off the head's middle a blow at `point` along `dir` passes: its middle taken about level with the eyes and
 // 7.5 cm behind them, just above and in front of the ear's opening, where the head's centre of mass lies (Clauser et al.
 // 1969, AMRL-TR-69-70).
 fn lever(npc: &Npc, point: Vec3, dir: Vec3) -> f32 {
-    let Some(head) = npc.segment("head") else { return FACE_LEVER };
+    let Some(head) = npc.segment("head") else { return JAW_LEVER };
     let back = npc.segment_world(head).rotation * Vec3::Z;
     let eye = |n: &str| {
         let b = npc.bone_index(n);

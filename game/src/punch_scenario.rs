@@ -29,7 +29,9 @@ fn aim(npc: &crate::npc::Npc, target: &str) -> (Vec3, Vec3, Vec3) {
     match target {
         // (Between the eyes and a little down: the nose's bridge; the scatter takes in the brows and the cheeks.)
         "face" => ((bone("eye.L", false) + bone("eye.R", false)) / 2.0 - Vec3::Y * 0.015, Vec3::new(0.03, 0.03, 0.0), ahead),
-        "jaw" => (bone("jaw", true), Vec3::new(0.04, 0.012, 0.0), ahead),
+        // (The point of the chin is the jaw bone's end; aimed a little above it, so that the scatter stays on the jaw and
+        // not under it on the throat.)
+        "jaw" => (bone("jaw", true) + Vec3::Y * 0.025, Vec3::new(0.04, 0.01, 0.0), ahead),
         _ => {
             let chest = npc.segment_world(npc.segment("chest").unwrap());
             (chest.translation, Vec3::new(0.06, 0.05, 0.0), chest.rotation * Vec3::NEG_Z)
@@ -72,7 +74,7 @@ fn battery(w: &mut World, n: usize) {
                         let (at, spread, ahead) = aim(npc, target);
                         let to = at + Vec3::new(next() * spread.x, next() * spread.y, 0.0);
                         // (From in front, a little down: the fist comes from the shoulder.)
-                        let dir = (-ahead - Vec3::Y * 0.1).normalize();
+                        let dir = (-ahead - Vec3::Y * 0.05).normalize();
                         let Some(c) = crate::weapons::surface(npc, to - dir * 0.25, dir, 0.5) else {
                             missed += 1;
                             continue;

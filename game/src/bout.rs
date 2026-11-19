@@ -55,20 +55,16 @@ pub struct Harm {
 
 impl Harm {
     // A blow on the player of `mass` kg at `speed` m/s, to the head or not: what the fighting AI calls when a punch lands
-    // (behaviour.rs: the mass its own arm's segments carry). It lands as a fist lands on a person (bones.rs `impact`: the
-    // fist's give and the jaw's pad in series, against the head's 6 kg), and turns the head as it does theirs (wounds.rs
-    // `head_turn`) with the lever of a punch to the face on average, as no point is known; concussion adds up and
-    // passes off over minutes, and knocks out past 0.8, here without the dice. Pain from the energy, as theirs.
+    // (behaviour.rs: the mass its own arm's segments carry). It turns the head as a punch turns a person's (wounds.rs
+    // `head_turn`, against the head's 6 kg), at the jaw, as no point is known; concussion adds up and passes off over
+    // minutes, and knocks out past 0.8, here without the dice. Pain from the energy, as theirs.
     pub fn struck(&mut self, mass: f32, speed: f32, head: bool) {
         let energy = 0.5 * mass * speed * speed;
         self.blows += 1;
         self.pain = (self.pain + energy / 400.0).min(1.0);
         if head {
-            let behind = 75.0 * 0.08;
-            let m = mass * behind / (mass + behind);
-            let k = 1.0 / (1.0 / crate::bones::spec("jaw").unwrap().pad + 1.0 / crate::fist::FIST_GIVES);
-            let force = speed * (k * m).sqrt();
-            self.concussion = (self.concussion + crate::wounds::head_turn(force, crate::wounds::FACE_LEVER)).min(1.0);
+            let turn = crate::wounds::head_turn(mass, speed, 75.0 * 0.08, crate::wounds::JAW_LEVER);
+            self.concussion = (self.concussion + turn).min(1.0);
             if self.concussion > 0.8 && self.out <= 0.0 {
                 self.out = 10.0 + 20.0 * self.concussion;
             }

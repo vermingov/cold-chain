@@ -34,7 +34,9 @@ use crate::wounds::Tool;
 
 const TICK: f32 = 0.2; // seconds between the skin's own steps
 const QUIET: f32 = 1.0; // seconds between steps of a place only slowly settling
-const DOSE: f32 = 120.0; // J into the soft tissue for one unit of damage at the middle of a fist's patch
+// J into the soft tissue for one unit of damage at the middle of a fist's patch: an ordinary man's bare jab (11 J, 6.5 N s)
+// just past TEARS over bone, as living volunteers bruised half the time at 5.9 N s (Desmoulin07, blunt-trauma.md sec. 1)
+const DOSE: f32 = 95.0;
 const TEARS: f32 = 0.12; // damage a blow must do before vessels tear (a light slap only reddens)
 const LEAK: f32 = 0.00875; // per second, of what tore, leaking out of the vessels at first (2.1 of it in all)
 const CLOTS: f32 = 240.0; // seconds for the leak to clot down to a third
