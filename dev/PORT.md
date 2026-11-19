@@ -1561,3 +1561,25 @@ a swing.
   guard under load, footwork, a punch as an action, cover, stagger) is not built: what there is to build it on is the
   stand pose with `react`'s guard, `stepping` to a capture point, `hold`'s hand sent to a world point through `arm_to`,
   and `heading`.
+
+### Round two (in progress; numbers as they come)
+Shoves: `shove-40`, `shove-80`, `shove-120` scenarios, one shove each of the five at the chest, from the front, right,
+behind or left (the turn moved on by the seed), two seeds; the timeline has `stepped` (every step taken). "Ns" steps
+taken, "fell" with why.
+- As it was (the hips' and back's upright turns from nowhere): 40 N s nobody steps; 80 N s one step each, all ten; 120
+  N s one step mostly, 3 to 7 for two, nobody falls. A post.
+- Those turns paid for by the thighs and belly (muscles), and getting up held at the rise until the pelvis is upright
+  (within 14 degrees) and the rise has run its 1.3 s: 40 nobody steps; 80 six of ten fall (all three from behind, after 2
+  to 9 steps); 120 all fall. Getup, seeds 2 and 3: 9 of 10 standing, none fell again (5 of 15 fell again without the
+  upright check).
+- Why they fell at 80 from the front and sides: holding the trunk upright while the body tips forward turns the trunk
+  back, and the turn's other side swings the legs and hips on toward the fall. With the hip strategy (the trunk's aim
+  bent toward the capture point, 4 rad a metre past the middle of the feet, at most 0.5 rad), 80 N s: behind 3 of 3 fall
+  after 2-3 steps, front one falls after 7 steps and one recovers in 3, the sides recover in 2-5 steps (4 of 10 fall).
+  40 N s: nobody steps.
+Crawl elbows: the jitter's worst was one person's elbow held 30-90 degrees sideways for seconds, an arm caught under the
+chest. Two ways in: rolled onto it (the arm on the side they roll to was posed at their side; now up past the head), and
+the crawl's own pull pose (elbow 100 degrees, shoulder flexed) folding the forearm under the front of the chest each
+stroke. Roll fix alone: worst 62.6, 50.8, 54.5 (seeds 1-3), against 88.8 one seed before; with an arm caught under the
+chest lifted off (that side of the chest rolled up against the limbs on the floor, the hand swept out, no pulling with the
+other arm meanwhile), seeds 2-3: 56.3, 40.6.
