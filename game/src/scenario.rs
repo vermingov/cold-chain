@@ -375,6 +375,8 @@ struct Acc {
     // their cone (left, right): radians.
     past: Vec<[f32; 3]>,
     cone: [f32; 2],
+    // Steps on which some joint of theirs was more than 10 degrees past its range.
+    over: u32,
     // The most each segment spun (rad/s).
     spun: Vec<f32>,
     // N s the contacts gave between two of this person's own segments, and between theirs and anything else; the most
@@ -464,15 +466,18 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
         acc.segs.resize(rd.segs.len(), (0, 0.0, 0.0));
         acc.past.resize(rd.segs.len(), [0.0; 3]);
         acc.spun.resize(rd.segs.len(), 0.0);
+        let mut worst = 0.0f32;
         for (k, s) in rd.segs.iter().enumerate() {
             acc.spun[k] = acc.spun[k].max(s.spin.length());
             if s.def.parent.is_some() && !s.def.joint.as_ref().unwrap().lock && !rd.cut_off(k) {
                 let p = rd.past(k);
+                worst = worst.max(p[0]).max(p[1]).max(p[2]);
                 for i in 0..3 {
                     acc.past[k][i] = acc.past[k][i].max(p[i]);
                 }
             }
         }
+        acc.over += (worst > 10f32.to_radians()) as u32;
         let (o, x) = own.get(&e).copied().unwrap_or_default();
         for &(_, a, b, n) in pairs.iter().filter(|p| p.0 == e) {
             *acc.pairs.entry((a, b)).or_default() += n;
@@ -535,6 +540,7 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
         // rest; kinetic energy.
         let mut spun = vec![0.0f32; names.len()];
         let (mut own, mut other, mut steps, mut ke_sum, mut ke_rise, mut ke_most) = (0.0f64, 0.0f64, 0u32, 0.0f64, 0.0f64, 0.0f32);
+        let mut over10 = 0u32;
         let mut pairs: std::collections::BTreeMap<(usize, usize), f64> = std::collections::BTreeMap::new();
         for (&(e, t), acc) in &j.bins {
             let Some(i) = people.iter().position(|&p| p == e) else { continue };
@@ -550,6 +556,7 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
                 *pairs.entry(p).or_default() += n as f64;
             }
             steps += acc.steps;
+            over10 += acc.over;
             ke_sum += acc.ke_sum;
             ke_rise += acc.ke_rise;
             ke_most = ke_most.max(acc.ke_most);
@@ -593,7 +600,7 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
         let pairs: Vec<Value> = pairs.into_iter().take(5).filter(|p| p.0.0 < names.len() && p.0.1 < names.len())
             .map(|((a, b), n)| json!([format!("{}-{}", names[a], names[b]), per(n)])).collect();
         log(w, json!({ "event": "jitter", "situation": name, "person_seconds": seconds, "mean_hf": (mean * 1000.0).round() / 1000.0, "worst": worst,
-            "past_range": over, "past_cone_deg": cone.map(|c| deg(c.max(0.0))),
+            "past_range": over, "past_10_s": (over10 as f32 / steps.max(1) as f32 * seconds as f32 * 10.0).round() / 10.0, "past_cone_deg": cone.map(|c| deg(c.max(0.0))),
             "spun_most": fast.iter().take(4).map(|(n, x)| json!([n, x])).collect::<Vec<_>>(),
             "contact_n": { "own": per(own), "other": per(other) },
             "own_pairs_n": pairs,

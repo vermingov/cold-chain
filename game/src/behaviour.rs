@@ -167,7 +167,9 @@ fn crawling(phase: f32) -> Pose {
     let reach_r = 1.0 - reach_l;
     // (Out to the side first and forward last, as person.rs turns a shoulder: an arm out at 70 degrees is only spun about
     // its own length by the forward turn, so the elbow is brought forward by the forward turn with the arm half out.)
-    let arm = |k: char, r: f32| [(side("shoulderFlex", k), 110.0 + 55.0 * r), (side("shoulderAbduct", k), 42.0 - 12.0 * r), (side("elbow", k), 100.0 - 75.0 * r),
+    let knob = |n: &str, d: f32| std::env::var(n).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let (cf, ca, ce) = (knob("PROBE_CF", 110.0), knob("PROBE_CA", 42.0), knob("PROBE_CE", 100.0));
+    let arm = |k: char, r: f32| [(side("shoulderFlex", k), cf + (165.0 - cf) * r), (side("shoulderAbduct", k), ca - (ca - 30.0) * r), (side("elbow", k), ce - (ce - 25.0) * r),
         (side("curl", k), 20.0 + 25.0 * (1.0 - r))];
     let p = over(poses::relaxed(), &arm('L', reach_l));
     let p = over(p, &arm('R', reach_r));
