@@ -1583,3 +1583,70 @@ the crawl's own pull pose (elbow 100 degrees, shoulder flexed) folding the forea
 stroke. Roll fix alone: worst 62.6, 50.8, 54.5 (seeds 1-3), against 88.8 one seed before; with an arm caught under the
 chest lifted off (that side of the chest rolled up against the limbs on the floor, the hand swept out, no pulling with the
 other arm meanwhile), seeds 2-3: 56.3, 40.6.
+
+## The play-test's wounds: torn holes, bowel, the shirt's stain (BACKLOG play-test reports, branch port/b-body)
+
+The reports: gunshot holes "drilled" (a round tube with neat rings of skin, fat and muscle, the head seen through), bowel
+poking out as a red cone and flat shards through the shirt, the shirt's blood one dark blob with a hard jagged edge.
+What real ones look like: dev/research/wounds.md 7a (new), 4 and 5. The check: `--scenario gore` (gore_scenario.rs;
+`gore-belly`, `gore-bare`, `gore-pellets`, `gore-head`, `gore-pistol`, `gore-sword`): the shotgun and the pistol fired
+from the hands, the victim knocked out a moment after so the hands do not cover the wound, pictures straight on, from
+45 and 78 degrees, at 4 s and (the shirt) 30 s.
+
+### What made the holes drilled
+A charge at close range, a blast or a skull burst opens the wall (viscera.rs `open`): the skin's hole was a lens, the
+wall under it (wall.rs) a tube straight down with every layer ending at one depth all round, so from in front it was
+concentric rings, and nothing closed the cavity under it, so where no organ was drawn the eye went through the body (the
+far skin is single-sided) to the floor. And skin.wesl's bullet holes were walls straight down to 24 mm, black at the
+bottom: a tube.
+- `Opening::torn` (viscera.rs): what bursts from inside has a torn edge, `torn(at, angle)`: lobes and three or four
+  short splits from a seed of where it is, over its oval. skin.wesl `torn` is the same function to the digit (the seed
+  by `rem_euclid`/`fract`, which agree for negative numbers), so the skin's hole (`holed`, row 2, a width below nothing
+  marks it torn), the wall's top (`Opening::edge`, used by `lips` and wall.rs) and the bowel's way through
+  (`Opening::inside`) are one line. The cloth over it gets a frayed round hole a little wider (8% and 2 mm: a quarter
+  wider showed a pale ring of the skin under the shirt round the wound).
+- wall.rs, torn: each layer's thickness a third more or less round the hole (they end at no one depth), the fat under
+  the edge torn back from it (undermined, the cavity under the skin wider than the hole: the contact wound's gas), the
+  muscle standing in and out a few millimetres; wall.wesl: boundaries wandering by several millimetres, most of it under
+  blood and clot with the fat and fascia in patches, tags standing off it. The painted lip round it (marks.rs `lip`) is
+  2.5 mm, not the cut wall's sloping band.
+- The cavity closed: a bowl under the wall (`CAVITY` in the picture's u), 6 cm behind it in the trunk (the dark of the
+  cavity, blood in it) and 1.2 cm in the head (brain, pulped, under blood). Organs in front of it still show.
+- skin.wesl, bullet holes: the edge more uneven and finely ragged (20% and 11%, were 13% and 5%); the track closed a few
+  millimetres down (2.6 to 6 mm, uneven, under more blood) instead of a 24 mm shaft; an exit's middle a pit of 4 to 6
+  mm, not a shaft.
+
+### The bowel
+- The red shards out of the flank and through the shirt: the anatomy's organ clusters within 20 cm of an opening were
+  drawn, each on one bone while the skin bends between two, so those to the side stood out through the flank. Now only
+  the clusters behind an opening in sight through it (a cone from its edge inward).
+- The red cone: the ropes (viscera.rs `Loop`) are kept in the cavity's capsules, which are drawn rounder than the belly
+  (the segment's radius over 0.82), so a rope inside could lie outside the skin. Only what can be seen is drawn now
+  (`seen`: out, in the opening, or behind it in sight); the rest has no width.
+- What comes out is as it was: a rope only through a hole wide enough for it doubled over (the charge's 3.5 cm hole lets
+  at most a knuckle press into it); loops out hang and slide on their mesentery. The blood film on a rope from the organ
+  under it is capped at 0.035 mm (soaked through, it read as red paint).
+
+### The shirt
+fluid.wesl `stained`: the edge soft over a centimetre or two (how full the cloth is two centimetres round about, read
+four times more, falls off ahead of the cube's own reading: fewer and fewer fibres carry blood toward the edge; was a
+step from 0.14 to 0.26 of full, a cut-out), creeping along the threads (noise stretched across and up the body at
+rest), darker toward where the cloth is full round about (0.025 to 0.6 mm of blood), a damp halo of serum ahead of the
+red while wet, the darker tide line as it dries. The soak's simulation (soak.wesl) is as it was. Seen on the young
+man's blue shirt at 30 s (gore-belly): the jagged cut-out edge is gone, the edge feathers out and runs along the
+print in red threads; the middle is still nearly one dark maroon, which is what a tenth of a millimetre of blood over
+blue cotton is (it lets through 2% of the blue): the gradient shows on a light cloth (the groundskeeper's white
+shirt), little on a dark one.
+
+### Also found
+- The held shotgun and AK (weapons.rs `measure`): their hulls were measured the frame their barrels and magazine were
+  cut out of the mesh, the new pieces still at the world's origin: hulls metres long, always in the floor, so both were
+  held turned down as far as they go and fired into the floor. Measured once the parts are found. A held thing pressed
+  against someone is no longer turned away from them (it pushes them; a gun fires into them).
+- A sword's cut gave a whole missile's push for every point of its edge that crossed the skin in a frame (weapons.rs
+  `sweep`): now once a swing a person, the first crossing that goes in (0.3 kg at the speed 90 J gives it); the rest of
+  the cut's crossings cut without a push. `gore-sword` (the young man's right forearm cut from 0.8 m, the right button):
+  the swing went in at 12 places across him (chest, arm, belly, hand, thigh, pelvis), each a push of up to 7 N s
+  before, one push after; his right hand peaked at 3.6 m/s and 10 rad/s before and 3.5 m/s and 10 rad/s after, since
+  the hand was crossed once either way. The 800 to 1000 rad/s spin was not reproduced with a real swing here (the ragdoll
+  job's `sword` scenario gives its five pushes by hand, not through `sweep`).

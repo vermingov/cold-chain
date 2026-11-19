@@ -19,12 +19,12 @@ use crate::vitals::Vitals;
 // The photographer's lamp, held by the eye: the hall's lamps are high and far, and a mouth or an eye socket close up is
 // otherwise all shadow.
 #[derive(Component)]
-struct Lamp;
+pub struct Lamp;
 
-const LAMP: f32 = 0.25 * crate::map::CANDELA;
+pub const LAMP: f32 = 0.25 * crate::map::CANDELA;
 
 // The eye put at `from`, looking at `at`, and the lamp beside it (as bright on what it lights as from 40 cm).
-fn look(w: &mut World, at: Vec3, from: Vec3) {
+pub fn look(w: &mut World, at: Vec3, from: Vec3) {
     w.resource_scope(|w, map: Mut<crate::map::Map>| {
         let ground = map.ground(from.x, from.z, f32::INFINITY);
         for mut p in w.query::<&mut Player>().iter_mut(w) {
@@ -73,7 +73,7 @@ fn mouth(name: &'static str, body: &'static str, far: f32, up: f32, turn: f32) -
 }
 
 // Nothing of the HUD over the pictures (the monitor makes its lines anew), and nothing in the hands.
-fn hide_hud(w: &mut World) {
+pub fn hide_hud(w: &mut World) {
     for mut v in w.query_filtered::<&mut Visibility, (With<Node>, Without<ChildOf>, Without<ImageNode>)>().iter_mut(w) {
         *v = Visibility::Hidden;
     }

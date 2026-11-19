@@ -1294,8 +1294,13 @@ fn sweep(cx: &mut Cx, dt: f32) {
                 return;
             }
             How::Cut => {
-                let m = Missile { name: a.key, energy: if a.key == "sword" { 90.0 } else { 35.0 }, mass: 0.3, calibre: 0.004, channel: a.cut * 0.5, soft: 0.8, hard: 60.0,
-                                  reach: a.cut, blade: true, slash: true, ..M };
+                // The blade's push on someone is given once a swing, with the first of its edge to go in: each point of
+                // the edge crossing the skin in each frame gave a whole missile's push (wounds.rs: its mass times its
+                // speed), up to five of them a frame, and a sword's cut spun a forearm at 800 to 1000 rad/s. What a cut
+                // carries into a limb is the blade's own: 0.3 kg at the speed 90 J gives it (a 1.4 kg forearm a few m/s).
+                let first = !cx.weapons.action.as_ref().is_some_and(|x| x.hits.iter().any(|h| h.0 == who));
+                let m = Missile { name: a.key, energy: if a.key == "sword" { 90.0 } else { 35.0 }, mass: if first { 0.3 } else { 0.0 }, calibre: 0.004,
+                                  channel: a.cut * 0.5, soft: 0.8, hard: 60.0, reach: a.cut, blade: true, slash: true, ..M };
                 let res = pierce(cx, who, was[k], dir, &m, far + a.cut);
                 let (true, Some(enter)) = (res.hit, res.enter) else { continue };
                 // The cut itself is made once the swing is through, along every place it crossed the skin (npc.slash).
@@ -2374,7 +2379,8 @@ fn clear_of(ctx: &RapierContext, people: Option<&HashMap<Entity, (Entity, usize)
             .flatten()
             .min_by(|a, b| a.1.time_of_impact.total_cmp(&b.1.time_of_impact));
         let Some((e, h)) = hit else { return (0.0, tilt, None) };
-        if h.time_of_impact > 0.0 || tilt >= 1.2 {
+        // (Against someone it is not turned away: held as far back as it goes, it pushes them; a gun fires into them.)
+        if h.time_of_impact > 0.0 || tilt >= 1.2 || people.is_some_and(|p| p.contains_key(&e)) {
             let point = h.details.map_or(at + ahead * h.time_of_impact, |d| d.witness1);
             return (most - h.time_of_impact, tilt, Some((e, point)));
         }
@@ -2399,7 +2405,10 @@ fn measure(mut hand: ResMut<Hand>, children: Query<&Children>, globals: Query<&G
     let home = hg.affine().inverse();
     let mut found = Vec::new();
     'models: for (&key, &root) in &hand.models {
-        if hand.shapes.contains_key(key) {
+        // (Not before its moving parts are found: the AK's magazine and the shotgun's barrels are cut out of their meshes
+        // first, and a piece just made is at the world's origin until its place is worked out, which made their hulls
+        // metres long and held them turned down at the floor.)
+        if hand.shapes.contains_key(key) || (!parts_of(key).is_empty() && !hand.parts.contains_key(key)) {
             continue;
         }
         let mut points = Vec::new();

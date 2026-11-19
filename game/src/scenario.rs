@@ -194,6 +194,9 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "menu" => s = crate::menu::scenario(),
         // The player's body and what they hold in the world, and jumping (BACKLOG items 1 and 2): body_scenario.rs.
         "body-push" | "body-press" | "body-melee" | "body-jump" => s = crate::body_scenario::steps(&name[5..]),
+        // Gunshot wounds, a belly blown open and the shirt soaked, close up (the play-test's reports): gore_scenario.rs.
+        "gore" => s = crate::gore_scenario::steps(""),
+        "gore-belly" | "gore-bare" | "gore-pellets" | "gore-head" | "gore-pistol" | "gore-sword" => s = crate::gore_scenario::steps(&name[5..]),
         _ => return body(name),
     }
     Some(s)
