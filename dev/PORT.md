@@ -1577,6 +1577,11 @@ taken, "fell" with why.
   bent toward the capture point, 4 rad a metre past the middle of the feet, at most 0.5 rad), 80 N s: behind 3 of 3 fall
   after 2-3 steps, front one falls after 7 steps and one recovers in 3, the sides recover in 2-5 steps (4 of 10 fall).
   40 N s: nobody steps.
+  Made the default (commit 77a8e89): getup with it, seeds 1-2: 10 of 10 standing, none fell again.
+Fighting footwork: steps forced on the feet toward range (`start_step` at a point toward the player) put the opponent on
+the floor within a second of the first step in, every time; re-aimed every frame at the capture point the step was
+pulled back first, and its swing's pull on the hip (some 60 N s) drove the body back. Now the balance's aim leans up to
+12 cm toward the range wanted and the ordinary stepping catches it.
 Crawl elbows: the jitter's worst was one person's elbow held 30-90 degrees sideways for seconds, an arm caught under the
 chest. Two ways in: rolled onto it (the arm on the side they roll to was posed at their side; now up past the head), and
 the crawl's own pull pose (elbow 100 degrees, shoulder flexed) folding the forearm under the front of the chest each
