@@ -883,8 +883,10 @@ impl Behaviour {
         let kp = 30.0 * (1.0 - 0.3 * daze);
         let kd = 9.0 * (1.0 - 0.3 * daze) * if self.settle > 0.0 { 2.0 } else { 1.0 };
         // The hip strategy: the trunk bent toward where the weight is going, which sends the hips back the other way
-        // through the legs (held straight up instead, its turn back swung the legs and hips on toward the fall).
-        let mut off = xi - centre;
+        // through the legs (held straight up instead, its turn back swung the legs and hips on toward the fall). Measured
+        // from where the weight is wanted: from the middle of the feet, it fought a lean in on purpose and they backed
+        // away from the player instead.
+        let mut off = xi - aim;
         off.y = 0.0;
         let tilt = if off.length() > 1e-4 { Quat::from_axis_angle(Vec3::Y.cross(off).normalize(), (4.0 * off.length()).min(0.5)) } else { Quat::IDENTITY };
         let (face, bent) = (tilt * face, tilt * bent);
