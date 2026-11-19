@@ -1020,8 +1020,10 @@ impl Behaviour {
         add(pose, "neckFlex", 12.0 + 8.0 * cover);
         add(pose, "spineFlex", 6.0 + 6.0 * cover);
         for k in ['L', 'R'] {
-            add(pose, side("knee", k), 14.0);
-            add(pose, side("hipFlex", k), 8.0);
+            if std::env::var("PROBE_NOCROUCH").is_err() {
+                add(pose, side("knee", k), 14.0);
+                add(pose, side("hipFlex", k), 8.0);
+            }
             if self.punch.as_ref().is_some_and(|p| p.side == k) || self.holding[i(k)] {
                 continue;
             }
