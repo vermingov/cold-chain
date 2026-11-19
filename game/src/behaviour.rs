@@ -261,6 +261,23 @@ struct Grip {
     hold: Option<Vec3>,
 }
 
+// The player as an opponent sees them: the eye, the feet, and whether a fist of theirs is flying.
+#[derive(Clone, Copy)]
+pub struct Foe {
+    pub eye: Vec3,
+    pub feet: Vec3,
+    pub coming: bool,
+}
+
+// A punch: which hand, how far into it, at what, and whether it has landed.
+struct Punch {
+    side: char,
+    t: f32,
+    to: Vec3,
+    head: bool,
+    landed: bool,
+}
+
 struct Stepping {
     side: char,
     swing: usize,
@@ -373,6 +390,14 @@ pub struct Behaviour {
     // Taken hold of (Grabbed), and by which segment, and a leg cut off (dismember.rs): neither stands.
     pub grabbed: bool,
     pub held: Option<usize>,
+    // In the ring against the player (bout.rs `Opponent`): where they are, set each frame; the punch being thrown, when
+    // the next may be and the next step to range; and the blows that landed, (mass kg, speed m/s, head), for bout.rs to
+    // give the player (`Harm::struck`).
+    pub foe: Option<Foe>,
+    punch: Option<Punch>,
+    next_punch: f32,
+    next_step: f32,
+    pub blows: Vec<(f32, f32, bool)>,
     pub leg_gone: bool,
     // The bones broken in each limb, (side, bone key): bones.rs's, when it comes.
     pub breaks: Vec<(char, String)>,
@@ -445,6 +470,11 @@ impl Behaviour {
             felt: Felt::default(),
             grabbed: false,
             held: None,
+            foe: None,
+            punch: None,
+            next_punch: 1.0,
+            next_step: 0.0,
+            blows: Vec::new(),
             leg_gone: false,
             breaks: Vec::new(),
         };
@@ -755,6 +785,14 @@ impl Behaviour {
         add(&mut pose, "shoulderAbductL", 10.0);
         add(&mut pose, "shoulderAbductR", 10.0);
 
+        // Fighting, they turn to face the player, at most a turn and a half a second.
+        if let Some(foe) = self.foe {
+            let c = rd.segs[chest].now.translation;
+            let want = (foe.eye.x - c.x).atan2(-(foe.eye.z - c.z));
+            let d = want - self.heading;
+            self.heading += d.sin().atan2(d.cos()).clamp(-9.0 * dt, 9.0 * dt);
+        }
+
         // Balance. Where the body's weight would come to rest if it stopped on its own (the capture point) against the
         // ground under the feet: inside, the feet keep the body upright; outside, a step.
         let f = facing(self.heading);
@@ -820,6 +858,7 @@ impl Behaviour {
             self.ease("leg", &LEG, s, &mut pose, 0.06);
         }
         self.react(&mut pose, dt);
+        self.fight(rd, &mut pose, dt, f, r, feet, rng);
 
         // The ankle strategy: the body swayed back over the middle of the feet as a whole, as hard as the feet can push
         // for it. Feet only press the floor, so carrying the weight one way needs the floor pressed on the other side of
@@ -832,6 +871,13 @@ impl Behaviour {
         let bent = face * pitch(get(&pose, "spineFlex") * RAD);
         let kp = 30.0 * (1.0 - 0.3 * daze);
         let kd = 9.0 * (1.0 - 0.3 * daze) * if self.settle > 0.0 { 2.0 } else { 1.0 };
+        // The hip strategy: the trunk bent toward where the weight is going, which sends the hips back the other way
+        // through the legs (held straight up instead, its turn back swung the legs and hips on toward the fall).
+        let mut off = xi - centre;
+        off.y = 0.0;
+        let strat: f32 = std::env::var("PROBE_STRAT").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let tilt = if off.length() > 1e-4 { Quat::from_axis_angle(Vec3::Y.cross(off).normalize(), (strat * off.length()).min(0.5)) } else { Quat::IDENTITY };
+        let (face, bent) = (tilt * face, tilt * bent);
         if !down.is_empty() {
             let floor = self.floor;
             let down = down.clone();
@@ -918,6 +964,108 @@ impl Behaviour {
             self.steps = 0;
         }
         pose
+    }
+
+    // Squared up to the player in the ring (bout.rs): the guard up (hands by the jaw, elbows in, chin down, knees soft),
+    // tighter while a fist of theirs is flying; a step in or out to keep about an arm's length off; and now and then a
+    // jab with the left or a straight with the right at the head or the body. A punch is the arm's: its pose thrown
+    // straight and the hand driven at the target by its arm, paid for at the chest, over 130 ms, and back. What it carries
+    // when it meets the player's body (the hand's speed toward them, and the hand, forearm and, for a straight, the upper
+    // arm behind it) goes to bout.rs for `Harm::struck`. Dazed, the guard sags and the punches come slower and softer.
+    #[allow(clippy::too_many_arguments)]
+    fn fight(&mut self, rd: &mut Ragdoll, pose: &mut Pose, dt: f32, f: Vec3, r: Vec3, feet: [usize; 2], rng: &mut Rng) {
+        let Some(foe) = self.foe else {
+            self.punch = None;
+            return;
+        };
+        let (will, daze) = (self.will, self.felt.daze);
+        let chest = rd.by_name("chest");
+        let c = rd.segs[chest].now.translation;
+        let mut to = foe.eye - c;
+        to.y = 0.0;
+        let d = to.length();
+        let ahead = to / d.max(1e-3);
+        let up = clamp(1.0 - daze * 0.7);
+        let cover = if foe.coming && d < 1.5 { 1.0 } else { 0.0 };
+        add(pose, "neckFlex", 12.0 + 8.0 * cover);
+        add(pose, "spineFlex", 6.0 + 6.0 * cover);
+        for k in ['L', 'R'] {
+            add(pose, side("knee", k), 14.0);
+            add(pose, side("hipFlex", k), 8.0);
+            if self.punch.as_ref().is_some_and(|p| p.side == k) || self.holding[i(k)] {
+                continue;
+            }
+            add(pose, side("shoulderFlex", k), 65.0 * up + 15.0 * cover);
+            add(pose, side("shoulderAbduct", k), 6.0 - 8.0 * cover);
+            add(pose, side("elbow", k), 120.0 * up + 10.0 * cover);
+            add(pose, side("curl", k), 60.0);
+            add(pose, side("thumbBase", k), 52.0);
+            add(pose, side("thumbIn", k), -55.0);
+        }
+
+        // Footwork: a step in when out of reach, out when crowded, one at a time.
+        self.next_step -= dt;
+        let range = 0.8;
+        if self.step.is_none() && self.punch.is_none() && self.next_step <= 0.0 && (d > range + 0.25 || d < range - 0.3) {
+            let mid = (rd.segs[feet[0]].now.translation + rd.segs[feet[1]].now.translation) * 0.5;
+            let mut xi = mid + ahead * (d - range).clamp(-0.3, 0.35);
+            xi.y = self.floor;
+            self.start_step(rd, xi, f, r, feet, None);
+            // (A step taken on purpose is not a stumble.)
+            self.steps = self.steps.saturating_sub(1);
+            self.next_step = 0.5;
+        }
+
+        // A punch, now and then, when in reach and steady.
+        self.next_punch -= dt;
+        if self.punch.is_none() && self.next_punch <= 0.0 && d < range + 0.3 && d > 0.35 && self.step.is_none() && will > 0.5 {
+            let side = if rng.next() < 0.65 { 'L' } else { 'R' };
+            let head = rng.next() < 0.7;
+            let to = foe.eye - Vec3::Y * if head { 0.06 } else { 0.5 };
+            self.punch = Some(Punch { side, t: 0.0, to, head, landed: false });
+            self.next_punch = 0.7 + rng.next() * 1.3 + daze * 2.5;
+        }
+        let Some(p) = self.punch.as_mut() else { return };
+        p.t += dt;
+        let (k, pt, at, head, landed) = (p.side, p.t, p.to, p.head, p.landed);
+        const OUT: f32 = 0.13;
+        const BACK: f32 = 0.22;
+        if pt > OUT + BACK {
+            self.punch = None;
+            return;
+        }
+        let e = if pt < OUT { smooth(pt / OUT) } else { 1.0 - smooth((pt - OUT) / BACK) };
+        let straight = k == 'R';
+        // Thrown straight from the shoulder; a straight turns the trunk behind it.
+        set(pose, side("shoulderFlex", k), 70.0 + 18.0 * e);
+        set(pose, side("shoulderAbduct", k), 6.0 * (1.0 - e));
+        set(pose, side("elbow", k), 120.0 * (1.0 - e) + 4.0 * e);
+        add(pose, side("curl", k), 60.0);
+        if straight {
+            add(pose, "spineTwist", -18.0 * e);
+        }
+        let hand = rd.by_name(&format!("hand{k}"));
+        if pt < OUT {
+            let most = (if straight { 320.0 } else { 220.0 }) * will * up;
+            self.act(move |rd, dt| {
+                let force = motor::reach(rd, hand, at, 900.0, 2.0, most, None);
+                motor::push(rd, hand, force, &[chest], dt);
+            });
+        }
+        // Landed: the hand at the player's body (its capsule, from the knees to the crown, 0.25 m round).
+        let h = rd.middle(hand);
+        let (lo, hi) = (foe.feet + Vec3::Y * 0.65, foe.eye - Vec3::Y * 0.12);
+        let t = clamp((h - lo).dot(hi - lo) / (hi - lo).length_squared());
+        if !landed && h.distance(lo + (hi - lo) * t) < 0.25 + 0.07 {
+            self.punch.as_mut().unwrap().landed = true;
+            let speed = rd.segs[hand].vel.dot(ahead).max(0.0);
+            let mut parts = vec![format!("hand{k}"), format!("forearm{k}"), format!("forearm2{k}")];
+            if straight {
+                parts.extend([format!("upperarm{k}"), format!("upperarm2{k}")]);
+            }
+            let mass: f32 = parts.iter().map(|n| rd.segs[rd.by_name(n)].def.mass).sum();
+            self.blows.push((mass, speed, head && h.y > foe.eye.y - 0.3));
+        }
     }
 
     // A step to where the weight is going: the trailing foot forward or back, or the foot on the side it is falling to.
@@ -1637,6 +1785,9 @@ impl Behaviour {
         let away = other(toward);
         let pose = over(rest(), &[(side("hipFlex", away), 55.0), (side("knee", away), 85.0), (side("shoulderFlex", away), 95.0),
             (side("shoulderAbduct", away), -40.0), (side("elbow", away), 20.0), (side("shoulderAbduct", toward), 30.0), ("neckFlex", 15.0)]);
+        // The arm on the side they roll onto up past the head, out of the way: left at the side it was rolled on and
+        // trapped under the chest, and the crawl after it wrenched that elbow 30 to 90 degrees sideways for seconds.
+        let pose = if std::env::var("PROBE_ROLLARM").is_ok() { over(pose, &[(side("shoulderFlex", toward), 150.0), (side("elbow", toward), 30.0)]) } else { pose };
         // The push off the floor with that leg and arm, as the turn it gives the trunk about its own length, easing off
         // as it gets going: given back to the limbs on the floor instead, it only wrung the trunk against them.
         let most = 200.0 * self.will;
@@ -1889,10 +2040,32 @@ impl Behaviour {
         self.strength.leg_r *= 0.12;
         let f = facing(self.heading);
         let limbs = self.limbs_down(rd);
+        // An arm caught under the chest (the forearm in front of it, below the shoulders): that side of the chest rolled
+        // up off it against the limbs on the floor and the hand swept out to the side, and no pulling with the other arm
+        // until it is out. (Pulled over it, the trapped elbow was wrenched 30 to 90 degrees sideways for seconds.)
+        let c = rd.segs[chest].now;
+        let caught = |k: char| {
+            let at = c.rotation.inverse() * (rd.middle(rd.by_name(&format!("forearm2{k}"))) - c.translation);
+            at.y < 0.1 && at.z < -0.05
+        };
+        let trapped = if std::env::var("PROBE_FREE").is_ok() { ['L', 'R'].into_iter().find(|&k| caught(k)) } else { None };
+        if let Some(k) = trapped {
+            let hand = rd.by_name(&format!("hand{k}"));
+            let out = if k == 'R' { 1.0 } else { -1.0 };
+            let mut spot = c.translation + f * 0.15 + right_of(f) * (0.5 * out);
+            spot.y = self.floor + 0.04;
+            let (along, lift) = (c.rotation * Vec3::Y, -out * 90.0 * will);
+            let limbs = limbs.clone();
+            self.act(move |rd, dt| {
+                motor::turn(rd, chest, along * lift, &limbs, dt);
+                let force = motor::reach(rd, hand, spot, 80.0, 2.0, 80.0 * will, None);
+                motor::push(rd, hand, force, &[chest], dt);
+            });
+        }
         for k in ['L', 'R'] {
             let hand = rd.by_name(&format!("hand{k}"));
             let arm = self.strength.get(Part::arm(k));
-            if arm == 0.0 || self.broken(rd, true, k) {
+            if arm == 0.0 || self.broken(rd, true, k) || trapped.is_some() {
                 continue;
             }
             let reaching = self.phase.cos() * if k == 'L' { 1.0 } else { -1.0 };
@@ -2293,16 +2466,20 @@ fn think(
     map: Res<Map>,
     players: Query<&Player>,
     mut rng: ResMut<Rng>,
-    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&mut Hurt>, Option<&Grabbed>)>,
+    mut people: Query<(&mut Person, &Transform, &mut Ragdoll, &mut Behaviour, Option<&mut Vitals>, Option<&mut Hurt>, Option<&Grabbed>, Has<crate::bout::Opponent>)>,
     mut sounds: MessageWriter<Heard>,
+    fists: Option<Res<crate::fist::Fists>>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
     let eye = players.iter().next().map(|p| p.eye().translation);
+    let foe = players.iter().next().map(|p| Foe { eye: p.eye().translation, feet: Vec3::new(p.pos.x, p.height, p.pos.y),
+        coming: fists.as_ref().is_some_and(|f| f.flying()) });
     let mut heard = Vec::new();
-    for (mut person, root, mut rd, mut b, mut vitals, mut hurt, grabbed) in &mut people {
+    for (mut person, root, mut rd, mut b, mut vitals, mut hurt, grabbed, opponent) in &mut people {
+        b.foe = if opponent { foe } else { None };
         if let Some(v) = &vitals {
             b.felt = Felt { conscious: v.conscious(), pain: v.pain, daze: v.daze, out: v.out, lost: v.lost(), dead: v.dead, beating: v.beating(),
                 paralysed_arms: v.paralysed_arms, paralysed_legs: v.paralysed_legs };

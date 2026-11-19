@@ -326,6 +326,11 @@ pub struct Fists {
 }
 
 impl Fists {
+    // Whether a punch is on its way (bout.rs's opponent covers up).
+    pub fn flying(&self) -> bool {
+        self.r.as_ref().is_some_and(|f| f.flying) || self.l.as_ref().is_some_and(|f| f.flying)
+    }
+
     // Made with the arms: the right closed in a fist (the very arm that holds things too), the left closed now.
     pub fn make(&mut self, arms: &mut Arms) {
         for side in ['R', 'L'] {

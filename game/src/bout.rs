@@ -154,6 +154,15 @@ fn referee(
     }
 }
 
+// The opponent's punches that landed on the player (behaviour.rs `fight`).
+fn landed(mut harm: ResMut<Harm>, mut opponents: Query<&mut crate::behaviour::Behaviour, With<Opponent>>) {
+    for mut b in &mut opponents {
+        for (mass, speed, head) in std::mem::take(&mut b.blows) {
+            harm.struck(mass, speed, head);
+        }
+    }
+}
+
 // K clears the room, the opponent with it: the bout starts again with the next B.
 fn reset(mut bout: ResMut<Bout>) {
     bout.next = None;
@@ -163,7 +172,7 @@ pub fn plugin(app: &mut App) {
     use bevy::input::common_conditions::input_just_pressed;
     app.init_resource::<Bout>()
         .init_resource::<Harm>()
-        .add_systems(Update, (call.run_if(input_just_pressed(KeyCode::KeyB)), reset.run_if(input_just_pressed(KeyCode::KeyK)), referee.after(crate::player::walk)).run_if(crate::menu::playing));
+        .add_systems(Update, (call.run_if(input_just_pressed(KeyCode::KeyB)), reset.run_if(input_just_pressed(KeyCode::KeyK)), referee.after(crate::player::walk), landed).run_if(crate::menu::playing));
 }
 
 #[cfg(test)]
