@@ -365,12 +365,14 @@ pub fn spar() -> Vec<crate::scenario::Step> {
         Step::Do(Box::new(move |w: &mut World| {
             let Some(e) = opponent(w) else { return };
             let p = w.query::<&Player>().iter(w).next().map(|p| Vec3::new(p.pos.x, 0.0, p.pos.y)).unwrap_or_default();
+            let eye = w.query::<&Player>().iter(w).next().map(|p| p.eye().translation).unwrap_or_default();
             let (state, mode) = w.get::<crate::behaviour::Behaviour>(e).map(|b| (format!("{:?}", b.state), format!("{:?}", b.mode))).unwrap_or_default();
             let c = w.get::<Ragdoll>(e).map(|rd| rd.middle(rd.by_name("chest"))).unwrap_or_default();
             let h = w.resource::<Harm>();
             let (blows, conc, pain, out) = (h.blows, h.concussion, h.pain, h.out);
             log(w, json!({ "event": what, "apart": Vec3::new(c.x - p.x, 0.0, c.z - p.z).length(), "state": state, "mode": mode,
-                "blows_on_player": blows, "concussion": conc, "pain": pain, "out_s": out }));
+                "blows_on_player": blows, "concussion": conc, "pain": pain, "out_s": out,
+                "chest": (c * 100.0).round() / 100.0, "eye": (eye * 100.0).round() / 100.0 }));
         }))
     };
     for k in 0..24 {
