@@ -286,6 +286,8 @@ struct Stepping {
     t: f32,
     length: f32,
     closing: bool,
+    // Taken on purpose (fighting's footwork): its swing paid through the planted leg.
+    meant: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -953,6 +955,9 @@ impl Behaviour {
             }
             let only = lifted.map(|f| rd.segs[f].def.name.chars().last().unwrap());
             self.start_step(rd, goal, f, r, feet, only);
+            if let Some(st) = self.step.as_mut() {
+                st.meant = leaning;
+            }
             // Caught already over the planted foot, the lifted one only closes up beside it, and they stand.
             if let (Some(l), true) = (lifted, past < 0.04) {
                 let at = rd.segs[down[0]].now.translation;
@@ -966,6 +971,9 @@ impl Behaviour {
         // (Leaning toward range a while and still not over the edge: the step taken anyway, caught as a stumble's is.)
         if self.step.is_none() && leaning && self.leaned > 0.8 && down.len() == 2 {
             self.start_step(rd, goal, f, r, feet, None);
+            if let Some(st) = self.step.as_mut() {
+                st.meant = true;
+            }
             self.steps = 0;
             self.leaned = 0.0;
         }
@@ -1106,6 +1114,7 @@ impl Behaviour {
             t: 0.0,
             length: (0.18 + 0.15 * here.distance(landing)).clamp(0.2, 0.3),
             closing: false,
+            meant: false,
         });
         self.steps += 1;
         self.stepped += 1;
@@ -1161,7 +1170,9 @@ impl Behaviour {
         add(pose, side("ankle", st_side), 8.0 * (PI * s).sin());
         // The foot carried to its place by the leg's own muscles, the hip taking the pull.
         let most = 220.0 * self.strength.get(Part::leg(st_side));
-        let pelvis = rd.by_name("pelvis");
+        // (A step on purpose pays through the planted leg into the floor, as pushing off it does: paid by the hip alone,
+        // each step in sent the body back some 60 N s and they backed away from the player and fell.)
+        let pelvis = if st.meant { rd.by_name(&format!("foot{}", other(st_side))) } else { rd.by_name("pelvis") };
         self.act(move |rd, dt| {
             let force = motor::reach(rd, swing, middle, 300.0, 6.0, most, None);
             motor::push(rd, swing, force, &[pelvis], dt);
