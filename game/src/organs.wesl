@@ -82,18 +82,30 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         albedo = mix(albedo, vec3(0.2, 0.012, 0.01), clamp(vessel, 0.0, 0.85));
         // A fine unevenness (and the vessels standing a little proud) bending the light: a few tenths of a millimetre.
         var h = (mid * 0.6 + fine * 0.25 + vessel * 0.4 + fatty * 0.6) * 0.0003;
+        // Where a missile went, the blood on it lies in patches, thin and red, clotted dark, the surface showing between
+        // (one even film read as red lacquer).
+        let patch = mix(0.5, wet_noise(p * 90.0 + 13.0) * 0.7 + wet_noise(p * 330.0 + 5.0) * 0.3, fade(330.0, px));
+        var blood = mm * mix(0.15, 1.6, smoothstep(0.3, 0.75, patch));
+        // (How much of it is torn up: the brain where the charge went is pulp, not folds.)
+        let pulped = smoothstep(0.02, 0.12, mm) * step(1.5, wet.look.w);
         if wet.look.w > 1.5 {
             // The brain's surface folded into gyri, each a centimetre or so across, winding, with the sulci between them
             // narrow, dark and deep, the pia's larger vessels lying along them (the anatomy's cerebrum is only its lobes,
             // smooth: the folds are drawn here, a relief of two millimetres bending the light).
             let warp = vec3(wet_noise(p * 25.0), wet_noise(p * 25.0 + 4.3), wet_noise(p * 25.0 + 9.1)) * 0.9;
             let fold = abs(wet_noise(p * 55.0 + warp) * 2.0 - 1.0) * fade(110.0, px) + 0.5 * (1.0 - fade(110.0, px));
-            let groove = 1.0 - smoothstep(0.03, 0.2, fold);
+            let groove = (1.0 - smoothstep(0.03, 0.2, fold)) * (1.0 - pulped);
             albedo = mix(albedo, albedo * vec3(0.45, 0.3, 0.3), groove * 0.85);
-            albedo = mix(albedo, vec3(0.3, 0.02, 0.02), smoothstep(0.0, 0.05, 0.05 - fold) * 0.6);
-            h += smoothstep(0.0, 0.35, fold) * 0.002;
+            albedo = mix(albedo, vec3(0.3, 0.02, 0.02), smoothstep(0.0, 0.05, 0.05 - fold) * 0.6 * (1.0 - pulped));
+            h += smoothstep(0.0, 0.35, fold) * 0.002 * (1.0 - pulped);
+            // Pulp: grey-pink, mottled, lumpy, with dark clot through it.
+            let pulp = mix(vec3(0.20, 0.14, 0.13), vec3(0.42, 0.30, 0.28), mid) * (0.75 + 0.5 * fine);
+            albedo = mix(albedo, pulp, pulped);
+            h += pulped * (broad * 0.0015 + fine * 0.0005);
         }
-        pbr_input.material.base_color = vec4(blood_over(albedo, mm, 1.0), 1.0);
+        pbr_input.material.base_color = vec4(blood_over(albedo, blood, 1.0), 1.0);
+        // Wet, but not lacquered where it is torn up and clotted.
+        pbr_input.material.perceptual_roughness = mix(pbr_input.material.perceptual_roughness, 0.5 + 0.15 * fine, max(pulped, smoothstep(0.1, 0.4, blood) * 0.6));
         pbr_input.N = bent(pbr_input.N, in.world_position.xyz, h);
     }
     var out: FragmentOutput;
