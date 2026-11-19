@@ -1754,3 +1754,25 @@ whole minute in one frame) found why every footwork try last round left the feet
 - With both, the weight ran on past feet left behind and the trunk pitched 37 to 58 degrees toward the player, and down.
 Now every step's foot is kept up until it is within 6 cm of its mark (or 0.3 s past its time) and driven at up to 400 N,
 its pull paid by the hip.
+
+### Round three, unfinished
+- Footwork (off by default; `PROBE_WALK=1`). Fixed so far: every step's swing now lands on its mark (was 30-60% short,
+  shove recovery included), and the swing's pull is paid by the hip, not the planted foot (it shoved that foot back
+  0.4-1 m a step); no hip strategy while leaning on purpose (it leaned him back 30 degrees). Shoves on this stepping, 80
+  N s, seeds 1-2: 1-4 steps, 2 of 10 fall (1 of 3 from behind), against 4 of 10 before. Still: in `spar` with the
+  moving player (`SPAR_HALL=1 SPAR_MOVE=1`) he goes down within 1.5 s of leaning in; during a step in, the weight moves
+  away from the player at up to 0.7 m/s and the planted foot still slides back 0.2-0.4 m. Next: log the horizontal
+  pushes along the line to the player during single support (the balance's sway and the brake added after its cap, the
+  hips' and back's upright torques, the swing's 400 N on the hip) to find which drives the body back, then not getup
+  or the 60 s / 3-seed check, which have not been run on this stepping.
+- Crawl, seed 1 only: the pulled pose was elbow 100 / shoulder flexion 110 / abduction 42, folding the forearm under the
+  chest. Flexion 135, abduction 40, elbow 35 (`PROBE_CF/CA/CE`): worst 24 degrees (was 50.5), 0.8 person-s past 10
+  degrees of 89 (was 8.1 of 96), and they crawl further. Next: seeds 2-3, then flexion 140-145 / elbow 25-30 for under
+  10, and make the best the default.
+- Jab speed: the hand's drive is cut once it goes faster toward the target than 5.5 m/s (jab) or 7 (straight), under the
+  8.22 +- 1.08 m/s of ten competition boxers' single maximal cross and 7.5-8.0 in combinations (Piorkowski, Lees and
+  Barton 2011, "Single maximal versus combination punch kinematics", Sports Biomechanics; the jab slower than the cross
+  there), 8.16 m/s for amateurs' straights (Walilko, Viano and Bir 2005, Br J Sports Med 39:710-719), 5.9 m/s in
+  combinations (Whiting, Gregor and Finerman 1988, Am J Sports Med 16:130-136). Measured in one spar: peaks 2.8-7.3 m/s
+  (the arm's own muscles still add to the drive past the cap). Not run on 3 seeds.
+- Tools: `past_10_s` in the jitter log (person-seconds with any joint more than 10 degrees past range); `PROBE_STEPS`.
