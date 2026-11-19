@@ -195,6 +195,9 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "menu" => s = crate::menu::scenario(),
         // The player's body and what they hold in the world, and jumping (BACKLOG items 1 and 2): body_scenario.rs.
         "body-push" | "body-press" | "body-melee" | "body-jump" => s = crate::body_scenario::steps(&name[5..]),
+        // Gunshot wounds, a belly blown open and the shirt soaked, close up (the play-test's reports): gore_scenario.rs.
+        "gore" => s = crate::gore_scenario::steps(""),
+        "gore-belly" | "gore-bare" | "gore-pellets" | "gore-head" | "gore-pistol" | "gore-sword" => s = crate::gore_scenario::steps(&name[5..]),
         _ => return body(name),
     }
     Some(s)
@@ -358,6 +361,8 @@ use crate::ragdoll::Ragdoll;
 
 #[derive(Default)]
 struct Acc {
+    // Why they last went over (behaviour.rs `why`).
+    why: &'static str,
     state: Option<Doing>,
     mode: Option<Mode>,
     // Where the chest was as the second began (the TS's jitter.mjs `at`: how far and fast they went).
@@ -368,6 +373,19 @@ struct Acc {
     // their cone (left, right): radians.
     past: Vec<[f32; 3]>,
     cone: [f32; 2],
+    // The most each segment spun (rad/s).
+    spun: Vec<f32>,
+    // N s the contacts gave between two of this person's own segments, and between theirs and anything else; the most
+    // and the mean kinetic energy (J), and its rises from one step to the next summed (J: what put energy in).
+    own: f32,
+    other: f32,
+    ke_most: f32,
+    ke_sum: f64,
+    ke_rise: f64,
+    ke_last: Option<f32>,
+    steps: u32,
+    // N s between each pair of their own segments that met.
+    pairs: std::collections::BTreeMap<(usize, usize), f32>,
 }
 
 #[derive(Resource, Default)]
@@ -380,25 +398,71 @@ struct Jitter {
     steps: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Query<(Entity, &Ragdoll, &Behaviour)>,
-          sims: Query<&bevy_rapier3d::prelude::RapierContextSimulation>) {
+          sims: Query<&bevy_rapier3d::prelude::RapierContextSimulation>,
+          rapier: bevy_rapier3d::prelude::ReadRapierContext, mut quarantined: MessageReader<bevy_rapier3d::prelude::PhysicsQuarantineEvent>,
+          mut log: ResMut<Log>) {
     let Some(started) = runner.started else { return };
     for sim in &sims {
         j.step_ms += sim.step_stats().step_time_ms;
         j.steps += 1;
     }
+    // Rapier's rollbacks over non-finite state, each into the log.
+    for q in quarantined.read() {
+        log.0.push(json!({ "frame": runner.frame, "what": { "event": "rollback", "bodies": q.bodies.len(), "colliders": q.colliders.len() } }));
+    }
     let second = ((runner.frame - started) / 60) as u32;
     let _ = time;
+    // Every segment's body to its person and segment, for the contacts.
+    let mut whose: std::collections::HashMap<Entity, (Entity, usize)> = std::collections::HashMap::new();
+    for (e, rd, _) in &people {
+        for (k, s) in rd.segs.iter().enumerate() {
+            whose.insert(s.entity, (e, k));
+        }
+    }
+    let mut own: std::collections::HashMap<Entity, (f32, f32)> = std::collections::HashMap::new();
+    let mut pairs: Vec<(Entity, usize, usize, f32)> = Vec::new();
+    let mut ke: std::collections::HashMap<Entity, f32> = std::collections::HashMap::new();
+    if let Ok(ctx) = rapier.single() {
+        for pair in ctx.simulation.contact_pairs(ctx.colliders, ctx.rigidbody_set) {
+            let (Some(a), Some(b)) = (pair.collider1(), pair.collider2()) else { continue };
+            let n: f32 = pair.manifolds().map(|m| m.points().map(|p| p.impulse()).sum::<f32>()).sum();
+            match (whose.get(&a), whose.get(&b)) {
+                (Some(x), Some(y)) if x.0 == y.0 => {
+                    own.entry(x.0).or_default().0 += n;
+                    pairs.push((x.0, x.1.min(y.1), x.1.max(y.1), n));
+                }
+                (x, y) => {
+                    for p in [x, y].into_iter().flatten() {
+                        own.entry(p.0).or_default().1 += n;
+                    }
+                }
+            }
+        }
+        for (e, rd, _) in &people {
+            let mut sum = 0.0;
+            for s in &rd.segs {
+                if let Some(rb) = ctx.rigidbody_set.entity2body().get(&s.entity).and_then(|h| ctx.rigidbody_set.bodies.get(*h)) {
+                    sum += rb.kinetic_energy();
+                }
+            }
+            ke.insert(e, sum);
+        }
+    }
     for (e, rd, b) in &people {
         let last = j.last.entry(e).or_insert_with(|| vec![(None, None); rd.segs.len()]).clone();
         let mut now = last.clone();
         let acc = j.bins.entry((e, second)).or_default();
         acc.state = Some(b.state);
+        acc.why = b.why;
         acc.mode = Some(b.mode);
         acc.at.get_or_insert(rd.segs[rd.by_name("chest")].now.translation);
         acc.segs.resize(rd.segs.len(), (0, 0.0, 0.0));
         acc.past.resize(rd.segs.len(), [0.0; 3]);
+        acc.spun.resize(rd.segs.len(), 0.0);
         for (k, s) in rd.segs.iter().enumerate() {
+            acc.spun[k] = acc.spun[k].max(s.spin.length());
             if s.def.parent.is_some() && !s.def.joint.as_ref().unwrap().lock && !rd.cut_off(k) {
                 let p = rd.past(k);
                 for i in 0..3 {
@@ -406,6 +470,21 @@ fn jitter(time: Res<Time>, runner: Res<Runner>, mut j: ResMut<Jitter>, people: Q
                 }
             }
         }
+        let (o, x) = own.get(&e).copied().unwrap_or_default();
+        for &(_, a, b, n) in pairs.iter().filter(|p| p.0 == e) {
+            *acc.pairs.entry((a, b)).or_default() += n;
+        }
+        acc.own += o;
+        acc.other += x;
+        if let Some(&k) = ke.get(&e) {
+            acc.ke_most = acc.ke_most.max(k);
+            acc.ke_sum += k as f64;
+            if let Some(was) = acc.ke_last {
+                acc.ke_rise += (k - was).max(0.0) as f64;
+            }
+            acc.ke_last = Some(k);
+        }
+        acc.steps += 1;
         for (i, side) in ["L", "R"].iter().enumerate() {
             let arm = rd.by_name(&format!("upperarm{side}"));
             if !rd.segs[arm].broken && !rd.cut_off(arm) {
@@ -449,11 +528,28 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
         // The most each joint went past its range (degrees, and on which axis), and the shoulders past their cone.
         let mut past: Vec<(f32, usize)> = vec![(0.0, 0); names.len()];
         let mut cone = [0.0f32; 2];
+        // The most each segment spun; the contacts' mean N within the body (and between which segments) and with the
+        // rest; kinetic energy.
+        let mut spun = vec![0.0f32; names.len()];
+        let (mut own, mut other, mut steps, mut ke_sum, mut ke_rise, mut ke_most) = (0.0f64, 0.0f64, 0u32, 0.0f64, 0.0f64, 0.0f32);
+        let mut pairs: std::collections::BTreeMap<(usize, usize), f64> = std::collections::BTreeMap::new();
         for (&(e, t), acc) in &j.bins {
             let Some(i) = people.iter().position(|&p| p == e) else { continue };
             if !pick(i, t, acc.state.unwrap(), acc.mode.unwrap()) {
                 continue;
             }
+            for k in 0..acc.spun.len().min(names.len()) {
+                spun[k] = spun[k].max(acc.spun[k]);
+            }
+            own += acc.own as f64;
+            other += acc.other as f64;
+            for (&p, &n) in &acc.pairs {
+                *pairs.entry(p).or_default() += n as f64;
+            }
+            steps += acc.steps;
+            ke_sum += acc.ke_sum;
+            ke_rise += acc.ke_rise;
+            ke_most = ke_most.max(acc.ke_most);
             for (k, p) in acc.past.iter().enumerate() {
                 for i in 0..3 {
                     if p[i] > past[k].0 {
@@ -484,8 +580,21 @@ fn situation(name: &'static str, pick: impl Fn(usize, u32, Doing, Mode) -> bool 
         over.sort_by(|a, b| b.1.total_cmp(&a.1));
         let over: Vec<Value> = over.iter().take(6).map(|(n, r, i)| json!({ "seg": n, "axis": AXES[*i], "deg": deg(*r) })).collect();
         info!("jitter {name}: mean hf {mean:.2} rad/s over {seconds} person-seconds; past range {over:?}, cone {cone:?}");
+        // (Impulses a step, N m s and N s, as N m and N at 120 steps a second.)
+        let per = |x: f64| (x * 120.0 / steps.max(1) as f64 * 10.0).round() / 10.0;
+        let mut fast: Vec<(String, f32)> = spun.iter().zip(&names).map(|(x, n)| (n.clone(), (x * 10.0).round() / 10.0)).collect();
+        fast.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let people_steps = steps.max(1) as f64;
+        let mut pairs: Vec<((usize, usize), f64)> = pairs.into_iter().collect();
+        pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let pairs: Vec<Value> = pairs.into_iter().take(5).filter(|p| p.0.0 < names.len() && p.0.1 < names.len())
+            .map(|((a, b), n)| json!([format!("{}-{}", names[a], names[b]), per(n)])).collect();
         log(w, json!({ "event": "jitter", "situation": name, "person_seconds": seconds, "mean_hf": (mean * 1000.0).round() / 1000.0, "worst": worst,
             "past_range": over, "past_cone_deg": cone.map(|c| deg(c.max(0.0))),
+            "spun_most": fast.iter().take(4).map(|(n, x)| json!([n, x])).collect::<Vec<_>>(),
+            "contact_n": { "own": per(own), "other": per(other) },
+            "own_pairs_n": pairs,
+            "energy_j": { "mean": (ke_sum / people_steps * 100.0).round() / 100.0, "most": (ke_most * 100.0).round() / 100.0, "rise_w": (ke_rise * 120.0 / people_steps * 10.0).round() / 10.0 },
             "segments": rows.iter().map(|(n, hf, _)| json!([n, (hf * 1000.0).round() / 1000.0])).collect::<Vec<_>>() }));
     }))
 }
@@ -506,7 +615,7 @@ fn timeline(w: &mut World) {
         let hf: Vec<f64> = acc.segs.iter().filter(|s| s.0 > 0).map(|s| (s.1 / s.0 as f64).sqrt()).collect();
         let mean = hf.iter().sum::<f64>() / hf.len().max(1) as f64;
         let at = acc.at.map(|a| [a.x, a.y, a.z].map(|c| (c * 1000.0).round() / 1000.0));
-        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "hf": (mean * 100.0).round() / 100.0, "at": at }))
+        Some(json!({ "person": i, "t": t, "state": format!("{:?}", acc.state?), "mode": format!("{:?}", acc.mode?), "why": acc.why, "hf": (mean * 100.0).round() / 100.0, "at": at }))
     }).collect();
     let at: Vec<Value> = people.iter().map(|e| json!(chests.get(e).map(|c| c.to_array()))).collect();
     let ms = j.step_ms / j.steps.max(1) as f64;
@@ -623,6 +732,33 @@ fn body(name: &str) -> Option<Vec<Step>> {
             s.push(situation("getting up", |_, t, st, _| t >= 2 && st == Doing::Down));
             s.push(situation("stood up again", |_, t, st, _| t >= 4 && st == Doing::Stand));
         }
+        // Shoved standing (port/b-ragdoll): each of the four pushed at the chest, from the front, their right side, behind
+        // and their left side, as a hard two-handed shove (40 N s: some 0.6 m/s into a 70 kg body), and at six seconds
+        // again, twice as hard, each from the way the next was. They should stagger and catch it or go down, and never
+        // shake or fly apart.
+        "push" => {
+            s.push(Step::Do(Box::new(timeline_start)));
+            s.push(Step::Wait(60));
+            for (round, n) in [(0usize, 40.0f32), (1, 80.0)] {
+                s.push(Step::Do(Box::new(move |w: &mut World| {
+                    for (i, e) in everyone(w).into_iter().enumerate() {
+                        let mut rd = w.get_mut::<Ragdoll>(e).unwrap();
+                        let chest = rd.by_name("chest");
+                        let at = rd.middle(chest);
+                        // (Toward them from their front, right, back or left, by the pelvis's heading: ahead is -Z.)
+                        let ahead = rd.segs[rd.by_name("pelvis")].now.rotation * Vec3::NEG_Z;
+                        let ahead = Vec3::new(ahead.x, 0.0, ahead.z).normalize_or(Vec3::NEG_Z);
+                        let right = Vec3::new(-ahead.z, 0.0, ahead.x);
+                        let way = [-ahead, -right, ahead, right][(i + round) % 4];
+                        rd.push(chest, way * n, at);
+                    }
+                })));
+                film(&mut s, &format!("push{round}"), 1, 6, 15, -2.6, 1.8, 1.5);
+                s.push(Step::Wait(60 * 4));
+            }
+            s.push(situation("shoved, standing", |_, _, st, _| st == Doing::Stand));
+            s.push(situation("shoved, falling or down", |_, _, st, _| st != Doing::Stand));
+        }
         // Legs paralysed: down, rolled onto the front, and dragging themselves away on the elbows.
         "crawl" => {
             s.push(Step::Wait(60));
@@ -719,8 +855,12 @@ fn body(name: &str) -> Option<Vec<Step>> {
                 }
             })));
             s.push(Step::Wait(120));
-            // (`everyone` sorts by entity, which puts the line-up the other way round: the groundskeeper is its third.)
-            s.push(situation("dragged by the hand", |i, t, _, _| i == 2 && (2..=8).contains(&t)));
+            // (The groundskeeper's place among `everyone`, which sorts by entity.)
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let held = person_at(w, 1);
+                let i = everyone(w).iter().position(|&e| e == held).unwrap();
+                push_front(w, VecDeque::from([situation("dragged by the hand", move |p, t, _, _| p == i && (2..=8).contains(&t))]));
+            })));
         }
         // Dead (the heart stopped) and down: lying dead and still.
         "dead" => {
@@ -837,6 +977,37 @@ fn body(name: &str) -> Option<Vec<Step>> {
             }
             s.push(Step::Do(Box::new(|w: &mut World| w.resource_mut::<Seeing>().0 = false)));
             s.push(watch("chest_skin_side".into(), 1, 0.0, 0.9, 1.35));
+        }
+        // A sword's cut across a forearm, as the body takes it (port/b-ragdoll: khang's forearm spun at 800-1000 rad/s):
+        // the push wounds.rs hands over for a sword's cut that spends all it has, 0.3 kg at 24.5 m/s (7.35 N s), across the
+        // forearm near the wrist, from the side. Once on the first man standing; five times in one frame on the second (as
+        // one swing's points along the edge each meet him); once glancing on the third (30 degrees off square, a lever of
+        // half the forearm's thickness about its length); five times down onto the forearm of the fourth, knocked down
+        // and lying, into the floor. How fast each part then turned (`spun_most`, per person).
+        "sword" => {
+            s.push(Step::Wait(30));
+            s.push(each(Some(3), |_, b, rng| b.knock_down(rng)));
+            s.push(Step::Wait(240));
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                for (i, e) in everyone(w).into_iter().enumerate() {
+                    let mut rd = w.get_mut::<Ragdoll>(e).unwrap();
+                    let k = rd.by_name("forearm2R");
+                    let [a, b] = rd.segment_ends(k);
+                    let along = (b - a).normalize();
+                    let r = rd.segs[k].def.radius;
+                    // Square to the forearm and level (or down, for the man lying), and the skin facing it.
+                    let dir = if i == 3 { Vec3::NEG_Y } else { along.cross(Vec3::Y).normalize_or(Vec3::X) };
+                    let dir = if i == 2 { (dir * 0.866 + along.cross(dir).normalize() * 0.5).normalize() } else { dir };
+                    let at = a + (b - a) * 0.8 - dir * r;
+                    for _ in 0..if i % 2 == 1 { 5 } else { 1 } {
+                        rd.push(k, dir * 7.35, at);
+                    }
+                }
+            })));
+            s.push(Step::Wait(120));
+            for i in 0..4 {
+                s.push(situation(["cut once", "cut five times at once", "cut once, glancing", "cut five times, lying"][i], move |p, t, _, _| p == i && t >= 4));
+            }
         }
         // K after heavy damage (the TS hung there): the line-up shot many times, cut with the sword and knife, a grenade,
         // blood left to run; then K, with the profiler open (its log, `coldchain-profile-*.json`, saved beside log.json)
@@ -1118,6 +1289,43 @@ fn body(name: &str) -> Option<Vec<Step>> {
             }
         }
         // Every joint of the first person: where it is, where its muscle aims, its range, standing a moment.
+        // The groundskeeper's ragdoll as Rapier is given it (port/b-ragdoll), for dev/ragdoll-replica to build again in
+        // plain Rapier: each segment's shape, weight and place, and its joint's frames and range as ragdoll.rs `join`
+        // makes them (the bend's range about its zero, in the motors' measure).
+        "ragdoll" => {
+            s.push(Step::Do(Box::new(|w: &mut World| {
+                let e = person_at(w, 1);
+                let (person, rd) = (w.entity(e).get::<Person>().unwrap(), w.entity(e).get::<Ragdoll>().unwrap());
+                let v = |v: Vec3| v.to_array();
+                let segs: Vec<Value> = person.segments.iter().enumerate().map(|(k, d)| {
+                    let s = &rd.segs[k];
+                    let shape = match d.shape {
+                        Shape::Capsule { a, b, r } => json!(["capsule", v(a), v(b), r]),
+                        Shape::Cuboid { centre, half, rotation } => json!(["box", v(centre), v(half), rotation.to_array()]),
+                        Shape::Ball { centre, r } => json!(["ball", v(centre), r]),
+                    };
+                    let mut out = json!({ "k": k, "name": d.name, "parent": d.parent, "mass": d.mass, "shape": shape,
+                        "at": v(d.rest.translation), "turn": d.rest.rotation.to_array() });
+                    if let (Some(p), Some(j)) = (d.parent, &d.joint) {
+                        let pivot = if s.spread.len() > 1 {
+                            s.spread.iter().map(|&b| person.body.bones[b].head).sum::<Vec3>() / s.spread.len() as f32
+                        } else {
+                            d.head
+                        };
+                        let z = s.zero;
+                        out["a1"] = json!(v(pivot - person.segments[p].head));
+                        out["b1"] = json!((s.frame * Quat::from_rotation_x(z)).to_array());
+                        out["a2"] = json!(v(pivot - d.head));
+                        out["b2"] = json!((s.unneutral * s.frame).to_array());
+                        out["lock"] = json!(j.lock);
+                        out["lo"] = json!([s.lo[0] - z, s.lo[1], s.lo[2]]);
+                        out["hi"] = json!([s.hi[0] - z, s.hi[1], s.hi[2]]);
+                    }
+                    out
+                }).collect();
+                log(w, json!({ "event": "ragdoll", "who": person.label, "segments": segs }));
+            })));
+        }
         "joints" => {
             for _ in 0..4 {
                 s.push(Step::Do(Box::new(joints)));

@@ -224,8 +224,8 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     let r = length(qe);
     let dir = qe / max(r, 1e-4);
     // Not a compass circle: its edge a little in and out round it, and finely ragged; a way in again much more so.
-    let uneven = select(0.13, 0.38, s.kind == AGAIN);
-    let rag = select(0.05, 0.14, s.kind == AGAIN);
+    let uneven = select(0.2, 0.38, s.kind == AGAIN);
+    let rag = select(0.11, 0.18, s.kind == AGAIN);
     var edge = r0 * (1.0 + uneven * (noise2(dir * 1.4 + s.seed) - 0.5) * 2.0 + rag * (noise2(dir * 5.0 + s.seed * 1.7) - 0.5) * 2.0 * fine);
     if s.kind == CHARGE {
         // One hole made by many pellets together: its edge a run of their arcs, scalloped (DiMaio).
@@ -240,6 +240,10 @@ fn entry_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     var h = 0.0;
     if d < 0.0 {
         h = 0.45 + min(-d * 14.0, DEEPEST);
+        // Not a tube to be seen down: skin and fat close back over the track behind a bullet (the permanent cavity is a
+        // collapsed slit, full of blood and torn tissue), so a few millimetres down the hole meets its own floor of
+        // torn, bloody tissue, uneven.
+        h = min(h, 2.6 + 2.2 * noise2(q * 0.6 + s.seed * 1.9) + 1.2 * noise2(q * 1.7 + s.seed));
         if s.kind == CHARGE {
             // A crater, its floor torn tissue a few millimetres down.
             h = min(h, 4.0 + 2.5 * noise2(q * 0.3 + s.seed) + 1.5 * noise2(mat2x2(0.8, 0.6, -0.6, 0.8) * q * 0.7 + s.seed));
@@ -341,7 +345,8 @@ fn exit_at(s: Shot, q: vec2<f32>, fine: f32) -> vec4<f32> {
     var h = mix(-lift, top, smoothstep(0.0, 0.45, inside));
     let torn = smoothstep(-0.3, 1.2, hole);
     h = mix(h, fat + 1.0 + 4.0 * noise2(q * 0.35 + s.seed * 3.0), torn);
-    h += DEEPEST * smoothstep(burst * 0.55, burst * 1.0, hole);
+    // (The track behind it closed over, as at a way in: a darker, deeper pit in the middle, not a tunnel.)
+    h += (4.0 + 2.0 * noise2(q * 0.8 + s.seed * 4.0)) * smoothstep(burst * 0.55, burst * 1.0, hole);
     return vec4(h, inside, torn, lob);
 }
 
@@ -538,7 +543,7 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
         // Down its wall: the skin's cut edge, then the fat, then muscle, darkening to nothing; blood over all of it.
         var wall = mix(dermis, fat, smoothstep(1.8, 2.6, h));
         wall = mix(wall, to_linear(muscle) * 2.2, smoothstep(5.0, 7.0, h));
-        wall = blood_over(to_linear(wall), 0.1 + 0.15 * smoothstep(0.5, 3.0, h), wet);
+        wall = blood_over(to_linear(wall), 0.1 + 0.15 * smoothstep(0.5, 3.0, h) + 0.25 * smoothstep(2.4, 3.6, h), wet);
         if s.kind == CHARGE {
             // The crater's floor: fat and muscle torn together.
             wall = blood_over(to_linear(mix(fat, muscle, smoothstep(0.35, 0.6, noise2(q * 0.5 + s.seed)))), 0.2, wet);
@@ -616,6 +621,17 @@ fn gunshot(id: u32, rest: vec3<f32>, m0: vec3<f32>, m1: vec3<f32>, m2: vec3<f32>
 
 // --- what is not drawn (hider.ts) -------------------------------------------------------------------------------------
 
+// viscera.rs `oval` and `torn`, to the digit.
+fn torn_oval(h0: f32, h1: f32, a: f32) -> f32 {
+    return 1.0 / sqrt(pow(cos(a) / h0, 2.0) + pow(sin(a) / h1, 2.0));
+}
+
+fn torn(at: vec3<f32>, a: f32) -> f32 {
+    let s = fract(at.x * 137.1 + at.y * 311.7 + at.z * 74.7) * 6.2831853;
+    let tear = pow(max(sin(4.0 * a + 3.3 * s), 0.0), 6.0) + 0.6 * pow(max(sin(3.0 * a + 5.1 * s), 0.0), 8.0);
+    return 1.0 + 0.14 * sin(3.0 * a + s) + 0.09 * sin(5.0 * a + 2.3 * s) + 0.06 * sin(8.0 * a + 4.1 * s) + 0.04 * sin(13.0 * a + 1.7 * s) + 0.45 * tear;
+}
+
 // Openings in `row` (the clothes' holes and slits, or the skin's torn openings): a slot a.w long either way and b.w wide
 // (a lens: the skin either side pulled apart by its tension, round when as wide as long), or a round hole with a frayed
 // edge (b.w below nothing).
@@ -630,7 +646,16 @@ fn holed(rest: vec3<f32>, row: u32, count: u32) -> bool {
         }
         let across = cross(b.xyz, c.xyz);
         let on = vec2(dot(d, b.xyz), dot(d, across));
-        if b.w < 0.0 {
+        if b.w < 0.0 && row == 2u {
+            // Skin burst open from inside: its edge torn, ragged with short splits (viscera.rs `torn`, the same line),
+            // and finer still where it parted (in the skin's own rest frame: viscera.rs's `normal` crossed with `ex`
+            // is this `across` turned round).
+            let ang = atan2(-on.y, on.x);
+            let r = torn_oval(a.w, -b.w, ang) * torn(a.xyz, ang) * (0.97 + 0.06 * noise3(rest * 1100.0, HIDER));
+            if length(on) < r {
+                return true;
+            }
+        } else if b.w < 0.0 {
             // (frayed: the edge of a hole in cloth wanders with the weave, not in a pattern)
             if length(on) < a.w * (0.7 + 0.45 * noise3(rest * 900.0, HIDER) + 0.15 * noise3(rest * 3000.0, HIDER)) {
                 return true;

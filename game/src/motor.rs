@@ -41,6 +41,15 @@ impl Part {
         }
     }
 
+    // The arm or leg a segment is part of, if it is a limb's.
+    pub fn limb(name: &str) -> Option<Part> {
+        if name == "pelvis" {
+            return None;
+        }
+        let part = Part::of(name);
+        matches!(part, Part::ArmL | Part::ArmR | Part::LegL | Part::LegR).then_some(part)
+    }
+
     pub fn arm(side: char) -> Part {
         if side == 'L' { Part::ArmL } else { Part::ArmR }
     }

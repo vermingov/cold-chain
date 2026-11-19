@@ -1463,3 +1463,180 @@ stump (`stumps-dressed`: the cuts and the dressings only). What was wrong, and t
   - reactions: flinch and cover up at a punch seen coming, stagger, go down, get back up (a get-up from the canvas);
   - what it reads: where the player's eye and fists are (player.rs, fist.rs), its own vitals (pain, concussion,
     consciousness) to fight harder or worse.
+
+## The active ragdoll (BACKLOG item 4 and item 7's joint loose ends, branch port/b-ragdoll)
+
+### What is measured now
+Every body scenario's `jitter` entries also log, per situation: `contact_n` (the mean force of the contacts between a
+person's own segments, `own`, and between theirs and anything else, `other`), `own_pairs_n` (the five pairs of their own
+segments pressed hardest together), `energy_j` (kinetic energy: mean, most, and its rises summed as watts) and
+`spun_most` (the parts that turned fastest, rad/s); the `timeline` has `why` they last went over; a Rapier rollback
+(non-finite state quarantined) is an entry of its own. New scenarios: `push` (each of the five shoved at the chest from
+the front, a side, behind, the other side at 40 N s, and at six seconds at 80 N s each from the next way round), `sword`
+(the push wounds.rs hands over for a sword's cut that spends all it has, 7.35 N s, on a forearm near the wrist: once, five
+at once, glancing, and five down onto the forearm of a man lying), `ragdoll` (the groundskeeper's ragdoll as Rapier is
+given it, for dev/ragdoll-replica). (Rapier's `ImpulseJointImpulses` was tried for "which motor fights which limit" and
+dropped: with the friction joint on the same two bodies, a limit holding reads 0.)
+
+### Joints past their range: what it is
+Not the muscles: a dead man dragged by the hand leaked as much (shoulder 61, elbow 37, the other arm's twist 55 degrees),
+and with the dragged arm's muscles off the elbow's leak only moved from its side to its hinge. Ruled out in the game, one
+at a time (drag, seed 1): self-contacts against the trunk, the joints' friction, the joints that keep the long bones'
+halves apart, `Ragdoll::ranges`, the shoulders' cone, joint warm-starting, Coulomb friction instead of Rapier's
+simplified, Rapier's angular speed cap (`AllowFastRotation`), the floor's friction (0.2: worse), 4 PGS passes a substep
+(worse), 32 substeps, a softer hold (200 N, or the hand's own mass): none brought the elbow under 30 degrees. Nor
+teleports (each body's Transform against Rapier's pose before every step: within 0.0014 rad), nor joints pulled apart
+(no anchor more than 2 cm off), nor the joint frames (Rapier's local frames are exactly `join`'s).
+
+dev/ragdoll-replica (`cargo run --release -- <log.json of the ragdoll scenario> [case]`) builds the groundskeeper again in
+plain Rapier (shapes, weights, frames, ranges, friction, halves kept apart), dead on a floor, the right hand pulled as the
+drag pulls it: seconds a case, not a scenario's minutes. It leaks as the game does. Rapier's staged solver solves every
+joint before every contact in each pass ("contacts must win"); a hand pulled while the floor holds the body leaves the
+arm's joints a little off at every substep, and a joint that is off is brought back at most at `max_corrective_velocity`,
+3 a second by default (contacts share the number, but their own softness keeps their correction under it for anything
+less than 16 to 32 cm deep). The drift outruns the correction. From the merged build's log (degrees past, worst two):
+
+| case | worst joints |
+|---|---|
+| as the game had it | elbow 98.5, wrist 71.9 |
+| with Rapier's gyroscopic term | elbow 34.3, wrist 33.3 |
+| no pull | wrist 10.4 |
+| no floor | wrist 42.2, other wrist 18.3 |
+| no own contacts | wrist 74.8, shoulder 51.7 |
+| pull 200 N | wrist 77.5, elbow 54.4 |
+| 4 PGS passes a substep | wrist 21.9, elbow 13.3 |
+| correction 10 a second | elbow 23.4, wrist 3.6 |
+| correction 30 a second | elbow 1.4, anything else 0.0 |
+
+(The cases move between dumps, the body lying differently; 30 a second has been under 2 in every one. Joint softness,
+60 to 240 Hz, made it worse.) In plain Rapier a single forearm on a joint (nothing else round it) taking 120 N m went 75
+degrees through its 5-degree twist limit with Rapier's gyroscopic term and stayed within 3 without it (60 N m: within 2
+either way): the term is explicit, given once a substep, and turns the spin a limit stops on a slender body into spin
+about its other axes.
+
+### What changed
+- ragdoll.rs: segments have no gyroscopic term (`GyroscopicForces::disabled`); joints are corrected at up to 30 a second
+  (`CORRECT`, Rapier's `normalized_max_corrective_velocity`).
+- behaviour.rs: a limb taken hold of (`Grabbed`, `Behaviour::held`) lets go of its pose, its muscles at nothing, so a
+  dragged arm is drawn out straight instead of held curled in against up to 900 N; standing, the turn to face where they
+  mean to turns the feet on the floor back (it came from nowhere).
+- Tried and not kept: the standing balance's upright turns (the hips' 300 N m, the back's 150) paid for by the thighs
+  standing on the floor and the belly, as muscles across those joints would. Shoved at 80 N s, people then staggered and
+  stepped (chests 25 to 60 cm), one of five going down, where now they stand it out with the chest moved 5 to 25 cm and
+  no step; but a body just up off the floor stepped on and fell again, five of fifteen in three seeds of getup against
+  none. With the turns from nowhere a standing person is still a post to a shove or the player's body; making them
+  muscles needs the getting up's last stage (Rise to Stand, `settle`) to hold a stride that the legs can carry first.
+- Not changed: getting up's, crawling's and lying's pushes (the floor's, paid for by the limbs on it); the crawl's pull
+  scaled to a half or to nothing did not stop its elbows leaking (64 to 92 degrees either way).
+
+### Numbers, the merged build (five people), before and after (seed 1 but where said)
+Degrees past range (worst joints), hf the mean high-frequency spin (rad/s), ms Rapier's time a physics step. "After" is
+this branch's build; drag s1, crawl, sword, khang, punches and blasts were run on it with the hips' and back's turns paid
+for (the variant not kept), which changes nothing lying down; getup s2 and s3 on it without.
+
+| | before | after |
+|---|---|---|
+| drag s1: worst; hf | elbow side 63.8, wrist 13.8; 1.08 | elbow 2.6, shoulder twist 2.5; 0.87 |
+| drag s3: worst; hf | elbow side 48.6, wrist 48.1; 0.87 | shoulder side 49.0, elbow 9.7; 0.97 |
+| crawl: worst; hf | wrist 87.4, elbows 77.5, 72.5; 0.89 | elbows 70.7, 41.6, wrist 14.3; 1.05 |
+| getup s1-3: standing at 15 s | 4, 5, 5 of 5 (one push-up failed) | 5, 5, 4 of 5 (one push-up failed) |
+| getting up: worst; hf | wrist 70-84; 0.81-0.92 | wrist 43, elbow 28 (s1); 0.92 |
+| stand: hf; creep (cm); worst | 0.022; 2.7-11.9; shin 5.2 | 0.026; 6.1-15.6; shin 0.3 |
+| push 40 and 80 N s | all stand, chests 5-25 cm | all stand, chests 5-25 cm |
+| limits, blows: worst; hf | forearm 4.4, shin 3.5; 0.29 | forearm 0.8; 0.31 |
+| limits, thrown dead: worst; hf | shoulder 69, 41.6; 2.20 | shoulder 32.8, wrist 8.8; 2.86 |
+| limits, lying after: worst; hf | shin 4.1; 0.033 | shin 0.3; 0.058 |
+| sword, one cut: elbow past; fastest | twist 7.2; hand 23.6 rad/s | 0.7; hand 21.5 |
+| sword, five cuts at once | elbow 32.4; hand 77.5 rad/s | elbow 23.5; hand 79.8 |
+| sword, five onto a forearm lying | elbow 35.4; hand 75.8 rad/s | other elbow 29.6; hand 93.8 |
+| rollbacks (every scenario above, khang, punches, blasts) | 0 | 0 |
+| ms a step (stand, drag, crawl, khang) | 2.81, 2.75-2.9, 3.27, 3.78 | 2.73, 2.82-3.02, 3.0, 3.72 |
+
+### The sword's spinning forearm (item 7's loose end)
+Not seen in this build: in khang (on the build before the merge, with and without the gyroscopic term) no part turned
+faster than 150 rad/s at any step, and the `sword` scenario's cuts turn the hand at 21 rad/s once, 80 at five at once
+and 94 onto a forearm on the floor (forearm 9 to 52). A forearm and hand of 1.3 kg given 7.35 N s near the wrist should
+go a few metres a second and turn some tens of rad/s, which is what they do. Two things bear on it, both measured above:
+Rapier's gyroscopic term (now off) turned a limit's stopped spin into spin about the other axes, the likeliest source of
+800-1000 rad/s at a joint against its limit; and weapons.rs `sweep` calls `pierce` for every point of the edge that
+crosses the skin in a frame, each a whole missile (90 J, up to 7.35 N s), so one swing can push a forearm five times
+what the blade carries (the "five at once" case). That one is weapons.rs's (the other job's file) to give the push once
+a swing.
+
+### Open
+- The crawl's elbows still go 40-70 degrees sideways: there the arm is pressed into the trunk (`own_pairs_n`: the upper
+  arm and forearm against the chest and belly, 50 N each), and a contact always wins over a joint's limit in Rapier's
+  solver: the crawl's pose and pull put the arm where the body is. Neither halving its pull nor taking it away helped.
+- Dragged by the hand on seed 3 the shoulder takes what the elbow did (49 degrees sideways, with its muscles let go).
+- The thrown dead man shakes more (hf 2.2 to 2.9 the second he lands); standing creep a few cm more.
+- Shoved standing people do not stagger (see "Tried and not kept"); the controller the bout needs (PORT "The bout":
+  guard under load, footwork, a punch as an action, cover, stagger) is not built: what there is to build it on is the
+  stand pose with `react`'s guard, `stepping` to a capture point, `hold`'s hand sent to a world point through `arm_to`,
+  and `heading`.
+
+## The play-test's wounds: torn holes, bowel, the shirt's stain (BACKLOG play-test reports, branch port/b-body)
+
+The reports: gunshot holes "drilled" (a round tube with neat rings of skin, fat and muscle, the head seen through), bowel
+poking out as a red cone and flat shards through the shirt, the shirt's blood one dark blob with a hard jagged edge.
+What real ones look like: dev/research/wounds.md 7a (new), 4 and 5. The check: `--scenario gore` (gore_scenario.rs;
+`gore-belly`, `gore-bare`, `gore-pellets`, `gore-head`, `gore-pistol`, `gore-sword`): the shotgun and the pistol fired
+from the hands, the victim knocked out a moment after so the hands do not cover the wound, pictures straight on, from
+45 and 78 degrees, at 4 s and (the shirt) 30 s.
+
+### What made the holes drilled
+A charge at close range, a blast or a skull burst opens the wall (viscera.rs `open`): the skin's hole was a lens, the
+wall under it (wall.rs) a tube straight down with every layer ending at one depth all round, so from in front it was
+concentric rings, and nothing closed the cavity under it, so where no organ was drawn the eye went through the body (the
+far skin is single-sided) to the floor. And skin.wesl's bullet holes were walls straight down to 24 mm, black at the
+bottom: a tube.
+- `Opening::torn` (viscera.rs): what bursts from inside has a torn edge, `torn(at, angle)`: lobes and three or four
+  short splits from a seed of where it is, over its oval. skin.wesl `torn` is the same function to the digit (the seed
+  by `rem_euclid`/`fract`, which agree for negative numbers), so the skin's hole (`holed`, row 2, a width below nothing
+  marks it torn), the wall's top (`Opening::edge`, used by `lips` and wall.rs) and the bowel's way through
+  (`Opening::inside`) are one line. The cloth over it gets a frayed round hole a little wider (8% and 2 mm: a quarter
+  wider showed a pale ring of the skin under the shirt round the wound).
+- wall.rs, torn: each layer's thickness a third more or less round the hole (they end at no one depth), the fat under
+  the edge torn back from it (undermined, the cavity under the skin wider than the hole: the contact wound's gas), the
+  muscle standing in and out a few millimetres; wall.wesl: boundaries wandering by several millimetres, most of it under
+  blood and clot with the fat and fascia in patches, tags standing off it. The painted lip round it (marks.rs `lip`) is
+  2.5 mm, not the cut wall's sloping band.
+- The cavity closed: a bowl under the wall (`CAVITY` in the picture's u), 6 cm behind it in the trunk (the dark of the
+  cavity, blood in it) and 1.2 cm in the head (brain, pulped, under blood). Organs in front of it still show.
+- skin.wesl, bullet holes: the edge more uneven and finely ragged (20% and 11%, were 13% and 5%); the track closed a few
+  millimetres down (2.6 to 6 mm, uneven, under more blood) instead of a 24 mm shaft; an exit's middle a pit of 4 to 6
+  mm, not a shaft.
+
+### The bowel
+- The red shards out of the flank and through the shirt: the anatomy's organ clusters within 20 cm of an opening were
+  drawn, each on one bone while the skin bends between two, so those to the side stood out through the flank. Now only
+  the clusters behind an opening in sight through it (a cone from its edge inward).
+- The red cone: the ropes (viscera.rs `Loop`) are kept in the cavity's capsules, which are drawn rounder than the belly
+  (the segment's radius over 0.82), so a rope inside could lie outside the skin. Only what can be seen is drawn now
+  (`seen`: out, in the opening, or behind it in sight); the rest has no width.
+- What comes out is as it was: a rope only through a hole wide enough for it doubled over (the charge's 3.5 cm hole lets
+  at most a knuckle press into it); loops out hang and slide on their mesentery. The blood film on a rope from the organ
+  under it is capped at 0.035 mm (soaked through, it read as red paint).
+
+### The shirt
+fluid.wesl `stained`: the edge soft over a centimetre or two (how full the cloth is two centimetres round about, read
+four times more, falls off ahead of the cube's own reading: fewer and fewer fibres carry blood toward the edge; was a
+step from 0.14 to 0.26 of full, a cut-out), creeping along the threads (noise stretched across and up the body at
+rest), darker toward where the cloth is full round about (0.025 to 0.6 mm of blood), a damp halo of serum ahead of the
+red while wet, the darker tide line as it dries. The soak's simulation (soak.wesl) is as it was. Seen on the young
+man's blue shirt at 30 s (gore-belly): the jagged cut-out edge is gone, the edge feathers out and runs along the
+print in red threads; the middle is still nearly one dark maroon, which is what a tenth of a millimetre of blood over
+blue cotton is (it lets through 2% of the blue): the gradient shows on a light cloth (the groundskeeper's white
+shirt), little on a dark one.
+
+### Also found
+- The held shotgun and AK (weapons.rs `measure`): their hulls were measured the frame their barrels and magazine were
+  cut out of the mesh, the new pieces still at the world's origin: hulls metres long, always in the floor, so both were
+  held turned down as far as they go and fired into the floor. Measured once the parts are found. A held thing pressed
+  against someone is no longer turned away from them (it pushes them; a gun fires into them).
+- A sword's cut gave a whole missile's push for every point of its edge that crossed the skin in a frame (weapons.rs
+  `sweep`): now once a swing a person, the first crossing that goes in (0.3 kg at the speed 90 J gives it); the rest of
+  the cut's crossings cut without a push. `gore-sword` (the young man's right forearm cut from 0.8 m, the right button):
+  the swing went in at 12 places across him (chest, arm, belly, hand, thigh, pelvis), each a push of up to 7 N s
+  before, one push after; his right hand peaked at 3.6 m/s and 10 rad/s before and 3.5 m/s and 10 rad/s after, since
+  the hand was crossed once either way. The 800 to 1000 rad/s spin was not reproduced with a real swing here (the ragdoll
+  job's `sword` scenario gives its five pushes by hand, not through `sweep`).
