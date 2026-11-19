@@ -111,3 +111,56 @@ fn battery(w: &mut World, n: usize) {
         log(w, l);
     }
 }
+
+// `--scenario punch-look`: how a punch looks from the thrower's eyes, frame by frame. Bare and gloved, the left and the
+// right, a tap and a full wind-up, each thrown down the empty hall from the guard (a picture as it is let go, then one
+// every frame for the half second it takes to go out and come back, `{fist}_{side}_{how}_{frame}`); and a full right
+// thrown at a face (`{fist}_face_right_{frame}`), to see it land and come off.
+pub fn look() -> Vec<Step> {
+    let mut s = Vec::new();
+    for key in ["fists", "gloves"] {
+        s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::take(w, key))));
+        s.push(Step::Wait(30));
+        for (side, button) in [("left", 0u8), ("right", 2u8)] {
+            for (how, held) in [("quick", 2u32), ("charged", 60)] {
+                s.extend(crate::scenario::view(&format!("{key}_{side}_{how}_guard"), 0.0, -2.0, [0.0, 1.5, -10.0], 1.65));
+                s.push(Step::Wait(20));
+                s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::press(w, button))));
+                s.push(Step::Wait(held));
+                s.push(Step::Shot(format!("{key}_{side}_{how}_00")));
+                s.push(Step::Do(Box::new(move |w: &mut World| crate::warm::release(w, button))));
+                for f in 1..=30 {
+                    s.push(Step::Wait(1));
+                    s.push(Step::Shot(format!("{key}_{side}_{how}_{f:02}")));
+                }
+                s.push(Step::Wait(40));
+            }
+        }
+        // At a face: the young man, from 55 cm off his head, looking him in the eyes.
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            if let Some((_, at)) = crate::warm::aim(w, 2, "head", 0.55) {
+                w.resource_scope(|w, map: Mut<crate::map::Map>| {
+                    for mut p in w.query::<&mut crate::player::Player>().iter_mut(w) {
+                        p.spawn(&map, at.x, at.z + 0.55, Some(at + Vec3::Y * 0.13), 1.65);
+                    }
+                });
+            }
+        })));
+        s.push(Step::Wait(30));
+        s.push(Step::Do(Box::new(|w: &mut World| crate::warm::press(w, 2))));
+        s.push(Step::Wait(60));
+        s.push(Step::Shot(format!("{key}_face_right_00")));
+        s.push(Step::Do(Box::new(|w: &mut World| crate::warm::release(w, 2))));
+        for f in 1..=24 {
+            s.push(Step::Wait(1));
+            s.push(Step::Shot(format!("{key}_face_right_{f:02}")));
+        }
+        s.push(Step::Wait(40));
+        s.push(Step::Do(Box::new(|w: &mut World| {
+            use bevy::ecs::system::RunSystemOnce;
+            let _ = w.run_system_once(crate::sandbox::reset);
+        })));
+        s.push(Step::Wait(60));
+    }
+    s
+}

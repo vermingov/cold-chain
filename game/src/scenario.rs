@@ -175,6 +175,7 @@ fn steps(name: &str) -> Option<Vec<Step>> {
         "punches-gloves" => s = crate::fist::scenario("gloves"),
         // One punch on someone unhurt, twenty times each way, with and without gloves and dusters (punch_scenario.rs).
         "punch-damage" => s = crate::punch_scenario::steps(),
+        "punch-look" => s = crate::punch_scenario::look(),
         "worn-gloves" => s = crate::fist::look("gloves"),
         "worn-dusters" => s = crate::fist::look("dusters"),
         "blasts" => s = crate::weapons::blasts(),
